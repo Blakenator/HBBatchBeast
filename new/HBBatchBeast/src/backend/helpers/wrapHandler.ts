@@ -1,10 +1,10 @@
 import { BackendHandler, BackendHandlerAsync } from '../types';
 import {
+  AppError,
   ASYNC_REPLY_SUFFIX,
   BackendResult,
   BackendResultMode,
-} from '../../common/types';
-import { AppError, ASYNC_CHANNEL } from '../../common';
+} from '../../common';
 
 function backendResultFromError(
   error: any,
@@ -38,7 +38,7 @@ export function wrapHandler(
 function wrapAsyncResult(
   data: any,
   event: Electron.IpcMainEvent,
-  channel: ASYNC_CHANNEL,
+  channel: string,
   resultMode: BackendResultMode,
   callId: number,
 ) {
@@ -58,7 +58,7 @@ function wrapAsyncResult(
 export function wrapHandlerAsync(
   app: Electron.App,
   handler: BackendHandlerAsync,
-  channel: ASYNC_CHANNEL,
+  channel: string,
 ): (
   event: Electron.IpcMainEvent,
   args: any,

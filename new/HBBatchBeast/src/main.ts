@@ -1,8 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
 import path from 'path';
-import { BackendAsyncHandlers, BackendHandlers } from './backend/handlers';
-import { wrapHandler, wrapHandlerAsync } from './backend/helpers/wrapHandler';
-import { ASYNC_CHANNEL } from './common'; // Handle creating/removing shortcuts on Windows when installing/uninstalling.
+import { setupApiHandlers } from './backend/helpers';
+import { BackendAsyncHandlers, BackendHandlers } from './backend';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -140,15 +139,7 @@ const createWindow = () => {
   // ------------------- refactored ---------------------
 
   // setup handlers
-  Object.entries(BackendHandlers).forEach(([channel, handler]) => {
-    ipcMain.handle(channel, wrapHandler(app, handler));
-  });
-  Object.entries(BackendAsyncHandlers).forEach(([channel, handler]) => {
-    ipcMain.handle(
-      channel,
-      wrapHandlerAsync(app, handler, channel as ASYNC_CHANNEL),
-    );
-  });
+  setupApiHandlers(app, BackendHandlers, BackendAsyncHandlers);
 
   // ----------------- end refactored -------------------
 };
