@@ -1,0 +1,54 @@
+{
+  "name": "hbbatchbeast",
+  "productName": "hbbatchbeast",
+  "version": "2.1.5",
+  "description": "My Electron application description",
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "publish": "electron-forge publish",
+    "lint": "eslint --ext .ts,.tsx ."
+  },
+  "keywords": [],
+  "author": {
+    "name": "Blake",
+    "email": "blakestacks@rocketmail.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@electron-forge/cli": "^6.4.0",
+    "@electron-forge/maker-deb": "^6.4.0",
+    "@electron-forge/maker-rpm": "^6.4.0",
+    "@electron-forge/maker-squirrel": "^6.4.0",
+    "@electron-forge/maker-zip": "^6.4.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^6.4.0",
+    "@electron-forge/plugin-vite": "^6.4.0",
+    "@electron-forge/shared-types": "^6.4.0",
+    "@types/node": "^20.5.1",
+    "@types/react-dom": "^18.2.7",
+    "@types/react-intl": "^3.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "electron": "^26.0.0",
+    "eslint": "^8.0.1",
+    "eslint-plugin-import": "^2.25.0",
+    "ts-node": "^10.0.0",
+    "typescript": "~4.5.4"
+  },
+  "dependencies": {
+    "@types/lodash": "^4.14.197",
+    "bootstrap": "^5.3.1",
+    "electron-squirrel-startup": "^1.0.0",
+    "lodash": "^4.17.21",
+    "prettier": "^3.0.2",
+    "react": "^18.2.0",
+    "react-bootstrap": "^2.8.0",
+    "react-dom": "^18.2.0",
+    "react-intl": "^6.4.4",
+    "react-toastify": "^9.1.3",
+    "styled-components": "^6.0.7",
+    "vite": "^4.4.9"
+  }
+}
