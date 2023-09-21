@@ -1,15 +1,13 @@
-import * as ReactDOM from 'react-dom';
 import React from 'react';
 import { HomePage } from './home/HomePage';
 import { IntlMessagesProvider } from './core/IntlMessagesProvider';
 
-function render() {
-  ReactDOM.render(
-    <IntlMessagesProvider>
-      <HomePage />
-    </IntlMessagesProvider>,
-    document.body,
-  );
-}
+import { createRoot } from 'react-dom/client';
 
-render();
+const domNode = document.getElementById('root');
+const root = createRoot(domNode);
+root.render(
+  <IntlMessagesProvider>
+    <HomePage />
+  </IntlMessagesProvider>,
+);

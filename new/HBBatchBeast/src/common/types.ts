@@ -56,7 +56,7 @@ export interface BatchTabConfig {
     auto_create_folders_toggle: 0 | 1;
     custom_bat_path: string;
     low_process_priority_toggle: 0 | 1;
-    remove_filename_apostrophes: number;
+    remove_filename_apostrophes: 0 | 1;
     reverse_file_queue: number;
   };
   HandBrake_toggle: 0 | 1;
@@ -102,8 +102,36 @@ export interface GlobalAppConfig {
 
 export type DeepPartial<T> = T extends object
   ? {
-      [P in keyof T]?: DeepPartial<T[P]>;
-    }
+    [P in keyof T]?: DeepPartial<T[P]>;
+  }
   : T;
 
 export const ASYNC_REPLY_SUFFIX = '-ASYNC_REPLY';
+
+// TODO replace this with flags
+export enum BatchOperationMode {
+  HealthCheck = 'healthCheck',
+  ScanOnly = 'scannonly',
+  ScanAndConvert = 'scanandconvert',
+}
+
+export interface RunBatchOperationProps {
+  operationMode?: BatchOperationMode;
+  config: GlobalAppConfig;
+}
+
+export interface RunBatchOperationResult {
+  fileList: {
+    path: string;
+    worker?: number;
+    presetIndex?: number;
+    extraActions: {
+      copiedFromFilter?: boolean;
+      skippedFromFilter?: boolean;
+      copiedSrt?: boolean;
+    };
+  }[];
+  totalCount: number;
+  unconvertedFilesCount: number;
+  discoveredQueueCount: number;
+}

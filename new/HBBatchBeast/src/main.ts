@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
+import { setupApiHandlers } from '@superflag/super-ipc/backend';
 import path from 'path';
-import { setupApiHandlers } from './backend/helpers';
 import { BackendAsyncHandlers, BackendHandlers } from './backend';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -139,7 +139,7 @@ const createWindow = () => {
   // ------------------- refactored ---------------------
 
   // setup handlers
-  setupApiHandlers(app, BackendHandlers, BackendAsyncHandlers);
+  setupApiHandlers(app, BackendHandlers, BackendAsyncHandlers, ipcMain);
 
   // ----------------- end refactored -------------------
 };

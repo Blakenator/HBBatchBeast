@@ -20,6 +20,36 @@ const config: ForgeConfig = {
           config: 'vite.main.config.ts',
         },
         {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/mediaAnalyser.js',
+          config: 'vite.main.config.ts',
+        },
+        {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/priorityModule.js',
+          config: 'vite.main.config.ts',
+        },
+        {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/queueBuild.js',
+          config: 'vite.main.config.ts',
+        },
+        {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/scheduler.js',
+          config: 'vite.main.config.ts',
+        },
+        {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/worker1.js',
+          config: 'vite.main.config.ts',
+        },
+        {
+          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
+          entry: 'src/backend/modules/worker2.js',
+          config: 'vite.main.config.ts',
+        },
+        {
           entry: 'src/preload.ts',
           config: 'vite.preload.config.ts',
         },

@@ -6,11 +6,15 @@ import { ToastContainer } from 'react-toastify';
 import { BatchTab } from '../settings/batchTab/BatchTab';
 import { Alert } from 'react-bootstrap';
 import { ScanButton } from './actions/ScanButton';
+import { useGlobalConfig, useSetGlobalConfig } from '../core/stores';
+import { BatchOperationResults } from './BatchOperationResults';
 
 export const HomePage: React.FC = () => {
   const { data, error, loading } = useBackend({
     channel: PROMISE_CHANNEL.LoadConfiguration,
   });
+  useSetGlobalConfig(data);
+  const globalConfig = useGlobalConfig();
 
   return (
     <div>
@@ -27,22 +31,19 @@ export const HomePage: React.FC = () => {
         theme="light"
       />
       <VersionWarning oldVersion={data?.version_message} />
-      {data && (
+      {globalConfig && (
         <>
-          <BatchTab config={data} />
-          <ScanButton
-            config={data}
-            onScanComplete={(res) => console.log(res)}
-          />
+          <BatchTab config={globalConfig} />
+          <ScanButton />
         </>
       )}
-      {/*<pre>{JSON.stringify(data, null, 2)}</pre>*/}
       {loading && <span>loading</span>}
       {error && (
         <Alert variant="danger">
           {JSON.stringify(error)} - {error.message}
         </Alert>
       )}
+      <BatchOperationResults />
     </div>
   );
 };
