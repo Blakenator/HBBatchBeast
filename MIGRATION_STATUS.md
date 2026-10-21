@@ -149,32 +149,42 @@ new/HBBatchBeast/
   each config has `tab_health`, `tab_batch`, `tab_remote`, `tab_system` (all `Partial<>`) and optional `name`.
 - `BatchOperationMode` currently has `HealthCheck`, `ScanOnly`, `ScanAndConvert`; only `ScanOnly` has a UI.
 
-### `queueBuild` child-process protocol (do not break)
+### Child-process protocol (S33)
 
-`handlers.ts` builds a positional array; `queueBuild.js` reads indices:
+Children speak a versioned, typed protocol (`src/backend/processes/protocol.ts`); the positional
+arrays it replaced are gone.
 
-```
-0 'queueInfoBomb'      5 included file types          10 replace-if-smaller toggle
-1 source paths[]       6 container                    11 file-name suffix[] (one per source!)
-2 destination paths[]  7 operationMode                12 remove-apostrophes toggle
-3 temp dest paths[]    8 preset[]                     13 replace-always toggle
-4 temp toggle          9 title word filter            14 reverse-queue toggle
-```
+**Parent → child**
 
-Replies: `readyforInfo`, `consoleMessage`, `totalFiles`, `buildQueue`, `writeRequest`, `appendRequest`,
-then `complete` = `['complete', total, sourceQueue, presetArray3, skipOrCopyArray, destQueue, destFinalQueue, notExistsCount]`,
-then `exitRequest` → parent sends `['exitApproved']`.
+| Message | Payload |
+| --- | --- |
+| `configure` | `QueueBuildConfig` — sources, destinations, tempDestinations, useTempFolder, includedFileTypes, container, mode, presets, titleWordFilter, replaceIfSmaller, fileSuffixes, removeApostrophes, replaceAlways, reverseQueue |
+| `shutdown` | — (child exits 0) |
+
+**Child → parent**
+
+| Message | Payload |
+| --- | --- |
+| `ready` | — (sent **after** the message listener is attached, which closes the old race, D19) |
+| `log` | `level`, `message` |
+| `progress` | `phase` (`discovered` \| `queued`), `count` — counters only, never the growing file list |
+| `complete` | `QueueBuildResult` — total, sources, presets, skipOrCopy, destinations, destinationsFinal, notExists |
+| `error` | `message`, optional `stack` |
+
+Child entry points are resolved through `childEntries.ts` (name → emitted `.cjs` filename) and validated at
+startup, so a stale build fails immediately with an actionable message instead of `MODULE_NOT_FOUND`.
 
 The legacy worker protocol (`queueWorkerMessage()` at
 [mainWindow.html:4916](./HBBatchBeast/mainWindow.html)) is **not** migrated; it is a 36-field array that
 `worker1.js` consumes. Port it as a typed object rather than an index-based array.
 
-### Fork / child-process architecture — fragile, needs restructuring (S33)
+### Fork / child-process architecture — restructured in S33
 
-The current process model is inherited straight from the legacy app and is the weakest part of the backend.
-It should be treated as a redesign target, not something to port faithfully.
+The process model was inherited straight from the legacy app and was the weakest part of the backend. It has
+since been replaced by `src/backend/processes/` (supervisor + typed protocol + entry manifest). The original
+analysis is kept below because the same rules apply to the worker pool that still has to be ported.
 
-**How it works today**
+**How it worked before S33**
 
 - `RunBatchOperation` (`handlers.ts:113`) does `childProcess.fork(path.join(__dirname, 'queueBuild.js'))`
   and talks to it with positional arrays tagged by a string in slot 0.
@@ -208,7 +218,15 @@ It should be treated as a redesign target, not something to port faithfully.
    a scheduler process, each a full runtime (~tens of MB RSS). `worker1.js` also contains a CPU-burning
    busy-wait `sleep()` instead of awaiting a timer.
 
-**Target design**
+**What S33 changed**
+
+- `ChildSupervisor` owns spawn, the ready handshake, typed messages, timeouts, `error`/`exit` handling,
+  SIGTERM→SIGKILL escalation, restart budgets and `will-quit` shutdown.
+- `queueBuild` speaks the typed protocol and announces readiness only after its listener is attached.
+- Progress is deltas/counters only; the file list travels once, in `complete`.
+- No sync filesystem work happens in main while a child runs.
+
+**Still to apply to the worker pool (S19) — the design it should follow**
 
 - One **process supervisor** module in main (`src/backend/processes/`) that owns every child: spawn, typed
   envelopes (`{ id, type, payload }` discriminated unions with a version), request/response correlation IDs,
@@ -404,13 +422,13 @@ These are all in the migrated code, not legacy-only issues.
 | D10 | 🟡 Low | `src/common/types.ts` | `BatchOperationMode.ScanOnly = 'scannonly'` (typo, and the comment says "replace this with flags"). `queueBuild` compares against `'healthCheck'` only, so the typo is currently harmless but confusing. |
 | D11 | 🟡 Low | `new/HBBatchBeast/dist/` | Stale, untracked `tsc` output from the earlier build; safe to delete and add to `.gitignore`. |
 | D12 | 🟡 Low | `package.json` | Placeholder `description` ("My Electron application description"), lowercase `productName`, no `icon` in `packagerConfig`, no `typecheck`/`test` scripts. |
-| D13 | 🟠 Medium | [handlers.ts:113](./new/HBBatchBeast/src/backend/handlers.ts) | No child lifecycle management: no `error` listener, no timeout, no kill path, no restart. A `queueBuild` that hangs before `complete` leaves `RunBatchOperation` permanently pending, and children survive app quit. See S33. |
-| D14 | 🟠 Medium | [handlers.ts:163,175](./new/HBBatchBeast/src/backend/handlers.ts) | `fs.writeFileSync` / `fs.appendFileSync` run inside the child `message` handler, so child logging blocks the main-process event loop and every IPC channel with it. |
-| D15 | 🟠 Medium | [handlers.ts:146-215](./new/HBBatchBeast/src/backend/handlers.ts) | Every `totalFiles` / `buildQueue` message re-serializes the whole `RunBatchOperationResult`, including the growing `fileList` — O(n²) serialized bytes over a large scan. Send counters/deltas during progress and the list once at completion. |
+| D13 | 🟠 Medium | `src/backend/processes/` | No child lifecycle management previously: no `error` listener, timeout, kill path or restart, so a hung child left the run pending forever. **Fixed in phase 3** by `ChildSupervisor` (ready timeout, run watchdog, SIGTERM→SIGKILL, restart budget, `will-quit` shutdown). |
+| D14 | 🟠 Medium | `src/backend/handlers.ts` | Sync FS writes ran inside the child `message` handler, blocking the main event loop. **Fixed in phase 3**: the write/append message types are gone; children log through typed `log` messages only. |
+| D15 | 🟠 Medium | `src/backend/handlers.ts` | Progress re-serialized the whole result including the growing file list. **Fixed in phase 3**: progress carries counters only; the file list is sent once in `complete`. |
 | D16 | 🟡 Low | `package.json` | `@types/react` is not declared; it resolves only via peer hoisting, and the tree currently contains two incompatible copies (18.3.23 and 19.1.9). Declare it explicitly and keep it aligned with `react`/`react-dom` during the S34 upgrade. |
 | D17 | 🟡 Low | whole repo | No automated verification of any kind: no test runner, no test files, no CI workflow. Every dependency bump and refactor is validated by hand. See S35. |
 | D18 | 🟡 Low | [createLogFolders.ts](./new/HBBatchBeast/src/backend/helpers/createLogFolders.ts) | Assumed `~/Documents` already existed. **Fixed in phase 2**: all directory creation is recursive, covered by a fresh-home test. |
-| D19 | 🟠 Medium | [queueBuild.js](<./new/HBBatchBeast/src/backend/modules/queueBuild.js>) / [handlers.ts:146](./new/HBBatchBeast/src/backend/handlers.ts) | Startup race: `queueBuild` sends `readyforInfo` before it registers `process.on('message')`, so the parent's immediate `queueInfoBomb` reply can be dropped. The child then waits forever and `RunBatchOperation` never settles. Observed intermittently in tests; masked in the app by nothing. Belongs to the S33 supervisor redesign (ack/handshake instead of fire-and-forget). |
+| D19 | 🟠 Medium | [queueBuild.js](<./new/HBBatchBeast/src/backend/modules/queueBuild.js>) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
 
 ---
 

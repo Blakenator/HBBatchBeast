@@ -1,19 +1,18 @@
+var PROTOCOL_VERSION = 1;
+
+function send(message, callback) {
+  process.send(Object.assign({ v: PROTOCOL_VERSION }, message), callback);
+}
+
 function updateConsole(text) {
-  var message = [
-    'consoleMessage',
-    text,
-  ];
-  process.send(message);
-
-
+  send({ type: 'log', level: 'info', message: String(text) });
 }
 
 process.on('uncaughtException', function(err) {
   console.log(err.stack);
 
-  updateConsole(err.stack);
-
-  process.exit();
+  send({ type: 'error', message: String(err && err.message || err), stack: err && err.stack });
+  process.exit(1);
 });
 
 
@@ -104,62 +103,57 @@ var LongsubfilePath;
 var newsubfilePath;
 var stringProcessingSlash=path.sep
 
-var message = [
-  'readyforInfo',
-];
+process.on('message', (message) => {
 
-process.send(message);
+  if (message && message.type === 'shutdown') {
+    process.exit(0);
+  }
 
+  if (message && message.type === 'configure') {
 
-updateConsole('File scanner: online.');
-
-
-process.on('message', (queueInfoBomb) => {
-
-
-  if (queueInfoBomb[0] == 'queueInfoBomb') {
+    var queueInfoBomb = message.payload;
 
 
     updateConsole('File scanner: received info');
 
 
-    inputPathStemArray = queueInfoBomb[1];
+    inputPathStemArray = queueInfoBomb.sources;
 
 
-    outPutPathStemArray = queueInfoBomb[2];
+    outPutPathStemArray = queueInfoBomb.destinations;
 
-    outPutPathStemFinalArray = queueInfoBomb[3];
+    outPutPathStemFinalArray = queueInfoBomb.tempDestinations;
 
 
     //
 
     //   document.getElementById("selectTemporaryConversionFolder").checked=queueInfoBomb[3]
 
-    tempConversionFolderCheckedOnOff = queueInfoBomb[4];
+    tempConversionFolderCheckedOnOff = queueInfoBomb.useTempFolder;
 
 
     //document.getElementById("includedFileTypes").value=queueInfoBomb[4]
-    supportedFileTypeArrayImport = queueInfoBomb[5];
+    supportedFileTypeArrayImport = queueInfoBomb.includedFileTypes;
 
 
     //document.getElementById("container").options[document.getElementById("container").selectedIndex].text=queueInfoBomb[5]
-    containerType = queueInfoBomb[6];
+    containerType = queueInfoBomb.container;
 
 
-    mode = queueInfoBomb[7];
+    mode = queueInfoBomb.mode;
 
-    presetArray = queueInfoBomb[8];
+    presetArray = queueInfoBomb.presets;
 
-    titleWordFilterArrayImport = queueInfoBomb[9];
+    titleWordFilterArrayImport = queueInfoBomb.titleWordFilter;
 
-    replaceOriginalFile = queueInfoBomb[10];
+    replaceOriginalFile = queueInfoBomb.replaceIfSmaller;
 
 
-    fileNameSuffixArray = queueInfoBomb[11];
+    fileNameSuffixArray = queueInfoBomb.fileSuffixes;
 
-    removeApostrophes_chkbx = queueInfoBomb[12];
-    replaceOriginalFileAlways = queueInfoBomb[13];
-    reverseFileQueue_chxbx = queueInfoBomb[14];
+    removeApostrophes_chkbx = queueInfoBomb.removeApostrophes;
+    replaceOriginalFileAlways = queueInfoBomb.replaceAlways;
+    reverseFileQueue_chxbx = queueInfoBomb.reverseQueue;
 
 
     var home = os.homedir();
@@ -335,11 +329,11 @@ process.on('message', (queueInfoBomb) => {
 
                   updateConsole('File scanner: Valid files found:' + (totalFileFoundCounter + 1));
 
-                  var message = [
-                    'totalFiles',
-                    (totalFileFoundCounter + 1),
-                  ];
-                  process.send(message);
+                  send({
+                    type: 'progress',
+                    phase: 'discovered',
+                    count: totalFileFoundCounter + 1,
+                  });
 
                 }
 
@@ -547,11 +541,11 @@ process.on('message', (queueInfoBomb) => {
             sourceQueueArray[sourceQueueArrayCounter] = inputPathArray[i];
 
             if ((sourceQueueArrayCounter + 1) % 100 == 0) {
-              var message = [
-                'buildQueue',
-                (sourceQueueArrayCounter + 1),
-              ];
-              process.send(message);
+              send({
+                type: 'progress',
+                phase: 'queued',
+                count: sourceQueueArrayCounter + 1,
+              });
 
 
               updateConsole('File scanner: Building queue:' + (sourceQueueArrayCounter + 1));
@@ -629,13 +623,11 @@ process.on('message', (queueInfoBomb) => {
 
             if ((sourceQueueArrayCounter + 1) % 100 == 0) {
 
-              var message = [
-                'buildQueue',
-                (sourceQueueArrayCounter + 1),
-              ];
-
-              process.send(message);
-
+              send({
+                type: 'progress',
+                phase: 'queued',
+                count: sourceQueueArrayCounter + 1,
+              });
 
               updateConsole('File scanner: Building queue:' + (sourceQueueArrayCounter + 1));
 
@@ -717,35 +709,28 @@ process.on('message', (queueInfoBomb) => {
     }
 
 
-    process.send([
-      'complete',
-      totalFileFoundCounter,
-      sourceQueueArray,
-      presetArray3,
-      skipOrCopyArray,
-      destinationQueueArray,
-      destinationFinalQueueArray,
-      fileNotExistsCounter,
-    ]);
-
-
-    process.send([
-      'exitRequest',
-    ]);
-
-
-    //process.exit();
-
-  }
-
-  if (queueInfoBomb[0] == 'exitApproved') {
-    process.exit();
+    send({
+      type: 'complete',
+      payload: {
+        total: totalFileFoundCounter,
+        sources: sourceQueueArray,
+        presets: presetArray3,
+        skipOrCopy: skipOrCopyArray,
+        destinations: destinationQueueArray,
+        destinationsFinal: destinationFinalQueueArray,
+        notExists: fileNotExistsCounter,
+      },
+    }, function() {
+      process.exit(0);
+    });
   }
 
 
 });
 
 
-
-
-
+// Only announce readiness once the message listener is attached: the parent
+// replies to `ready` immediately, and an unattached listener drops that reply
+// (MIGRATION_STATUS.md D19).
+send({ type: 'ready' });
+updateConsole('File scanner: online.');

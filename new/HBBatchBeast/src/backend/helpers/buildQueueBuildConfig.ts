@@ -1,14 +1,12 @@
 import { AppError } from '@superflag/super-ipc-core';
-import {
-  BatchOperationMode,
-  BatchTabConfig,
-  RunBatchOperationProps,
-} from '../../common';
+import { BatchOperationMode, BatchTabConfig, RunBatchOperationProps } from '../../common';
+import { QueueBuildConfig } from '../processes/protocol';
 
 /**
- * `queueBuild` reads its configuration as a positional array (see
- * MIGRATION_STATUS.md §3). Building that array here keeps the index contract in
- * one testable place instead of inside the IPC handler.
+ * Builds the configuration payload handed to the `queueBuild` child process.
+ *
+ * This used to be a 15-slot positional array read back by index, which silently
+ * produced wrong paths whenever an entry was missing (MIGRATION_STATUS.md D1).
  */
 
 function splitLines(value?: string): string[] {
@@ -32,10 +30,10 @@ const SUPPORTED_MODES: BatchOperationMode[] = [
   BatchOperationMode.ScanAndConvert,
 ];
 
-export function buildQueueInfoBomb({
+export function buildQueueBuildConfig({
   config,
   operationMode,
-}: RunBatchOperationProps): unknown[] {
+}: RunBatchOperationProps): QueueBuildConfig {
   if (!operationMode || !SUPPORTED_MODES.includes(operationMode)) {
     throw new AppError('Unsupported batch operation mode', {
       context: { operationMode },
@@ -53,50 +51,51 @@ export function buildQueueInfoBomb({
   const advanced: Partial<BatchTabConfig['advanced']> = batch.advanced ?? {};
   const paths: Partial<BatchTabConfig['path']> = batch.path ?? {};
 
-  const sourcePaths = splitLines(paths.source_path);
-  const destinationPaths = splitLines(paths.destination_path);
+  const sources = splitLines(paths.source_path);
+  const destinations = splitLines(paths.destination_path);
   const useTempFolder = paths.temp_toggle === 1;
-  const tempDestinationPaths = useTempFolder
+  const tempDestinations = useTempFolder
     ? splitLines(paths.temp_destination_path)
     : [];
 
-  // One suffix per source folder: queueBuild indexes this array per source, so a
-  // short array is what produced `<name>undefined.mp4` destinations (D1).
+  // One suffix per source folder: queueBuild indexes this per source, so a short
+  // array is what produced `<name>undefined.mp4` destinations (D1).
   const configuredSuffixes =
     advanced.file_name_suffix_toggle === 1
       ? splitLines(advanced.file_name_suffix)
       : [];
-  const fileSuffixes = padTo(sourcePaths.length, configuredSuffixes, '');
+  const fileSuffixes = padTo(sources.length, configuredSuffixes, '');
 
   const configuredPresets =
     batch.custom_preset_toggle === 1
       ? splitLines(batch.custom_preset_string)
       : splitLines(batch.preset).map(toPresetArgument);
   const presets = padTo(
-    sourcePaths.length,
+    sources.length,
     configuredPresets,
     configuredPresets[0] ?? '',
   );
 
-  const includedFileTypes = advanced.copy_srt_files_toggle === 1
-    ? `${advanced.included_file_types ?? ''},srt,SRT`
-    : (advanced.included_file_types ?? '');
+  const includedFileTypes =
+    advanced.copy_srt_files_toggle === 1
+      ? `${advanced.included_file_types ?? ''},srt,SRT`
+      : (advanced.included_file_types ?? '');
 
-  return [
-    'queueInfoBomb',
-    sourcePaths,
-    destinationPaths,
-    tempDestinationPaths,
+  return {
+    sources,
+    destinations,
+    tempDestinations,
     useTempFolder,
     includedFileTypes,
-    batch.container ?? '.mp4',
-    operationMode,
+    container: batch.container ?? '.mp4',
+    mode: operationMode,
     presets,
-    advanced.title_word_filter ?? '',
-    advanced.replace_original_file_if_converted_is_smaller_toggle === 1,
+    titleWordFilter: advanced.title_word_filter ?? '',
+    replaceIfSmaller:
+      advanced.replace_original_file_if_converted_is_smaller_toggle === 1,
     fileSuffixes,
-    advanced.remove_filename_apostrophes === 1,
-    advanced.replace_original_file_always_toggle === 1,
-    advanced.reverse_file_queue === 1,
-  ];
+    removeApostrophes: advanced.remove_filename_apostrophes === 1,
+    replaceAlways: advanced.replace_original_file_always_toggle === 1,
+    reverseQueue: advanced.reverse_file_queue === 1,
+  };
 }

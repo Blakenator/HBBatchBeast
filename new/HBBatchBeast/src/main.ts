@@ -3,11 +3,24 @@ import { setupApiHandlers } from '@superflag/super-ipc-backend';
 import squirrelStartup from 'electron-squirrel-startup';
 import path from 'path';
 import { BackendAsyncHandlers, BackendHandlers } from './backend';
+import { ChildSupervisor } from './backend/processes/childSupervisor';
+import { validateChildEntries } from './backend/processes/childEntries';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (squirrelStartup) {
   app.quit();
 }
+
+try {
+  validateChildEntries();
+} catch (error) {
+  console.error('Build output is incomplete; child processes cannot start.', error);
+}
+
+// Never leave worker processes behind when the app shuts down.
+app.on('will-quit', () => {
+  void ChildSupervisor.shutdownAll();
+});
 
 const createWindow = () => {
   // Create the browser window.

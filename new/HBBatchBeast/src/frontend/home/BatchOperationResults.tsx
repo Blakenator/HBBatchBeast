@@ -5,6 +5,10 @@ import { Table } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { batchOperationResultsMessages } from './messages';
 
+function displayPreset(preset?: string): string {
+  return (preset ?? '').replace(/^-Z\s+"?|"$/g, '');
+}
+
 function getPresetLabels(
   batch: GlobalAppConfig['configs'][number]['tab_batch'],
 ): string[] {
@@ -42,7 +46,8 @@ export const BatchOperationResults: React.FC = () => {
       <td>{i + 1}</td>
       <td>{fileResult.path}</td>
       <td>
-        {presetLabels[fileResult.presetIndex ?? 0] ??
+        {displayPreset(fileResult.preset) ||
+          presetLabels[fileResult.presetIndex ?? 0] ||
           formatMessage(batchOperationResultsMessages.preset)}
       </td>
       <td>

@@ -123,6 +123,8 @@ export interface RunBatchOperationResult {
     path: string;
     worker?: number;
     presetIndex?: number;
+    /** Resolved preset argument for this file, e.g. `-Z "Very Fast 1080p30"`. */
+    preset?: string;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;

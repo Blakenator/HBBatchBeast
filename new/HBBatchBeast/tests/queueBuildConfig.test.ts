@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BatchOperationMode, GlobalAppConfig } from '../src/common';
-import { buildQueueInfoBomb } from '../src/backend/helpers';
+import { buildQueueBuildConfig } from '../src/backend/helpers';
 
 function makeConfig(
   batch: GlobalAppConfig['configs'][number]['tab_batch'] = {},
@@ -23,80 +23,78 @@ const twoSources = {
   container: '.mp4',
 };
 
-describe('buildQueueInfoBomb', () => {
+describe('buildQueueBuildConfig', () => {
   it('sends one HandBrake -Z argument per source folder', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[1]).toEqual(['/media/movies', '/media/tv']);
-    expect(bomb[2]).toEqual(['/out/movies', '/out/tv']);
-    expect(bomb[7]).toBe('scanOnly');
-    expect(bomb[8]).toEqual([
+    expect(payload.sources).toEqual(['/media/movies', '/media/tv']);
+    expect(payload.destinations).toEqual(['/out/movies', '/out/tv']);
+    expect(payload.mode).toBe('scanOnly');
+    expect(payload.presets).toEqual([
       '-Z "Very Fast 1080p30"',
       '-Z "Very Fast 1080p30"',
     ]);
   });
 
   it('does not double-wrap presets that are already arguments', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig({ ...twoSources, preset: '-Z "HQ 1080p30"' }),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[8]).toEqual(['-Z "HQ 1080p30"', '-Z "HQ 1080p30"']);
+    expect(payload.presets).toEqual(['-Z "HQ 1080p30"', '-Z "HQ 1080p30"']);
   });
 
   it('uses raw custom preset lines when the custom toggle is on', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
         custom_preset_toggle: 1,
-        custom_preset_string: '--preset-import-file a.json\n--preset-import-file b.json',
+        custom_preset_string:
+          '--preset-import-file a.json\n--preset-import-file b.json',
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[8]).toEqual([
+    expect(payload.presets).toEqual([
       '--preset-import-file a.json',
       '--preset-import-file b.json',
     ]);
   });
 
   it('emits one suffix entry per source even when suffixes are disabled (D1)', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[11]).toEqual(['', '']);
+    expect(payload.fileSuffixes).toEqual(['', '']);
   });
 
   it('pads a partial suffix list instead of leaving holes', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
-        advanced: {
-          file_name_suffix_toggle: 1,
-          file_name_suffix: '_720p',
-        },
+        advanced: { file_name_suffix_toggle: 1, file_name_suffix: '_720p' },
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[11]).toEqual(['_720p', '']);
+    expect(payload.fileSuffixes).toEqual(['_720p', '']);
   });
 
   it('passes temp folders only when the temp toggle is enabled', () => {
-    const disabled = buildQueueInfoBomb({
+    const disabled = buildQueueBuildConfig({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    expect(disabled[3]).toEqual([]);
-    expect(disabled[4]).toBe(false);
+    expect(disabled.tempDestinations).toEqual([]);
+    expect(disabled.useTempFolder).toBe(false);
 
-    const enabled = buildQueueInfoBomb({
+    const enabled = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
         path: {
@@ -107,27 +105,24 @@ describe('buildQueueInfoBomb', () => {
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    expect(enabled[3]).toEqual(['/tmp/a', '/tmp/b']);
-    expect(enabled[4]).toBe(true);
+    expect(enabled.tempDestinations).toEqual(['/tmp/a', '/tmp/b']);
+    expect(enabled.useTempFolder).toBe(true);
   });
 
   it('appends srt file types when SRT copying is on', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
-        advanced: {
-          included_file_types: 'mp4,mkv',
-          copy_srt_files_toggle: 1,
-        },
+        advanced: { included_file_types: 'mp4,mkv', copy_srt_files_toggle: 1 },
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(bomb[5]).toBe('mp4,mkv,srt,SRT');
+    expect(payload.includedFileTypes).toBe('mp4,mkv,srt,SRT');
   });
 
   it('carries the file-handling toggles across', () => {
-    const bomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
         advanced: {
@@ -141,31 +136,31 @@ describe('buildQueueInfoBomb', () => {
       operationMode: BatchOperationMode.ScanAndConvert,
     });
 
-    expect(bomb[9]).toBe('sample');
-    expect(bomb[10]).toBe(true);
-    expect(bomb[12]).toBe(true);
-    expect(bomb[13]).toBe(true);
-    expect(bomb[14]).toBe(true);
+    expect(payload.titleWordFilter).toBe('sample');
+    expect(payload.replaceIfSmaller).toBe(true);
+    expect(payload.removeApostrophes).toBe(true);
+    expect(payload.replaceAlways).toBe(true);
+    expect(payload.reverseQueue).toBe(true);
   });
 
   it('rejects unsupported operation modes, including the dropped health check', () => {
     const config = makeConfig(twoSources);
 
     expect(() =>
-      buildQueueInfoBomb({
+      buildQueueBuildConfig({
         config,
         operationMode: 'healthCheck' as BatchOperationMode,
       }),
     ).toThrow(/Unsupported batch operation mode/);
 
-    expect(() => buildQueueInfoBomb({ config })).toThrow(
+    expect(() => buildQueueBuildConfig({ config })).toThrow(
       /Unsupported batch operation mode/,
     );
   });
 
   it('rejects a missing selected configuration', () => {
     expect(() =>
-      buildQueueInfoBomb({
+      buildQueueBuildConfig({
         config: { ...makeConfig(twoSources), selected_config: 3 },
         operationMode: BatchOperationMode.ScanOnly,
       }),

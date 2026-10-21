@@ -1,5 +1,5 @@
 import {
-  buildQueueInfoBomb,
+  buildQueueBuildConfig,
   createLogFolders,
   saveAppConfig,
 } from './helpers';
@@ -10,17 +10,51 @@ import {
   BackendAsyncApi,
   BackendPromiseApi,
   BatchOperationMode,
+  BatchTabConfig,
   GlobalAppConfig,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
 } from '../common';
 import packageJson from '../../package.json';
-import childProcess from 'child_process';
 import { AppError } from '@superflag/super-ipc-core';
 import {
   BackendAsyncHandlersType,
   BackendSyncHandlersType,
 } from '@superflag/super-ipc-backend';
+import { ChildSupervisor } from './processes/childSupervisor';
+import { resolveChildEntry } from './processes/childEntries';
+import { QueueBuildResult } from './processes/protocol';
+
+
+function mapQueueBuildResult(
+  payload: QueueBuildResult,
+  currentConfig: GlobalAppConfig['configs'][number],
+): RunBatchOperationResult {
+  const advanced: Partial<BatchTabConfig['advanced']> =
+    currentConfig.tab_batch?.advanced ?? {};
+  const copyFilteredFiles = advanced.copy_filtered_files_toggle === 1;
+
+  return {
+    totalCount: payload.total,
+    discoveredQueueCount: payload.total,
+    unconvertedFilesCount: payload.notExists,
+    fileList: payload.sources.map((filepath, index) => {
+      const extraActionPerformed = payload.skipOrCopy[index] === 1;
+      const fileIsSrt = filepath.toLowerCase().endsWith('.srt');
+
+      return {
+        path: filepath,
+        preset: payload.presets[index],
+        extraActions: {
+          copiedFromFilter: copyFilteredFiles && extraActionPerformed,
+          skippedFromFilter:
+            !copyFilteredFiles && extraActionPerformed && !fileIsSrt,
+          copiedSrt: !copyFilteredFiles && fileIsSrt && extraActionPerformed,
+        },
+      };
+    }),
+  };
+}
 
 export const BackendHandlers: BackendSyncHandlersType<
   PROMISE_CHANNEL,
@@ -80,139 +114,76 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
   ASYNC_CHANNEL,
   BackendAsyncApi
 > = {
-  [ASYNC_CHANNEL.RunBatchOperation]: ({
-    app,
+  [ASYNC_CHANNEL.RunBatchOperation]: async ({
     args: { config, operationMode },
     handlers: { onInit, onProgress, onComplete, onError },
   }) => {
     const currentConfig = config.configs[config.selected_config];
-    const queueInfoBomb = buildQueueInfoBomb({
+    const payload = buildQueueBuildConfig({
       config,
       operationMode: operationMode ?? BatchOperationMode.ScanAndConvert,
     });
 
-    const queueBuildModulePath = 'queueBuild.cjs';
-
-    const queueBuildModule = childProcess.fork(
-      path.join(__dirname, queueBuildModulePath),
-    );
-
-    const completeResult: RunBatchOperationResult = {
+    const progressSnapshot: RunBatchOperationResult = {
       fileList: [],
       totalCount: 0,
       unconvertedFilesCount: 0,
       discoveredQueueCount: 0,
     };
-    const completionStatus: {
-      isCompleted: boolean;
-      isError: boolean;
-      error: any;
-    } = {
-      isCompleted: false,
-      isError: false,
-      error: undefined,
-    };
 
-    queueBuildModule.on('exit', function (code, signal) {
-      console.log('Child exited:', code, signal);
-
-      if (!completionStatus.isCompleted) {
-        onError(
-          new AppError('Module exited before operation was completed', {
-            context: { code, signal, isError: completionStatus.isError },
-            inner: completionStatus.error,
-          }),
-        );
-      }
+    let settled = false;
+    let resolveComplete: (result: RunBatchOperationResult) => void;
+    let rejectComplete: (error: unknown) => void;
+    const completed = new Promise<RunBatchOperationResult>((resolve, reject) => {
+      resolveComplete = resolve;
+      rejectComplete = reject;
     });
 
-    queueBuildModule.on('message', (message: any[] & { error: any }) => {
-      console.log({ message });
+    const supervisor = new ChildSupervisor({
+      name: 'queueBuild',
+      entry: resolveChildEntry('queueBuild'),
+      events: {
+        onLog: (level, message) => {
+          if (level === 'error') console.error('[queueBuild]', message);
+          else console.log('[queueBuild]', message);
+        },
+        onProgress: (phase, count) => {
+          if (phase === 'discovered') progressSnapshot.totalCount = count;
+          else progressSnapshot.discoveredQueueCount = count;
 
-      if (message.error) {
-        console.error(message.error);
-        completionStatus.isError = true;
-        completionStatus.error = message.error;
-      }
-
-      if (message[0] == 'readyforInfo') {
-        console.log('File scanner ready for info. Sending.');
-        queueBuildModule.send(queueInfoBomb);
-        onInit(completeResult);
-      }
-
-      if (message[0] == 'writeRequest') {
-        try {
-          fs.writeFileSync(message[1], message[2], 'utf8');
-        } catch (err) {
-          console.log('request write error', err);
-        }
-      }
-
-      if (message[0] == 'consoleMessage') {
-        console.log(message[1]);
-      }
-
-      if (message[0] == 'appendRequest') {
-        try {
-          fs.appendFileSync(message[1], message[2], 'utf8');
-        } catch (err) {
-          console.log('request append error', err);
-        }
-      }
-
-      if (message[0] == 'complete') {
-        console.log('File scanner finished');
-
-        completeResult.totalCount = +message[1];
-        completeResult.discoveredQueueCount = +message[1];
-        completeResult.fileList = (message[2] as string[]).map(
-          (filepath, i) => {
-            const copyFilteredFiles =
-              currentConfig.tab_batch.advanced.copy_filtered_files_toggle === 1;
-            const extraActionPerformed = +(message[4] as string[])[i] === 1;
-            const fileIsSrt = filepath.toLowerCase().endsWith('.srt');
-
-            return {
-              path: filepath,
-              presetIndex: +message[3][i],
-              extraActions: {
-                copiedFromFilter: copyFilteredFiles && extraActionPerformed,
-                skippedFromFilter:
-                  !copyFilteredFiles && extraActionPerformed && !fileIsSrt,
-                copiedSrt:
-                  !copyFilteredFiles && fileIsSrt && extraActionPerformed,
-              },
-            };
-          },
-        );
-        completeResult.unconvertedFilesCount = +message[7];
-        console.log({
-          destinationQueue: message[5],
-          destinationFinalQueue: message[6],
-        });
-
-        onComplete(completeResult);
-        completionStatus.isCompleted = true;
-      }
-
-      if (message[0] == 'exitRequest') {
-        queueBuildModule.send(['exitApproved']);
-      }
-
-      if (message[0] == 'totalFiles') {
-        console.log('totalFiles', { count: message[1] });
-
-        completeResult.totalCount = +message[1];
-        onProgress(completeResult);
-      }
-
-      if (message[0] == 'buildQueue') {
-        console.log('buildQueue', { count: message[1] });
-
-        completeResult.discoveredQueueCount = +message[1];
-        onProgress(completeResult);
-      }
+          if (!settled) onProgress({ ...progressSnapshot });
+        },
+        onChildMessage: (message) => {
+          if (message.type !== 'complete' || settled) return;
+          settled = true;
+          resolveComplete(mapQueueBuildResult(message.payload, currentConfig));
+        },
+        onError: (error) => {
+          if (settled) {
+            console.error('[queueBuild]', error);
+            return;
+          }
+          settled = true;
+          rejectComplete(error);
+        },
+      },
     });
+
+    try {
+      await supervisor.start();
+      supervisor.configure(payload);
+      onInit({ ...progressSnapshot });
+
+      const result = await completed;
+      onComplete(result);
+    } catch (error) {
+      onError(
+        error instanceof AppError
+          ? error
+          : new AppError('Batch operation failed', { inner: error }),
+      );
+    } finally {
+      await supervisor.stop('run-finished');
+    }
   },
 };
