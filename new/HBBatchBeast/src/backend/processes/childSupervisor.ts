@@ -11,6 +11,8 @@ export interface ChildSupervisorEvents {
   onLog?: (level: 'info' | 'error', message: string) => void;
   onProgress?: (phase: 'discovered' | 'queued', count: number) => void;
   onChildMessage?: (message: ChildMessage) => void;
+  /** Every IPC payload, before protocol parsing (used by legacy worker arrays). */
+  onRawMessage?: (raw: unknown) => void;
   onError?: (error: Error) => void;
 }
 
@@ -19,6 +21,8 @@ export interface ChildSupervisorOptions {
   name: string;
   /** Absolute path to the child module. */
   entry: string;
+  /** Extra argv entries (worker1 reads its worker number from argv[2]). */
+  args?: string[];
   readyTimeoutMs?: number;
   /** 0 disables the watchdog. */
   runTimeoutMs?: number;
@@ -28,6 +32,8 @@ export interface ChildSupervisorOptions {
   restartAttempts?: number;
   env?: NodeJS.ProcessEnv;
   events?: ChildSupervisorEvents;
+  /** Overrides the default queueBuild message parser. */
+  parseMessage?: (raw: unknown) => ChildMessage | null;
 }
 
 /**
@@ -76,6 +82,14 @@ export class ChildSupervisor {
     this.send({ v: PROTOCOL_VERSION, type: 'configure', payload: payload as never });
   }
 
+  /** Escape hatch for children that still speak their own message format. */
+  sendRaw(payload: unknown): void {
+    if (!this.child?.connected) {
+      throw new AppError(`Cannot message "${this.options.name}": child is not running`);
+    }
+    this.child.send(payload as never);
+  }
+
   /** Graceful shutdown, escalating to SIGTERM then SIGKILL. */
   async stop(reason = 'requested'): Promise<void> {
     if (this.stopping) return;
@@ -117,7 +131,7 @@ export class ChildSupervisor {
     this.exited = false;
     this.exitInfo = undefined;
 
-    const child = fork(this.options.entry, [], {
+    const child = fork(this.options.entry, this.options.args ?? [], {
       env: { ...process.env, ...this.options.env },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
@@ -178,13 +192,20 @@ export class ChildSupervisor {
   private onReady?: () => void;
 
   private handleMessage(raw: unknown): void {
-    const message = parseChildMessage(raw);
+    this.options.events?.onRawMessage?.(raw);
+
+    const customParser = this.options.parseMessage;
+    const message = (customParser ?? parseChildMessage)(raw);
     if (!message) {
-      this.options.events?.onError?.(
-        new AppError(`"${this.options.name}" sent an invalid message`, {
-          context: { raw },
-        }),
-      );
+      // A caller-supplied parser opts out of protocol validation (the worker
+      // modules still speak their own array format).
+      if (!customParser) {
+        this.options.events?.onError?.(
+          new AppError(`"${this.options.name}" sent an invalid message`, {
+            context: { raw },
+          }),
+        );
+      }
       return;
     }
 

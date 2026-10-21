@@ -10,6 +10,7 @@ import { AppError } from '@superflag/super-ipc-core';
  */
 export const CHILD_ENTRIES = {
   queueBuild: 'queueBuild.cjs',
+  worker1: 'worker1.cjs',
 } as const;
 
 export type ChildEntryName = keyof typeof CHILD_ENTRIES;

@@ -3,6 +3,7 @@ import { commonButtonMessages } from './core/messages';
 import { versionWarningMessages } from './versionWarning/messages';
 import { actionMessages } from './home/actions/messages';
 import { batchOperationResultsMessages } from './home/messages';
+import { runMessages } from './run/messages';
 
 export const allMessages = {
   settingsMessages,
@@ -10,6 +11,7 @@ export const allMessages = {
   versionWarningMessages,
   actionMessages,
   batchOperationResultsMessages,
+  runMessages,
 };
 
 /**

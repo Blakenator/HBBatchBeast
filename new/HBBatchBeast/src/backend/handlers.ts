@@ -22,6 +22,9 @@ import {
   BackendSyncHandlersType,
 } from '@superflag/super-ipc-backend';
 import { ChildSupervisor } from './processes/childSupervisor';
+import { RunManager, RunState } from './run/runManager';
+import { createRunManager } from './run/runService';
+import { buildWorkerItemConfig } from './run/buildWorkerItemConfig';
 import { resolveChildEntry } from './processes/childEntries';
 import { QueueBuildResult } from './processes/protocol';
 
@@ -45,6 +48,7 @@ function mapQueueBuildResult(
       return {
         path: filepath,
         preset: payload.presets[index],
+        destinationPath: payload.destinations[index] ?? undefined,
         extraActions: {
           copiedFromFilter: copyFilteredFiles && extraActionPerformed,
           skippedFromFilter:
@@ -54,6 +58,23 @@ function mapQueueBuildResult(
       };
     }),
   };
+}
+
+/** Only one run may be active at a time; the renderer observes it via GetRunState. */
+let activeRun: RunManager | null = null;
+let lastRunState: RunState | null = null;
+
+function currentRunState(): RunState | null {
+  return activeRun?.getState() ?? lastRunState;
+}
+
+function workerCountFor(config: GlobalAppConfig): number {
+  const configured = Number(
+    config.configs[config.selected_config]?.tab_system?.worker_instance_number,
+  );
+  return Number.isFinite(configured) && configured >= 1
+    ? Math.min(Math.trunc(configured), 32)
+    : 4;
 }
 
 export const BackendHandlers: BackendSyncHandlersType<
@@ -107,6 +128,25 @@ export const BackendHandlers: BackendSyncHandlersType<
     );
 
     saveAppConfig(configPath, config);
+  },
+  [PROMISE_CHANNEL.GetRunState]: () => currentRunState(),
+  [PROMISE_CHANNEL.PauseRun]: () => {
+    activeRun?.pause();
+    lastRunState = currentRunState();
+    return lastRunState;
+  },
+  [PROMISE_CHANNEL.ResumeRun]: () => {
+    activeRun?.resume();
+    lastRunState = currentRunState();
+    return lastRunState;
+  },
+  [PROMISE_CHANNEL.StopRun]: () => {
+    void activeRun?.stop();
+    return currentRunState();
+  },
+  [PROMISE_CHANNEL.CancelRunItem]: ({ args: { index } }) => {
+    activeRun?.cancelItem(index);
+    return currentRunState();
   },
 };
 
@@ -184,6 +224,53 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
       );
     } finally {
       await supervisor.stop('run-finished');
+    }
+  },
+  [ASYNC_CHANNEL.RunConversion]: async ({
+    app,
+    args: { config, items },
+    handlers: { onInit, onProgress, onComplete, onError },
+  }) => {
+    if (activeRun) {
+      onError(new AppError('A conversion is already running'));
+      return;
+    }
+
+    let settle: ((state: RunState) => void) | undefined;
+    const finished = new Promise<RunState>((resolve) => {
+      settle = resolve;
+    });
+
+    const manager = createRunManager(app.getPath('home'), {
+      workerCount: workerCountFor(config),
+      buildItemConfig: (item, index) =>
+        buildWorkerItemConfig(config, item, index),
+      onState: (state) => {
+        lastRunState = state;
+        if (state.status === 'completed' || state.status === 'interrupted') {
+          settle?.(state);
+          return;
+        }
+        onProgress(state);
+      },
+      onConsole: (worker, message) =>
+        console.log(`[worker ${worker}]`, message),
+    });
+
+    activeRun = manager;
+    try {
+      onInit(manager.getState());
+      await manager.start(items);
+      const finalState = await finished;
+      onComplete(finalState);
+    } catch (error) {
+      onError(
+        error instanceof AppError
+          ? error
+          : new AppError('Conversion failed', { inner: error }),
+      );
+    } finally {
+      activeRun = null;
     }
   },
 };

@@ -550,7 +550,8 @@ process.on('message', (m) => {
 
             updateConsole(workerNumber, "Launching FFprobe:" + currentSourceLine)
 
-            infoExtractModule = childProcess.fork(path.join(__dirname, 'mediaAnalyser.js'), [], {
+            // Forge 8 emits sibling child modules as .cjs
+            infoExtractModule = childProcess.fork(path.join(__dirname, 'mediaAnalyser.cjs'), [], {
                 silent: true
             });
 
@@ -951,7 +952,7 @@ process.on('message', (m) => {
                         //
 
                         var childProcess = require("child_process");
-                        var shellThreadPath = "worker2.js"
+                        var shellThreadPath = "worker2.cjs"
 
                         //
                         updateConsole(workerNumber, "Launching sub-worker:")
@@ -1825,7 +1826,7 @@ function attemptToRepair() {
 
 
     var childProcess = require("child_process");
-    var repair_worker_path = "worker2.js"
+    var repair_worker_path = "worker2.cjs"
 
     //
     updateConsole(workerNumber, "Launching repair worker:")

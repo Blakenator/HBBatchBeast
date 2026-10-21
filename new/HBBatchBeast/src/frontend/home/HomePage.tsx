@@ -6,8 +6,13 @@ import { ToastContainer } from 'react-toastify';
 import { BatchTab } from '../settings/batchTab/BatchTab';
 import { Alert } from 'react-bootstrap';
 import { ScanButton } from './actions/ScanButton';
-import { useGlobalConfig, useSetGlobalConfig } from '../core/stores';
+import {
+  useBatchResult,
+  useGlobalConfig,
+  useSetGlobalConfig,
+} from '../core/stores';
 import { BatchOperationResults } from './BatchOperationResults';
+import { RunPanel } from '../run/RunPanel';
 
 export const HomePage: React.FC = () => {
   const { data, error, loading } = useBackend({
@@ -15,6 +20,7 @@ export const HomePage: React.FC = () => {
   });
   useSetGlobalConfig(data);
   const globalConfig = useGlobalConfig();
+  const batchResult = useBatchResult();
 
   return (
     <div>
@@ -35,6 +41,16 @@ export const HomePage: React.FC = () => {
         <>
           <BatchTab config={globalConfig} />
           <ScanButton />
+          <RunPanel
+            config={globalConfig}
+            items={
+              batchResult?.fileList.map((file) => ({
+                path: file.path,
+                preset: file.preset ?? '',
+                destinationPath: file.destinationPath,
+              })) ?? []
+            }
+          />
         </>
       )}
       {loading && <span>loading</span>}

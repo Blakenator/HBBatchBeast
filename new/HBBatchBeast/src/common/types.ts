@@ -113,6 +113,12 @@ export enum BatchOperationMode {
   ScanAndConvert = 'scanAndConvert',
 }
 
+export interface ConversionItem {
+  path: string;
+  preset: string;
+  destinationPath?: string;
+}
+
 export interface RunBatchOperationProps {
   operationMode?: BatchOperationMode;
   config: GlobalAppConfig;
@@ -125,6 +131,8 @@ export interface RunBatchOperationResult {
     presetIndex?: number;
     /** Resolved preset argument for this file, e.g. `-Z "Very Fast 1080p30"`. */
     preset?: string;
+    /** Converted output path computed by the scanner, when known. */
+    destinationPath?: string;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;
