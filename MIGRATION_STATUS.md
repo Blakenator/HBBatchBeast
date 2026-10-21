@@ -146,6 +146,18 @@ new/HBBatchBeast/
 - `pnpm start` runs `scripts/start.mjs`, which adds `--ozone-platform=x11` on Linux because Electron 45 draws
   no window decorations on native Wayland (no titlebar buttons). Packaged builds re-exec themselves with the
   same flag; `HBB_OZONE_PLATFORM=wayland` opts out.
+
+### Toolchain invariants (do not "simplify" these)
+
+- Forge 8 + Vite 8 emit **`.cjs`**: `package.json` `main`, the preload path and every forked entry name.
+- Vite 8 (Rolldown) does not externalise Node built-ins or deps for the main build — `vite.main.config.mts`
+  lists them; a new child-module dependency must be added there.
+- `.npmrc` sets `node-linker=hoisted` and `packagerConfig.ignore` keeps `package.json` + `node_modules` while
+  skipping `**/.bin/**`; without both, the packaged app has no runtime dependencies.
+- `pnpm.overrides.electron` pins the copy that `super-ipc` pulls in as a direct dependency (~260 MB).
+- Vite configs stay `.mts` and read `package.json` through `fs`, otherwise the native config loader warns.
+- `IntlMessagesProvider` merges the in-code catalogs into `messages`; removing the merge brings back a
+  `MISSING_TRANSLATION` error per id per render.
 - Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
 - Logs and worker scratch dirs are created by `createLogFolders()` on every load/save.
 - `GlobalAppConfig = { lang, selected_config, version_message, api_key, configs: BatchConfig[] }`;
