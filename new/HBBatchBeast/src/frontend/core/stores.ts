@@ -1,7 +1,5 @@
 import { create } from 'zustand';
 import { GlobalAppConfig, RunBatchOperationResult } from '../../common';
-import { useEffect } from 'react';
-import { isEqual } from 'lodash';
 import { AppError } from '@superflag/super-ipc-core';
 
 interface SimpleStore<T> {
@@ -18,6 +16,12 @@ function createSimpleStore<T>(initialValue?: T) {
   return {
     useStore,
     useValue,
+    /**
+     * Setter only. A "mirror this prop into the store" variant used to exist and
+     * silently reset the store whenever it was called with no argument, so
+     * callers that need to sync fetched data do it in their own effect.
+     */
+    useSetter: () => useStore((state) => state.setValue),
     useValueRequired: () =>
       useStore((state) => {
         if (!state.value) {
@@ -25,31 +29,17 @@ function createSimpleStore<T>(initialValue?: T) {
         }
         return state.value!;
       }),
-    useSetValue: (data?: T) => {
-      // Select fields individually: returning a fresh object from a zustand v5
-      // selector makes useSyncExternalStore loop forever.
-      const value = useStore((state) => state.value);
-      const setValue = useStore((state) => state.setValue);
-
-      useEffect(() => {
-        if (!isEqual(data, value)) {
-          setValue(data);
-        }
-      }, [data, value, setValue]);
-
-      return setValue;
-    },
   };
 }
 
 export const {
   useValue: useBatchResult,
   useValueRequired: useSetBatchResultRequired,
-  useSetValue: useSetBatchResult,
+  useSetter: useSetBatchResultDirect,
 } = createSimpleStore<RunBatchOperationResult | undefined>();
 
 export const {
   useValue: useGlobalConfig,
   useValueRequired: useGlobalConfigRequired,
-  useSetValue: useSetGlobalConfig,
+  useSetter: useSetGlobalConfigDirect,
 } = createSimpleStore<GlobalAppConfig | undefined>();

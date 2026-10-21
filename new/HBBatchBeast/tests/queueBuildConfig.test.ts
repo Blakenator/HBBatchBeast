@@ -39,6 +39,25 @@ describe('buildQueueBuildConfig', () => {
     ]);
   });
 
+  it('always sends a dotted container extension', () => {
+    const withoutDot = buildQueueBuildConfig({
+      config: makeConfig({ ...twoSources, container: 'mkv' }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+    const withDot = buildQueueBuildConfig({
+      config: makeConfig({ ...twoSources, container: '.mkv' }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+    const empty = buildQueueBuildConfig({
+      config: makeConfig({ ...twoSources, container: '  ' }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    expect(withoutDot.container).toBe('.mkv');
+    expect(withDot.container).toBe('.mkv');
+    expect(empty.container).toBe('.mp4');
+  });
+
   it('does not double-wrap presets that are already arguments', () => {
     const payload = buildQueueBuildConfig({
       config: makeConfig({ ...twoSources, preset: '-Z "HQ 1080p30"' }),

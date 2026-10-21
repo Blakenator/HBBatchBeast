@@ -21,6 +21,13 @@ function padTo(length: number, values: string[], fallback: string): string[] {
   return Array.from({ length }, (_, index) => values[index] ?? fallback);
 }
 
+/** queueBuild concatenates this onto the file name, so it must keep its dot. */
+function normalizeContainer(container?: string): string {
+  const trimmed = (container ?? '').trim();
+  if (!trimmed) return '.mp4';
+  return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
+}
+
 function toPresetArgument(preset: string): string {
   return preset.startsWith('-') ? preset : `-Z "${preset}"`;
 }
@@ -87,7 +94,7 @@ export function buildQueueBuildConfig({
     tempDestinations,
     useTempFolder,
     includedFileTypes,
-    container: batch.container ?? '.mp4',
+    container: normalizeContainer(batch.container),
     mode: operationMode,
     presets,
     titleWordFilter: advanced.title_word_filter ?? '',

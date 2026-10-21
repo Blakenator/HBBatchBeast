@@ -35,6 +35,11 @@ if (process.platform === 'linux' && ozonePlatformOverride) {
   app.commandLine.appendSwitch('ozone-platform', ozonePlatformOverride);
 }
 
+// Opt-in DevTools protocol endpoint for UI automation in development builds.
+if (!app.isPackaged && process.env.HBB_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.HBB_DEBUG_PORT);
+}
+
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (squirrelStartup) {
   app.quit();

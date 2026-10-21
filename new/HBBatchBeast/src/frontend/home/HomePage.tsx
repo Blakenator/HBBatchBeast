@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
-import { Alert, Button, Offcanvas } from 'react-bootstrap';
+import React, { useEffect, useState } from 'react';
+import { Alert, Offcanvas } from 'react-bootstrap';
 import { ToastContainer } from 'react-toastify';
 import { useIntl } from 'react-intl';
 import { useBackend } from '../helpers';
 import { PROMISE_CHANNEL } from '../../common';
 import { VersionWarning } from '../versionWarning/VersionWarning';
-import { BatchTab } from '../settings/batchTab/BatchTab';
-import { SystemSettings } from '../settings/systemSettings/SystemSettings';
-import { useGlobalConfig, useSetGlobalConfig } from '../core/stores';
+import { SettingsForm } from '../settings/SettingsForm';
+import { ProfileBar } from '../settings/profile/ProfileBar';
+import { LanguageSelect } from '../settings/LanguageSelect';
+import { useGlobalConfig, useSetGlobalConfigDirect } from '../core/stores';
 import { AppShell } from '../ui/AppShell';
 import { AppStatus } from '../ui/StatusPill';
+import { Button } from '../ui/Button';
 import { RunScreen } from '../run/RunScreen';
 import { homeMessages } from './messages';
 
@@ -18,10 +20,16 @@ export const HomePage: React.FC = () => {
   const { data, error, loading } = useBackend({
     channel: PROMISE_CHANNEL.LoadConfiguration,
   });
-  useSetGlobalConfig(data);
+  const setGlobalConfig = useSetGlobalConfigDirect();
   const globalConfig = useGlobalConfig();
   const [status, setStatus] = useState<AppStatus>('idle');
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Only mirror a *new* fetch result into the store: mirroring on every render
+  // would undo in-memory edits made by the settings drawer and profile bar.
+  useEffect(() => {
+    if (data) setGlobalConfig(data);
+  }, [data, setGlobalConfig]);
 
   if (!globalConfig) {
     return (
@@ -56,7 +64,11 @@ export const HomePage: React.FC = () => {
         onOpenSettings={() => setSettingsOpen(true)}
       >
         <VersionWarning oldVersion={data?.version_message} />
-        <RunScreen config={globalConfig} onStatusChange={setStatus} />
+        <RunScreen
+          config={globalConfig}
+          onStatusChange={setStatus}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
       </AppShell>
 
       <Offcanvas
@@ -69,8 +81,13 @@ export const HomePage: React.FC = () => {
           <Offcanvas.Title>{formatMessage(homeMessages.settings)}</Offcanvas.Title>
         </Offcanvas.Header>
         <Offcanvas.Body>
-          <BatchTab config={globalConfig} />
-          <SystemSettings config={globalConfig} />
+          <ProfileBar />
+          <div style={{ marginTop: 'var(--hb-space-md)' }}>
+            <LanguageSelect config={globalConfig} />
+          </div>
+          <div style={{ marginTop: 'var(--hb-space-md)' }}>
+            <SettingsForm config={globalConfig} />
+          </div>
         </Offcanvas.Body>
         <div style={{ padding: 'var(--hb-space-lg)', borderTop: '1px solid var(--hb-border)' }}>
           <Button variant="secondary" onClick={() => setSettingsOpen(false)}>

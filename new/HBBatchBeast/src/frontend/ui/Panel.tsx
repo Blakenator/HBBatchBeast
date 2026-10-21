@@ -6,6 +6,8 @@ const Section = styled.section`
   border: 1px solid var(--hb-border);
   border-radius: var(--hb-radius-md);
   padding: var(--hb-space-lg);
+  min-width: 0;
+  overflow-wrap: anywhere;
 `;
 
 const Title = styled.h2`
@@ -42,6 +44,10 @@ export const Panel: React.FC<{
 export const PanelGrid = styled.div`
   display: grid;
   gap: var(--hb-space-lg);
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   margin-bottom: var(--hb-space-lg);
+
+  & > * {
+    min-width: 0;
+  }
 `;

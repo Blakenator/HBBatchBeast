@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo } from 'react';
-import { Alert, Button, Spinner } from 'react-bootstrap';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Modal, Spinner } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import {
   ASYNC_CHANNEL,
@@ -8,9 +8,10 @@ import {
   PROMISE_CHANNEL,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
-import { useBatchResult, useSetBatchResult } from '../core/stores';
+import { useBatchResult, useSetBatchResultDirect } from '../core/stores';
 import { AppStatus } from '../ui/StatusPill';
 import { Panel, PanelGrid } from '../ui/Panel';
+import { Button } from '../ui/Button';
 import { QueueTable, QueueRow } from './QueueTable';
 import { runMessages } from './messages';
 import { RunStatePayload } from './types';
@@ -19,6 +20,7 @@ import { validateBatchConfig } from './validation';
 interface RunScreenProps {
   config: GlobalAppConfig;
   onStatusChange: (status: AppStatus) => void;
+  onOpenSettings: () => void;
 }
 
 function splitCount(value?: string, enabled?: boolean): number {
@@ -32,10 +34,12 @@ function splitCount(value?: string, enabled?: boolean): number {
 export const RunScreen: React.FC<RunScreenProps> = ({
   config,
   onStatusChange,
+  onOpenSettings,
 }) => {
   const { formatMessage } = useIntl();
+  const [confirming, setConfirming] = useState(false);
   const batchResult = useBatchResult();
-  const setBatchResult = useSetBatchResult();
+  const setBatchResult = useSetBatchResultDirect();
   const current = config.configs[config.selected_config];
   const batch: Partial<BatchTabConfig> = current?.tab_batch ?? {};
 
@@ -52,6 +56,25 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   });
 
   const scanItems = batchResult?.fileList ?? [];
+
+  // A queue only describes the folders/presets it was scanned with; drop it when
+  // the active profile or those settings change so the table cannot show stale
+  // files and Start cannot run them.
+  const queueSignature = [
+    config.selected_config,
+    batch.path?.source_path,
+    batch.path?.destination_path,
+    batch.path?.temp_destination_path,
+    batch.preset,
+    batch.custom_preset_string,
+    batch.container,
+    batch.advanced?.included_file_types,
+    batch.advanced?.title_word_filter,
+  ].join('|');
+
+  useEffect(() => {
+    setBatchResult(undefined);
+  }, [queueSignature, setBatchResult]);
 
   const run = useBackendAsync({
     channel: ASYNC_CHANNEL.RunConversion,
@@ -70,8 +93,16 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const resume = useBackend({ channel: PROMISE_CHANNEL.ResumeRun, skip: true });
   const stop = useBackend({ channel: PROMISE_CHANNEL.StopRun, skip: true });
 
+  // A run only describes the settings it was started with. Keep the signature it
+  // ran against so switching profiles or folders cannot show the previous run.
+  const [runSignature, setRunSignature] = useState<string | null>(null);
+  const liveRunState: RunStatePayload | undefined =
+    // The terminal payload wins: the last progress frame still says "running".
+    run.completeData ?? run.lastProgressData ?? undefined;
   const runState: RunStatePayload | undefined =
-    run.lastProgressData ?? run.completeData ?? undefined;
+    runSignature !== null && runSignature !== queueSignature
+      ? undefined
+      : liveRunState;
 
   const status: AppStatus = useMemo(() => {
     if (runState) {
@@ -105,6 +136,21 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         state: 'pending' as const,
       }));
 
+  const startRun = () => {
+    setRunSignature(queueSignature);
+    void run.refetch();
+  };
+
+  const destructive = {
+    deleteSource: batch.advanced?.delete_source_files_toggle === 1,
+    replaceAlways:
+      batch.advanced?.replace_original_file_always_toggle === 1,
+    replaceIfSmaller:
+      batch.advanced?.replace_original_file_if_converted_is_smaller_toggle === 1,
+  };
+  const hasDestructive =
+    destructive.deleteSource || destructive.replaceAlways || destructive.replaceIfSmaller;
+
   const running = runState?.status === 'running';
   const paused = runState?.status === 'paused';
   const sourceCount = splitCount(
@@ -115,6 +161,19 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const presetCount = (batch.preset ?? '')
     .split('\n')
     .filter((line: string) => line.trim().length > 0).length;
+
+  if (sourceCount === 0) {
+    return (
+      <Panel title={formatMessage(runMessages.emptyTitle)}>
+        <p style={{ margin: 0, color: 'var(--hb-textMuted)' }}>
+          {formatMessage(runMessages.emptyBody)}
+        </p>
+        <Button className="mt-3" onClick={onOpenSettings}>
+          {formatMessage(runMessages.emptyCta)}
+        </Button>
+      </Panel>
+    );
+  }
 
   return (
     <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
@@ -156,7 +215,10 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </Button>
         <Button
           variant="success"
-          onClick={() => run.refetch()}
+          onClick={() => {
+            if (hasDestructive) setConfirming(true);
+            else startRun();
+          }}
           disabled={
             run.loading ||
             running ||
@@ -182,7 +244,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
           {formatMessage(runMessages.resume)}
         </Button>
         <Button
-          variant="outline-danger"
+          variant="dangerOutline"
           onClick={() => stop.refetch()}
           disabled={!(running || paused)}
         >
@@ -192,7 +254,11 @@ export const RunScreen: React.FC<RunScreenProps> = ({
       </div>
 
       {runState && (
-        <div style={{ color: 'var(--hb-textMuted)' }}>
+        <div
+          style={{ color: 'var(--hb-textMuted)' }}
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {formatMessage(runMessages.progress, {
             done: runState.counts.success,
             total: runState.counts.total,
@@ -205,6 +271,40 @@ export const RunScreen: React.FC<RunScreenProps> = ({
       {scan.error && <Alert variant="danger">{scan.error.message}</Alert>}
       {run.error && <Alert variant="danger">{run.error.message}</Alert>}
 
+      <Modal show={confirming} onHide={() => setConfirming(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>{formatMessage(runMessages.confirmTitle)}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>{formatMessage(runMessages.confirmIntro)}</p>
+          <ul>
+            {destructive.deleteSource && (
+              <li>{formatMessage(runMessages.confirmDeleteSource)}</li>
+            )}
+            {destructive.replaceAlways && (
+              <li>{formatMessage(runMessages.confirmReplaceAlways)}</li>
+            )}
+            {destructive.replaceIfSmaller && !destructive.replaceAlways && (
+              <li>{formatMessage(runMessages.confirmReplaceSmaller)}</li>
+            )}
+          </ul>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setConfirming(false)}>
+            {formatMessage(runMessages.cancel)}
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              setConfirming(false);
+              startRun();
+            }}
+          >
+            {formatMessage(runMessages.confirmStart)}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
       <Panel
         title={formatMessage(runMessages.queue)}
         actions={
@@ -215,7 +315,13 @@ export const RunScreen: React.FC<RunScreenProps> = ({
       >
         {rows.length === 0 ? (
           <div style={{ color: 'var(--hb-textMuted)' }}>
-            {formatMessage(runMessages.noQueue)}
+            {!batchResult
+              ? formatMessage(runMessages.scanFirst)
+              : batchResult.totalCount === 0
+                ? formatMessage(runMessages.noMatchingFiles)
+                : formatMessage(runMessages.allConverted, {
+                    total: batchResult.totalCount,
+                  })}
           </div>
         ) : (
           <QueueTable rows={rows} />

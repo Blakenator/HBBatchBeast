@@ -13,4 +13,7 @@ export const settingsMessages = createMessages({
   customPreset: {
     defaultMessage: 'Custom preset',
   },
+  advanced: { defaultMessage: 'Show advanced options' },
+  dangerTitle: { defaultMessage: 'Destructive options' },
+  language: { defaultMessage: 'Language' },
 });

@@ -9,7 +9,9 @@ export const IntlMessagesProvider: React.FC<PropsWithChildren> = ({
     {},
   );
   const defaults = getDefaultMessages();
-  const locale = (navigator.language ?? 'en-US').split('-')[0];
+  const locale =
+    window.localStorage.getItem('hbb.lang') ??
+    (navigator.language ?? 'en-US').split('-')[0];
 
   useEffect(() => {
     import(`../../translations/${locale}.json`)
@@ -22,7 +24,7 @@ export const IntlMessagesProvider: React.FC<PropsWithChildren> = ({
   return (
     <IntlProvider
       messages={{ ...defaults, ...localeMessages }}
-      locale={navigator.language}
+      locale={locale}
       defaultLocale="en"
       // Only surface real formatting problems; missing ids fall back to defaults.
       onError={(error) => {

@@ -60,13 +60,15 @@ under `.github/` are issue templates. See §2 for the matrix and slices S34/S35.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Lint | `pnpm lint` | ✅ 0 errors, 15 pre-existing warnings |
+| Lint | `pnpm lint` | ✅ 0 errors, 20 pre-existing warnings |
 | Typecheck | `pnpm typecheck` (`tsc --noEmit`) | ✅ clean (TypeScript 5.9 + `moduleResolution: "bundler"`, `paths` for the super-ipc ESM packages) |
 | Build/package | `pnpm package` | ✅ Vite bundles + app packages for linux-x64 |
 | Scan pipeline | forked `.vite/build/queueBuild.js` with a synthetic `queueInfoBomb` | ✅ finds files, builds queue, emits `complete` |
-| Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ❌ `fs-extra`, `ffprobe`, `ffprobe-static` absent; `shelljs` present |
-| Tests | `pnpm test` (Vitest) | ✅ 8 tests: config/log-folder helpers + a real `queueBuild` fork contract suite (scan, destination diffing, title filter, file-type filter) |
+| Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ✅ `fs-extra`, `ffprobe`, `ffprobe-static` present after phase 2 |
+| Tests | `pnpm test` (Vitest) | ✅ 45 tests + 1 opt-in integration test: config/log-folder helpers, `queueBuild` fork contract, queue-build config, worker protocol, run manager, supervisor failure modes |
 | CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
+| Real run (phase 5) | dev app driven over the DevTools protocol: create profile → set folders → scan → convert 20 files → pause/resume/stop wiring, destructive confirmation, profile switch, language switch, both themes | ✅ scan/convert produce correct `.mkv` destinations, terminal status reaches the pill, queue clears on profile switch, 0 `MISSING_TRANSLATION` errors |
+| Dev-loop cleanup | `scripts/dev-smoke.sh [seconds]` | ✅ runs the app for N seconds and tears down the whole process tree (Forge leaves zombie Electron windows behind otherwise, and they report `electronApi not found`) |
 
 ### Dependency & toolchain currency
 
@@ -79,16 +81,16 @@ Versions checked 2026-10-21 via `npm view <pkg> version`; "installed" read from 
 | `typescript` | `^5.9.0` | 5.9.3 | **7.0.2** | Upgraded in phase 0 (4.9 could not do `moduleResolution: "bundler"`). Moving to 7.x is still open. |
 | `@superflag/super-ipc-{core,react}` | `^0.1.0` | 0.1.0 | 0.1.0 | Dual CJS/ESM with real type entries — this removed the need for `paths`/resolver hacks. |
 | `@superflag/super-ipc-{backend,preloader}` | `^0.0.23` / `^0.0.22` | 0.0.23 / 0.0.22 | 0.0.23 / 0.0.22 | These packages are on their own 0.0.x line; `backend@0.0.23` depends on `core@0.1.0`, so the versions are paired deliberately, not stale. |
-| `react` / `react-dom` | `^18.2.0` | 18.3.1 | **19.3.1** | Upgrade together with the S32 redesign — every UI component is being replaced anyway. |
-| `@types/react` | *not declared* | 18.3.23 (hoisted peer), plus a duplicate 19.1.9 | 19.3.0 | Missing from `devDependencies`; resolved only by peer hoisting. |
-| `@types/react-dom` | `^18.2.7` | 18.3.7 | 19.3.0 | Must move with React. |
+| `react` / `react-dom` | `^19.3.1` | 19.3.1 | 19.3.1 | Upgraded in phase 5. |
+| `@types/react` | `^19.3.0` | 19.3.0 | 19.3.0 | Declared in phase 5 (was peer-hoisted only, D16). |
+| `@types/react-dom` | `^19.3.0` | 19.3.0 | 19.3.0 | Moved with React. |
 | `vite` | `^8.3.5` | 8.3.5 | 8.3.5 | Upgraded (Rolldown-based). Node built-ins and runtime deps must now be externalised explicitly in `vite.main.config.ts` — `require('ffprobe')`-style imports are no longer externalised automatically. |
 | `eslint` | `^9.39.5` | 9.39.5 | 10.13.0 | Migrated from 8 to 9 with flat config. ESLint 10 is blocked: `typescript-eslint` 8 builds a ScopeManager without `addGlobals`, which ESLint 10 calls, so linting crashes (`scopeManager.addGlobals is not a function`). Revisit when typescript-eslint supports it. |
 | `@typescript-eslint/*` | `^8.72.0` | 8.72.0 | 8.72.0 | Upgraded. Peer range caps TypeScript at **<6.1**, so the TypeScript 7 move (S34) is blocked until this moves. |
 | `@types/node` | `^24.19.2` | 24.19.2 | 26.6.5 | Raised for the Electron 45 / Vite 8 / Vitest 5 toolchain. |
-| `react-intl` | `^6.4.4` | 6.8.9 | **12.1.5** | Pairs with React 19. |
-| `react-toastify` | `^9.1.3` | 9.1.3 | **11.1.0** | Pairs with React 19. |
-| `zustand` | `^4.4.1` | 4.5.7 | **5.0.15** | Store API changed in v5 (middleware/typing). |
+| `react-intl` | `^12.1.5` | 12.1.5 | 12.1.5 | Upgraded in phase 5. |
+| `react-toastify` | `^11.1.0` | 11.1.0 | 11.1.0 | Upgraded in phase 5. |
+| `zustand` | `^5.0.15` | 5.0.15 | 5.0.15 | Upgraded in phase 5. Selectors must return stable references — returning a fresh object per render loops forever. |
 | `react-bootstrap` | `^2.8.0` | 2.10.10 | 2.10.10 | Already current. |
 | `styled-components` | `^6.0.7` | 6.1.19 | 6.6.0 | Minor bump only. |
 
@@ -274,7 +276,11 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S34 | React 19 stack upgraded (react-intl 12, react-toastify 11, zustand 5) |
 | S19 | Worker pool: named worker item payload, typed event translation of worker1's arrays, `RunManager` dispatch over `ChildSupervisor` workers, verified with a real HandBrake conversion |
 | S20 | Queue control core: start, pause, resume, stop and cancel-item with authoritative state in main |
-| S21 | Run state UI (minimal): counts, failures, console output; run journal persists state so an interrupted run is reported instead of looking completed |
+| S21 | Run state UI: status pill, progress line, virtualized queue table with status filter chips and path search, run journal so an interrupted run is reported instead of looking completed |
+| S15–S18 | Schema-driven settings drawer (`settings/schema.ts`): folders, encoder/preset/container, filters, file handling incl. destructive options, system settings; advanced fields behind a toggle; inline validation with blocking-vs-warning copy |
+| S23 | Real profile CRUD (new/duplicate/rename/delete) replacing the fixed ten slots; new profiles seed the default file-type list and a `.mkv` container |
+| S13 | Language selector (11 locales) wired to `localStorage` + persisted `lang`; see the backfill note in §5 |
+| S32 | Phase 5c UI: themed Bootstrap surface (`--bs-*` mapped to tokens, `data-bs-theme`), token `Button`, first-run empty state, destructive-run confirmation, profile bar, language selector |
 
 Also carried over as-is: the six legacy child-process modules are now under
 [`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and
@@ -286,15 +292,14 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 
 | Slice | State and what remains |
 | --- | --- |
-| S34 | Remaining upgrade: React 19 (+ `@types/react*`, react-intl 12, react-toastify 11, zustand 5) is scheduled with S32. TypeScript 7 and ESLint 10 are blocked upstream (see §2). |
-| S15 | Batch settings are 3 raw textareas (source, destination, custom preset) with debounced auto-save — placeholder UX, to be replaced by S32. Temp folders, auto-create folders, toggles and validation are missing. |
-| S16 | Presets are passed to `queueBuild` but in the wrong shape (see defect D2). |
-| S17 | File-type filtering and SRT copying are wired; size/title/property filters and copy-filtered-files are not. |
-| S21 | Only the scan-result table exists. Conversion/session tables, counters, filters by status, cancel-item and select/deselect are missing. |
-| S13 | Locale loading exists (`navigator.language` → dynamic import), but most new UI strings are not in the locale JSONs and there is no language selector. |
+| S34 | TypeScript 7 and ESLint 10 remain blocked upstream (see §2); everything else is current. |
+| S13 | Selector and loading are done, but the new UI strings only exist as in-code `defaultMessage`s — the 64 locale JSONs still hold the legacy sentences, so non-English users see English for the new UI. Needs a string-extraction pass (or `en.json` regeneration) plus translations. |
+| S16–S18 | Options are all editable now; two gaps remain: folder mappings are still newline textareas rather than row editors (design intent §4), and "auto-create destination folders"/NVENC-style preset warnings are not implemented. |
+| S21 | Queue table covers scan + run rows, status chips and path search. Row actions (cancel item, open log, reveal, media info, retry) and bulk selection are still to come. |
+| S32 | Remaining design work: keyboard-first affordances beyond the native `<details>`/modal behaviour, dark/light contrast audit on real hardware, and the row-editor rework above. |
 | S09 | Version changelog modal exists, but is a *new* implementation (GitHub Releases API) rather than the old server-version banner. Decide whether to keep. |
 | S12 | Repo still contains the legacy app, `HandBrakeCLI.exe` (52 MB), test media, `.travis.yml` and old installer scripts. |
-| — | Tooling: `yarn.lock` is staged for deletion, `pnpm-lock.yaml` + `pnpm-workspace.yaml` are untracked; `package.json` still has placeholder `description`/`productName` and no icons. No test runner or CI workflow exists, and the dependency stack is majors behind on Electron/React/TypeScript/super-ipc (S34, S35). |
+| — | Tooling: `package.json` still has a placeholder `description`/lowercase `productName`, no icons, and the package is ~700 MB because `ffprobe-static` ships three platforms (phase 7). |
 
 ---
 
@@ -340,15 +345,15 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | ID | Feature slice | Short description | State | Depends on | Suggested | Keep? |
 | --- | --- | --- | --- | --- | --- | --- |
 | S14 | Scan / queue build | Recursively scan source folders, diff against destination, apply file-type + title filters, return queue with per-file preset and extra actions. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
-| S15 | Batch paths & folder options | Source/destination/temp folder lists (one per line), temp-conversion toggle, auto-create folders, folder validation. | 🟡 | S14 | Keep | `[x] yes  [ ] no` |
-| S16 | Encoder & preset selection | HandBrake vs FFmpeg, standard preset dropdown vs custom preset lines, container, per-folder suffix, preset validation and NVENC/imported-preset warnings. | 🟡 | S15 | Keep | `[x] yes  [ ] no` |
-| S17 | File selection filters | Included file types, min/max size, title word filter, include/exclude media-property filters (any/all), copy-filtered-files, copy SRT files. | 🟡 | S14 | Keep | `[x] yes  [ ] no` |
-| S18 | File handling actions | Delete source, replace original (always / if smaller), remove apostrophes, reverse queue, custom batch-file hook, low process priority. | 🟡 | S16 | Keep | `[x] yes  [ ] no` |
+| S15 | Batch paths & folder options | Source/destination/temp folder lists (one per line), temp-conversion toggle, auto-create folders, folder validation. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
+| S16 | Encoder & preset selection | HandBrake vs FFmpeg, standard preset dropdown vs custom preset lines, container, per-folder suffix, preset validation and NVENC/imported-preset warnings. | ✅ | S15 | Keep | `[x] yes  [ ] no` |
+| S17 | File selection filters | Included file types, min/max size, title word filter, include/exclude media-property filters (any/all), copy-filtered-files, copy SRT files. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
+| S18 | File handling actions | Delete source, replace original (always / if smaller), remove apostrophes, reverse queue, custom batch-file hook, low process priority. | ✅ | S16 | Keep | `[x] yes  [ ] no` |
 | S19 | Worker pool execution | Fork N `worker1` processes, dispatch queue items, track per-worker status/percentages, progress, priority process, cancel item, error collection. | ⛔ | S14, S16 | Keep — core of the app | `[x] yes  [ ] no` |
 | S20 | Queue controls | Start, pause, resume, stop, convert-selected; per-item select/deselect/invert in the queue view. | ⛔ | S19 | Keep | `[x] yes  [ ] no` |
 | S21 | Results & status UI | Session conversion table with success/error/cancelled/remaining/other row filters, counters, last-completed time, per-worker graph. | 🟡 | S19 | Keep | `[ x] yes  [ ] no` |
 | S22 | Scheduling | Periodic re-scan interval (min 5 s) and daily run window (start/end, handles cross-midnight); old "folder watching" is just periodic rescanning, not `fs.watch`. | ⛔ | S19 | Keep | `[ ] yes  [x] no` |
-| S23 | Configuration profiles | Fixed 10-slot profile selector (`selected_config`) with per-profile settings. Legacy app had no create/rename/delete. | ⛔ | S15–S18 | Keep, but prefer real CRUD over 10 fixed slots | `[x] yes  [ ] no` |
+| S23 | Configuration profiles | Fixed 10-slot profile selector (`selected_config`) with per-profile settings. Legacy app had no create/rename/delete. | ✅ | S15–S18 | Keep, but prefer real CRUD over 10 fixed slots | `[x] yes  [ ] no` |
 | S24 | System settings | Worker instance count, queue-view size limit, run-on-startup, save verbose logs, queue table behaviour. | ⛔ | S19 | Keep | `[x] yes  [ ] no` |
 | S25 | Email error alerts | SMTP/emailjs notification when a run ends with errors (plaintext password, no OAuth/2FA support). | ⛔ | S19 | **Drop candidate** — insecure credential handling and unmaintained deps | `[ ] yes  [x] no` |
 | S26 | Health check tab | Quick HandBrake `--scan` vs thorough FFmpeg `-v error` check, optional repair (CRF), move corrupt files to folder, healthy-file cache + clear, health summary. | ⛔ | S19 | Undecided — feature is valuable but needs its own validation pass | `[ ] yes  [x] no` |
@@ -362,7 +367,7 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 
 | ID | Feature slice | Short description | State | Depends on | Suggested | Keep? |
 | --- | --- | --- | --- | --- | --- | --- |
-| S32 | UI/UX redesign | Replace both the placeholder React UI and the legacy layout with a purpose-built interface. Legacy UI supplies the feature inventory; none of its markup, tab structure or styling is carried over. See the design brief below. | ⛔ | S02 (can start now), S15–S21 for feature parity | Keep — this is the visible outcome of the rewrite | `[x] yes  [ ] no` |
+| S32 | UI/UX redesign | Replace both the placeholder React UI and the legacy layout with a purpose-built interface. Legacy UI supplies the feature inventory; none of its markup, tab structure or styling is carried over. See the design brief below. | 🟡 | S02 (can start now), S15–S21 for feature parity | Keep — this is the visible outcome of the rewrite | `[x] yes  [ ] no` |
 
 #### S32 design brief
 
@@ -451,6 +456,16 @@ These are all in the migrated code, not legacy-only issues.
 | D17 | 🟡 Low | whole repo | No automated verification of any kind: no test runner, no test files, no CI workflow. Every dependency bump and refactor is validated by hand. See S35. |
 | D18 | 🟡 Low | [createLogFolders.ts](./new/HBBatchBeast/src/backend/helpers/createLogFolders.ts) | Assumed `~/Documents` already existed. **Fixed in phase 2**: all directory creation is recursive, covered by a fresh-home test. |
 | D19 | 🟠 Medium | [queueBuild.js](<./new/HBBatchBeast/src/backend/modules/queueBuild.js>) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
+
+| D20 | 🔴 High | [stores.ts](./new/HBBatchBeast/src/frontend/core/stores.ts) | The "mirror this prop into the store" store helper (`useSetValue`) ran its effect with no argument, so any component that only wanted the setter reset the value to `undefined`. The scan result was stored and immediately wiped, leaving the queue permanently empty. **Fixed in phase 5**: the helper is gone; callers set the store explicitly (`useSetter`). |
+| D21 | 🔴 High | [HomePage.tsx](./new/HBBatchBeast/src/frontend/home/HomePage.tsx) | The loaded config was re-mirrored into the store on every render, so every settings/profile edit was silently undone by the next render. **Fixed in phase 5**: the store is seeded once per fetch result, and successful settings saves push the saved config back into the store. |
+| D22 | 🟠 Medium | [globalStyle.ts](./new/HBBatchBeast/src/frontend/ui/globalStyle.ts) | Bootstrap kept its stock light palette inside the dark shell, so the settings drawer rendered white-on-white. **Fixed in phase 5**: `--bs-*` variables are mapped to theme tokens and `data-theme`/`data-bs-theme` follow `prefers-color-scheme`. |
+| D23 | 🟠 Medium | [buildQueueBuildConfig.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueBuildConfig.ts) | `queueBuild` concatenates the container onto the file name, so a profile storing `mkv` instead of `.mkv` produced `Episode 01mkv`. **Fixed in phase 5**: the container is normalised to a dotted extension (test added). |
+| D24 | 🟠 Medium | [RunScreen.tsx](./new/HBBatchBeast/src/frontend/run/RunScreen.tsx) | The status pill read the last *progress* frame, which still says `running`, so a finished run showed "Running" forever. **Fixed in phase 5**: the terminal payload wins. |
+| D25 | 🟡 Low | [RunScreen.tsx](./new/HBBatchBeast/src/frontend/run/RunScreen.tsx) | Switching profile kept the previous profile's queue and run rows on screen, so Start could have run files from another profile. **Fixed in phase 5**: queue and run state are keyed to a signature of the active profile's queue-relevant settings. |
+| D26 | 🟡 Low | [ProfileBar.tsx](./new/HBBatchBeast/src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
+| D27 | 🟡 Low | [Panel.tsx](./new/HBBatchBeast/src/frontend/ui/Panel.tsx), [QueueTable.tsx](./new/HBBatchBeast/src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
+| D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
 
 ---
 

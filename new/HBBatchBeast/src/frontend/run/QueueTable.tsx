@@ -56,13 +56,39 @@ const Row = styled.div`
   font-size: var(--hb-font-sm);
 `;
 
-const PathCell = styled.span`
+const PathCell = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: var(--hb-space-xs);
+  min-width: 0;
+`;
+
+const Directory = styled.span`
+  flex: 0 1 40%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: left;
+  color: var(--hb-textMuted);
 `;
+
+const FileName = styled.span`
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+/** Splits a queue path so the file name stays visible when space runs out. */
+function splitPath(filePath: string): { directory: string; name: string } {
+  const separator = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  if (separator < 0) return { directory: '', name: filePath };
+  return {
+    directory: filePath.slice(0, separator + 1),
+    name: filePath.slice(separator + 1),
+  };
+}
 
 const stateColor: Record<QueueRowState, string> = {
   pending: 'var(--hb-textMuted)',
@@ -101,6 +127,8 @@ export const QueueTable: React.FC<QueueTableProps> = ({ rows }) => {
   return (
     <div>
       <div
+        role="group"
+        aria-label={formatMessage(runMessages.filters)}
         style={{
           display: 'flex',
           gap: 'var(--hb-space-sm)',
@@ -156,6 +184,8 @@ export const QueueTable: React.FC<QueueTableProps> = ({ rows }) => {
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         role="grid"
         aria-rowcount={filtered.length}
+        aria-label={formatMessage(runMessages.queue)}
+        tabIndex={0}
       >
         <div style={{ height: filtered.length * ROW_HEIGHT, position: 'relative' }}>
           <div
@@ -163,29 +193,40 @@ export const QueueTable: React.FC<QueueTableProps> = ({ rows }) => {
               transform: `translateY(${start * ROW_HEIGHT}px)`,
             }}
           >
-            {visible.map((row, index) => (
-              <Row
-                key={`${row.path}-${start + index}`}
-                role="row"
-                title={row.reason ?? row.path}
-              >
-                <span style={{ color: 'var(--hb-textMuted)' }}>
-                  {start + index + 1}
-                </span>
-                <PathCell>{row.path}</PathCell>
-                <span style={{ color: 'var(--hb-textMuted)' }}>
-                  {row.percent ?? ''}
-                </span>
-                <span
-                  style={{
-                    color: stateColor[row.state],
-                    textTransform: 'capitalize',
-                  }}
+            {visible.map((row, index) => {
+              const { directory, name } = splitPath(row.path);
+              return (
+                <Row
+                  key={`${row.path}-${start + index}`}
+                  role="row"
+                  aria-rowindex={start + index + 1}
+                  title={row.reason ?? row.path}
                 >
-                  {row.state}
-                </span>
-              </Row>
-            ))}
+                  <span role="gridcell" style={{ color: 'var(--hb-textMuted)' }}>
+                    {start + index + 1}
+                  </span>
+                  <PathCell role="gridcell">
+                    <Directory>{directory}</Directory>
+                    <FileName>{name}</FileName>
+                  </PathCell>
+                  <span
+                    role="gridcell"
+                    style={{ color: 'var(--hb-textMuted)' }}
+                  >
+                    {row.percent ?? ''}
+                  </span>
+                  <span
+                    role="gridcell"
+                    style={{
+                      color: stateColor[row.state],
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {row.state}
+                  </span>
+                </Row>
+              );
+            })}
           </div>
         </div>
       </Viewport>

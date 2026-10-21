@@ -9,7 +9,13 @@ export const runMessages = createMessages({
   progress: {
     defaultMessage: '{done} of {total} done · {failed} failed · {cancelled} cancelled',
   },
-  noQueue: { defaultMessage: 'Scan first to build a queue' },
+  allConverted: {
+    defaultMessage:
+      'Nothing to convert — {total} matching files already have output at the destination.',
+  },
+  noMatchingFiles: {
+    defaultMessage: 'No files matched the current filters in the source folders.',
+  },
   failures: { defaultMessage: 'Failures' },
   console: { defaultMessage: 'Console output' },
   all: { defaultMessage: 'All' },
@@ -28,4 +34,18 @@ export const runMessages = createMessages({
   scan: { defaultMessage: 'Scan' },
   queue: { defaultMessage: 'Queue' },
   queueCount: { defaultMessage: '{count} files' },
+  confirmTitle: { defaultMessage: 'Confirm destructive options' },
+  confirmIntro: { defaultMessage: 'This run will also:' },
+  confirmDeleteSource: { defaultMessage: 'delete source files after a successful conversion' },
+  confirmReplaceAlways: { defaultMessage: 'replace the original file regardless of size' },
+  confirmReplaceSmaller: { defaultMessage: 'replace the original file when the result is smaller' },
+  confirmStart: { defaultMessage: 'Start run' },
+  cancel: { defaultMessage: 'Cancel' },
+  emptyTitle: { defaultMessage: 'Point HBBatchBeast at your videos' },
+  emptyBody: {
+    defaultMessage:
+      'Choose a source folder to scan and a destination for the converted files. Nothing is converted until you press Start conversion.',
+  },
+  emptyCta: { defaultMessage: 'Choose folders' },
+  scanFirst: { defaultMessage: 'Scan to build the queue' },
 });

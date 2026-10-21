@@ -1,8 +1,9 @@
 import React, { PropsWithChildren } from 'react';
 import styled from 'styled-components';
-import { Button } from 'react-bootstrap';
+
 import { useIntl } from 'react-intl';
 import { StatusPill, AppStatus } from './StatusPill';
+import { Button } from './Button';
 import { shellMessages } from './messages';
 
 const Header = styled.header`
@@ -54,7 +55,7 @@ export const AppShell: React.FC<PropsWithChildren<AppShellProps>> = ({
         )}
         <Spacer />
         <StatusPill status={status} />
-        <Button size="sm" variant="outline-secondary" onClick={onOpenSettings}>
+        <Button compact variant="ghost" onClick={onOpenSettings}>
           {formatMessage(shellMessages.settings)}
         </Button>
       </Header>
