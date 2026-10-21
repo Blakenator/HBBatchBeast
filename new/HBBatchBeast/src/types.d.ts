@@ -3,3 +3,10 @@
 // whether you're running in development or production).
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
+
+// electron-squirrel-startup ships no types; it exports a boolean indicating whether
+// the current launch is a Squirrel install/update/uninstall event.
+declare module 'electron-squirrel-startup' {
+  const squirrelStartup: boolean;
+  export default squirrelStartup;
+}

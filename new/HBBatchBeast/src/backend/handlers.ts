@@ -108,7 +108,7 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     ];
     console.log(queueInfoBomb);
 
-    const queueBuildModulePath = 'queueBuild.js';
+    const queueBuildModulePath = 'queueBuild.cjs';
 
     const queueBuildModule = childProcess.fork(
       path.join(__dirname, queueBuildModulePath),

@@ -74,17 +74,18 @@ Versions checked 2026-10-21 via `npm view <pkg> version`; "installed" read from 
 
 | Package | Declared | Installed | Latest | Notes |
 | --- | --- | --- | --- | --- |
-| `electron` | `^26.0.0` | 26.6.10 | **45.0.0** | 19 majors behind. A second copy (31.7.7) is pulled in as a peer by `super-ipc-preloader`, so the tree has two Electron versions. |
-| `@electron-forge/*` | `^6.4.0` | 6.4.2 | **8.0.1** | Forge 6 cannot target modern Electron; `plugin-vite` config shape also changed. |
+| `electron` | `^45.0.0` | 45.0.0 | 45.0.0 | Upgraded from 26. Note `super-ipc-{backend,react,preloader}` declare `electron@^31` as a *direct* dependency, so pnpm still installs nested copies for them; consider `pnpm.overrides` to dedupe. |
+| `@electron-forge/*` | `^8.0.1` | 8.0.1 | 8.0.1 | Upgraded. Forge 8 + Vite 8 emit bundles as **`.cjs`**, so `main` is `.vite/build/main.cjs` and child-module filenames changed from `.js` to `.cjs`. |
 | `typescript` | `^5.9.0` | 5.9.3 | **7.0.2** | Upgraded in phase 0 (4.9 could not do `moduleResolution: "bundler"`). Moving to 7.x is still open. |
-| `@superflag/super-ipc-{core,react,backend,preloader}` | `^0.0.11` | 0.0.11 | **0.1.0** | The split-package migration is uncommitted; re-check 0.1.0's export map/types before designing around 0.0.11's ESM-only `exports`. |
+| `@superflag/super-ipc-{core,react}` | `^0.1.0` | 0.1.0 | 0.1.0 | Dual CJS/ESM with real type entries — this removed the need for `paths`/resolver hacks. |
+| `@superflag/super-ipc-{backend,preloader}` | `^0.0.23` / `^0.0.22` | 0.0.23 / 0.0.22 | 0.0.23 / 0.0.22 | These packages are on their own 0.0.x line; `backend@0.0.23` depends on `core@0.1.0`, so the versions are paired deliberately, not stale. |
 | `react` / `react-dom` | `^18.2.0` | 18.3.1 | **19.3.1** | Upgrade together with the S32 redesign — every UI component is being replaced anyway. |
 | `@types/react` | *not declared* | 18.3.23 (hoisted peer), plus a duplicate 19.1.9 | 19.3.0 | Missing from `devDependencies`; resolved only by peer hoisting. |
 | `@types/react-dom` | `^18.2.7` | 18.3.7 | 19.3.0 | Must move with React. |
-| `vite` | `^4.4.9` | 4.5.14 | **8.3.5** | Tied to the Forge upgrade. |
-| `eslint` | `^8.0.1` | 8.57.1 | **10.13.0** | ESLint 8 is EOL; flat config required from 9. |
-| `@typescript-eslint/*` | `^5.0.0` | 5.62.0 | **8.72.0** | Must move with ESLint + TS. |
-| `@types/node` | `^20.5.1` | 20.19.9 | **26.6.5** | Track whatever Node Electron 45 bundles. |
+| `vite` | `^8.3.5` | 8.3.5 | 8.3.5 | Upgraded (Rolldown-based). Node built-ins and runtime deps must now be externalised explicitly in `vite.main.config.ts` — `require('ffprobe')`-style imports are no longer externalised automatically. |
+| `eslint` | `^9.39.5` | 9.39.5 | 10.13.0 | Migrated from 8 to 9 with flat config. ESLint 10 is blocked: `typescript-eslint` 8 builds a ScopeManager without `addGlobals`, which ESLint 10 calls, so linting crashes (`scopeManager.addGlobals is not a function`). Revisit when typescript-eslint supports it. |
+| `@typescript-eslint/*` | `^8.72.0` | 8.72.0 | 8.72.0 | Upgraded. Peer range caps TypeScript at **<6.1**, so the TypeScript 7 move (S34) is blocked until this moves. |
+| `@types/node` | `^24.19.2` | 24.19.2 | 26.6.5 | Raised for the Electron 45 / Vite 8 / Vitest 5 toolchain. |
 | `react-intl` | `^6.4.4` | 6.8.9 | **12.1.5** | Pairs with React 19. |
 | `react-toastify` | `^9.1.3` | 9.1.3 | **11.1.0** | Pairs with React 19. |
 | `zustand` | `^4.4.1` | 4.5.7 | **5.0.15** | Store API changed in v5 (middleware/typing). |
@@ -395,8 +396,8 @@ These are all in the migrated code, not legacy-only issues.
 | D2 | 🔴 High | [handlers.ts:97](./new/HBBatchBeast/src/backend/handlers.ts) | Standard presets are sent as plain names (`Very Fast 1080p30`), but `queueBuild`/`worker1` expect HandBrake args (`-Z "Very Fast 1080p30"`). The results table also resolves `presetIndex` against `custom_preset_string`, which is empty for standard presets. |
 | D3 | 🔴 High | [handlers.ts:80](./new/HBBatchBeast/src/backend/handlers.ts) | `HealthCheck` mode is accepted by the enum but never builds the health-check preset (`--scan` / `-v error, -f null`), so a health run would execute as a normal conversion if a caller ever sends it. |
 | D4 | 🔴 High | `package.json`, packaged output | Runtime deps missing: `fs-extra` (required by `queueBuild.js`, `worker1.js`) is undeclared and absent from the packaged app; `ffprobe` + `ffprobe-static` are not installed at all. Packaged scan/convert will crash on `require`. |
-| D5 | 🟠 Medium | `tsconfig.json`, `.eslintrc.json` | `@superflag/super-ipc-*` are ESM-only with no `main`/`types`; `module: commonjs` + `moduleResolution: node16` cannot resolve them. All 20 `tsc` errors and 8 lint errors stem from this. Build works only because Vite bundles. The fix needs TypeScript ≥ 5 for `moduleResolution: "bundler"` — see S34. |
-| D6 | 🟠 Medium | [main.ts:18](./new/HBBatchBeast/src/main.ts) | `nodeIntegration: true` alongside a contextBridge preload. Should be `false` (the preload is the only IPC path). |
+| D5 | 🟠 Medium | `tsconfig.json`, `.eslintrc.json` | `@superflag/super-ipc-*` are ESM-only with no `main`/`types`; `module: commonjs` + `moduleResolution: node16` cannot resolve them. **Fixed in phases 0–1**: TypeScript 5.9 + `moduleResolution: "bundler"`, and super-ipc 0.1.0 ships dual CJS/ESM with real type entries. |
+| D6 | 🟠 Medium | [main.ts:19](./new/HBBatchBeast/src/main.ts) | `nodeIntegration: true` alongside a contextBridge preload. **Fixed in phase 1**: now `false`. |
 | D7 | 🟠 Medium | [main.ts:36](./new/HBBatchBeast/src/main.ts) | Tray/icon paths use Windows separators (`.\assets\...`) relative to `__dirname`, but assets live in `src/assets` and are not copied to the build root. The tray is created only on Windows (so Linux/macOS get no tray at all), and the later per-platform `iconpath` assignments at lines 97–111 are dead code. |
 | D8 | 🟡 Low | [main.ts:115](./new/HBBatchBeast/src/main.ts) | Leftover legacy listeners (`item:add`, `item:ready`, `mediaview:ready`, `benchstatus:ready`) that only echo `"Test"`. |
 | D9 | 🟡 Low | [BatchOperationResults.tsx:11](./new/HBBatchBeast/src/frontend/home/BatchOperationResults.tsx) | Debug `console.log` plus unguarded `config.configs[config.selected_config]` access while the config store can still be `undefined`. |

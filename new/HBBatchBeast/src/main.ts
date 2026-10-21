@@ -1,10 +1,11 @@
 import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
 import { setupApiHandlers } from '@superflag/super-ipc-backend';
+import squirrelStartup from 'electron-squirrel-startup';
 import path from 'path';
 import { BackendAsyncHandlers, BackendHandlers } from './backend';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (require('electron-squirrel-startup')) {
+if (squirrelStartup) {
   app.quit();
 }
 
@@ -14,8 +15,8 @@ const createWindow = () => {
     width: 800,
     height: 600,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: false,
     },
     title: 'HBBatchBeast',
   });
@@ -69,19 +70,8 @@ const createWindow = () => {
       app.quit();
     });
 
-    mainWindow.on('minimize', (event: Event) => {
-      event.preventDefault();
+    mainWindow.on('minimize', () => {
       mainWindow.hide();
-    });
-
-    mainWindow.on('maximize', (event: Event) => {
-      event.preventDefault();
-      mainWindow.maximize();
-    });
-
-    mainWindow.on('unmaximize', (event: Event) => {
-      event.preventDefault();
-      mainWindow.unmaximize();
     });
 
     mainWindow.on('show', () => {
