@@ -1,13 +1,13 @@
-# HBBatchBeast (rewrite)
+# HBBatchBeast
 
 A desktop app for batch-converting video with **HandBrakeCLI** or **FFmpeg**. Point it at source
 folders, choose a destination, pick a preset per folder, and it scans recursively, skips files that
 already have output at the destination, and works through the queue with a configurable number of
 workers.
 
-This is the rewritten Electron + React + TypeScript app in [`new/HBBatchBeast`](./new/HBBatchBeast). It
-is a fork of [HaveAGitGat/HBBatchBeast](https://github.com/HaveAGitGat/HBBatchBeast); the original
-single-file jQuery app has been replaced rather than patched.
+This is a fork of [HaveAGitGat/HBBatchBeast](https://github.com/HaveAGitGat/HBBatchBeast). The original
+single-file jQuery app has been replaced rather than patched: the Electron + React + TypeScript app lives at
+the repository root.
 
 ## Requirements
 
@@ -56,7 +56,6 @@ opt back into native Wayland.
 ## Development
 
 ```bash
-cd new/HBBatchBeast
 pnpm install
 pnpm start          # Electron Forge + Vite dev app
 pnpm typecheck      # tsc --noEmit

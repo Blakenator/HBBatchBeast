@@ -13,9 +13,6 @@ jobs:
   verify:
     name: Typecheck, lint, test, package
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: new/HBBatchBeast
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +24,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: new/HBBatchBeast/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

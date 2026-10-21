@@ -1,58 +1,47 @@
 # HBBatchBeast Migration Status
 
-> Snapshot taken 2026-10-21 on branch `rewrite` (HEAD `73c9a8e`), with uncommitted work in the tree.
->
-> Legacy app: [`HBBatchBeast/`](./HBBatchBeast) (vanilla HTML/JS, Electron 3)
-> Rewrite: [`new/HBBatchBeast/`](./new/HBBatchBeast) (Electron Forge + Vite + React 18 + TypeScript, Electron 26)
+> Snapshot taken 2026-10-21 on branch `rewrite`. **Phases 0–7 of the rewrite are complete.** The legacy
+> vanilla-JS app has been deleted and the Electron Forge + Vite + React 19 + TypeScript app now lives at the
+> repository root.
 
 ---
 
 ## 1. TL;DR for the next agent
 
-The rewrite **scaffolding is done and it packages successfully**, but the app is still a skeleton: only the
-**Batch → Scan Only** path is wired end to end. Configuration load/save, a typed IPC layer, three settings
-fields, a scan button and a scan-result table exist. Everything else in the old UI (conversion, worker pool,
-queue controls, health check, scheduling, system settings, logs, tray, translations) is still living only in
-[`HBBatchBeast/mainWindow.html`](./HBBatchBeast/mainWindow.html) (~292 KB of inline JS) and
-[`HBBatchBeast/main.js`](./HBBatchBeast/main.js).
+The app at the repo root is the only app. It loads and saves profiles, scans source folders through the
+supervised `queueBuild` child, converts through a supervised worker pool, reports progress and results in the
+UI, and packages as a Linux app plus a `.deb`. `src/backend` owns IPC, child lifecycle and run state;
+`src/frontend` is the React UI (design tokens, run screen, queue table, settings drawer, profiles,
+diagnostics). `tests/` holds 50 unit tests plus one opt-in real-conversion integration test.
 
-**Design work is specified elsewhere.** UI intent now lives in
-[`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md) (personas, intents I1–I8, stories
-US-01–US-27, flows F1–F9, non-goals) and [`docs/ui-design-intent.md`](./docs/ui-design-intent.md) (principles
-D1–D8, IA, per-screen states, interaction patterns, a11y). The slice tables below remain the implementation
-inventory; where they disagree with the design intent on UI matters, the design intent wins.
+**What is verified** (§2): `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm package`, a deb build, and the
+packaged binary driven over the DevTools protocol — scan, real conversion, pause/resume/stop wiring,
+profile/language switching, both themes, media info, diagnostics.
 
-**The current React UI is a placeholder, not a design.** It exists only to exercise the new backend while
-the IPC/handler/module layer was rebuilt: three textareas, one button, one table. The legacy UI is
-feature-complete but has genuinely poor UX — ~65 raw inputs across six cramped tabs, 33 tooltip blobs,
-validation that only fires on submit, a 2,000-line scroll, and the DOM used as application state. Treat the
-legacy UI as a **feature inventory**, not a layout to copy: the rewrite should target a modern aesthetic and
-substantially better UX (see S32). Do not 1:1 port its markup or its tab structure.
+**What is not done** (§5):
+- Locale backfill — new UI strings exist only as in-code `defaultMessage`s, so non-English users still see
+  English for everything new.
+- `low_process_priority_toggle` is persisted but unused (D29).
+- Windows/macOS packages have never been built here; `HandBrakeCLI.exe` is resolved from `PATH` rather than
+  bundled.
+- TypeScript 7 and ESLint 10 stay blocked upstream (`typescript-eslint` peers).
 
-**The fork/child-process layer is the weakest part of the backend and needs restructuring (S33).** It has no
-lifecycle ownership (`error`/timeout/kill/restart), talks in positional arrays whose indices are duplicated
-across files, resolves child entry points by bare filename from `__dirname`, performs sync FS writes inside
-message handlers, and spawns more processes than it needs. Treat §3's target design as a prerequisite for the
-worker pool rather than porting the legacy orchestration as-is.
+**Where things are**: `src/main.ts` + `src/main/` (window, tray, menu, asset paths), `src/common/` (channel
+contract, config types, defaults), `src/backend/` (`handlers.ts`, `processes/`, `run/`, `helpers/`, vendored
+`modules/`), `src/frontend/` (`ui/`, `run/`, `settings/`, `diagnostics/`, `home/`, `core/`), `docs/` (UX
+inputs), `packaging/` (desktop entry).
 
-Two things will bite you immediately:
+**Design intent wins over this inventory on UI questions**: [`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md)
+(personas, intents I1–I8, stories, flows) and [`docs/ui-design-intent.md`](./docs/ui-design-intent.md)
+(principles, IA, per-screen states, a11y).
 
-1. `pnpm lint` and `npx tsc --noEmit` **both fail**. The `@superflag/super-ipc-*` packages are ESM-only
-   (`"exports": { "import": ... }`, no `main`/`types`), which `tsconfig.json` (`module: commonjs`,
-   `moduleResolution: node16`) and `eslint-plugin-import` cannot resolve. Vite still bundles them, so
-   `pnpm package` succeeds — type safety is just silently off.
-2. The ported child-process modules `require()` packages that are **not declared in `package.json`**
-   (`fs-extra`) or **not installed at all** (`ffprobe`, `ffprobe-static`). Scan works in a dev checkout by
-   accident (hoisted transitive dep) and **fails in the packaged build** (`fs-extra` is absent from
-   `out/.../resources/app/node_modules`).
+**History.** §7 is the slice inventory that drove the work (every kept slice is delivered; dropped ones are
+marked `⛔` and stay dropped). §8 is the defect log — each entry says which phase fixed it. The phased plan
+that sequenced this lives with the session, not in the repo.
 
-Do not port the "Drop candidate" slices in §7 (remote monitoring, status upload, email alerts, benchmark)
-without a decision — the owner does not intend to keep several of them.
-
-**The dependency stack is a year-plus stale and there is no test suite.** Electron 26 (latest 45), React 18
-(latest 19), TypeScript 4.9 (latest 7), super-ipc 0.0.11 (latest 0.1.0), with Forge 6, Vite 4 and ESLint 8
-behind them. Nothing verifies any of this: no test runner, no test files, and no CI workflow — the only files
-under `.github/` are issue templates. See §2 for the matrix and slices S34/S35.
+**Deliberately dropped, do not resurrect without a decision**: remote monitoring/web view and API keys,
+scheduling (periodic re-scan, daily windows, folder watching), health check/repair, email settings, h265
+benchmarking, Docker, Travis.
 
 ---
 
@@ -111,46 +100,74 @@ Upgrade notes:
 
 ---
 
-## 3. Architecture map (rewrite only)
+## 3. Architecture map
 
 ```
-new/HBBatchBeast/
-├── forge.config.ts            # Forge + Vite plugin; one build entry per child-process module
-├── vite.{main,preload,renderer}.config.ts
-├── package.json               # scripts: start / package / make / publish / lint (no typecheck, no tests)
+HBBatchBeast/                      # repo root = the app
+├── forge.config.ts                # Forge + Vite plugin, per-platform icon, ffprobe pruning hook,
+│                                  # asar.unpack for binaries, makers (squirrel/zip/rpm/deb)
+├── vite.{main,preload,renderer}.config.mts   # manual externals; emit .cjs
+├── vitest.config.mts, tsconfig.json, eslint.config.mjs
+├── package.json                   # scripts: start / package / make / lint / typecheck / test
 └── src/
-    ├── main.ts                # BrowserWindow, tray (legacy, Windows-only), setupApiHandlers()
-    ├── preload.ts             # registerElectronApiBridge(contextBridge, ipcRenderer)
-    ├── renderer.ts            # bootstrap: bootstrap.css, toastify, App
-    ├── common/                # channels.ts (channel enums + API types), types.ts (config schema)
+    ├── main.ts                    # window, ozone relaunch, tray + menu install, handler setup
+    ├── main/                      # tray.ts (status icons), menu.ts, paths.ts (dev vs resources/icons)
+    ├── preload.ts                 # registerElectronApiBridge(contextBridge, ipcRenderer)
+    ├── renderer.ts                # bootstrap: bootstrap.css, toastify, App
+    ├── types.d.ts                 # Forge magic constants + typings for untyped deps
+    ├── common/                    # channels.ts (enums + API types), types.ts, defaults.ts
     ├── backend/
-    │   ├── handlers.ts        # LoadConfiguration, SaveConfiguration, RunBatchOperation
-    │   ├── helpers/           # createLogFolders, saveAppConfig
-    │   └── modules/           # copied child-process modules: queueBuild, worker1, worker2,
-    │                          # scheduler, priorityModule, mediaAnalyser
+    │   ├── handlers.ts            # all promise channels + run control, activeRun singleton
+    │   ├── helpers/               # buildQueueBuildConfig, createLogFolders, saveAppConfig,
+    │   │                          # diagnostics, probeMedia (ffprobe)
+    │   ├── processes/             # protocol.ts (typed envelopes), childSupervisor.ts, childEntries.ts
+    │   ├── run/                   # workerProtocol, runManager (state machine + journal), runService,
+    │   │                          # buildWorkerItemConfig
+    │   └── modules/               # vendored CommonJS children: queueBuild, worker1, worker2,
+    │                              # priorityModule, mediaAnalyser
     ├── frontend/
-    │   ├── App.tsx            # IntlMessagesProvider → HomePage
-    │   ├── core/              # zustand stores, react-intl provider, message helper, common messages
-    │   ├── helpers/hooks.ts   # createUseBackendSyncHook / createUseBackendAsyncHook
-    │   ├── home/              # HomePage, ScanButton, BatchOperationResults
-    │   ├── settings/          # BatchTab (3 fields) + debounced save hook
-    │   └── versionWarning/    # GitHub releases changelog modal
-    └── translations/          # 64 locale JSON files copied from the legacy app
+    │   ├── App.tsx                # theme attributes + IntlMessagesProvider → HomePage
+    │   ├── core/                  # zustand stores, intl provider, message helper
+    │   ├── ui/                    # theme tokens, globalStyle, AppShell, Panel, Button, StatusPill
+    │   ├── run/                   # RunScreen, QueueTable (virtualized), MediaInfoModal, validation
+    │   ├── settings/              # schema.ts + SettingsForm, profile/ProfileBar, LanguageSelect, hooks
+    │   ├── diagnostics/           # DiagnosticsPanel (logs, caches, run journal)
+    │   ├── home/                  # HomePage (drawer, version notice, tray status)
+    │   └── versionWarning/        # GitHub releases changelog
+    └── translations/              # 64 locale JSON files (legacy keys, defaults merged at runtime)
 ```
 
-### IPC contract (already migrated)
+### IPC contract
 
 | Channel | Kind | Props | Result |
 | --- | --- | --- | --- |
 | `LOAD_CONFIGURATION` | sync | — | `GlobalAppConfig` |
 | `SAVE_CONFIGURATION` | sync | `GlobalAppConfig` | — |
+| `GET_RUN_STATE` | sync | — | `RunState \| null` |
+| `PAUSE_RUN` / `RESUME_RUN` / `STOP_RUN` | sync | — | `RunState \| null` |
+| `CANCEL_RUN_ITEM` | sync | `{ index }` | `RunState \| null` |
+| `GET_DIAGNOSTICS` / `CLEAR_CACHES` / `CLEAR_RUN_JOURNAL` | sync | — | diagnostics payload / `{ cleared }` / — |
+| `OPEN_APP_PATH` | sync | `{ path }` | — (guarded to the log/config folders) |
+| `PROBE_MEDIA` | sync | `{ path }` | `MediaInfo` (ffprobe) |
+| `SET_TRAY_STATUS` | sync | `{ status }` | — |
 | `RUN_BATCH_OPERATION` | async | `{ config, operationMode }` | init/progress/complete `RunBatchOperationResult` |
+| `RUN_CONVERSION` | async | `{ config, items }` | init/progress/complete `RunState` |
 
 ### Runtime layout / config
 
 - `pnpm start` runs `scripts/start.mjs`, which adds `--ozone-platform=x11` on Linux because Electron 45 draws
   no window decorations on native Wayland (no titlebar buttons). Packaged builds re-exec themselves with the
-  same flag; `HBB_OZONE_PLATFORM=wayland` opts out.
+  same flag, and the generated `.desktop` entry passes it too; `HBB_OZONE_PLATFORM=wayland` opts out.
+- Tray icons and the window icon are read from `resources/icons` when packaged and `src/assets/icons` in
+  development (`src/main/paths.ts`); a missing icon logs `Tray icon could not be loaded`.
+- Tray status follows the run status the renderer reports over `SET_TRAY_STATUS`.
+- Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
+- Logs, worker scratch dirs and the filter-cache files are created by `createLogFolders()` on every load/save;
+  the diagnostics panel lists and clears them.
+- `GlobalAppConfig = { lang, selected_config, version_message, configs: BatchConfig[] }`; each config has
+  `tab_batch` and `tab_system` (both `Partial<>`) plus optional `name`. Legacy keys such as `tab_health`,
+  `tab_remote` and `api_key` remain in old files and are carried through untouched.
+- `BatchOperationMode` has `ScanOnly` and `ScanAndConvert`; anything else throws before a child is forked.
 
 ### Toolchain invariants (do not "simplify" these)
 
@@ -163,11 +180,9 @@ new/HBBatchBeast/
 - Vite configs stay `.mts` and read `package.json` through `fs`, otherwise the native config loader warns.
 - `IntlMessagesProvider` merges the in-code catalogs into `messages`; removing the merge brings back a
   `MISSING_TRANSLATION` error per id per render.
-- Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
-- Logs and worker scratch dirs are created by `createLogFolders()` on every load/save.
-- `GlobalAppConfig = { lang, selected_config, version_message, api_key, configs: BatchConfig[] }`;
-  each config has `tab_health`, `tab_batch`, `tab_remote`, `tab_system` (all `Partial<>`) and optional `name`.
-- `BatchOperationMode` currently has `HealthCheck`, `ScanOnly`, `ScanAndConvert`; only `ScanOnly` has a UI.
+- Packaging: `asar.unpack` keeps the ffprobe binary executable, `packageAfterCopy` prunes the ffprobe binaries
+  for other platforms, `extraResource` ships only `icons`, `executableName` must equal the package `name`, and
+  makers must be declared in object form (`{ name, config }`) or their `config.options` are ignored.
 
 ### Child-process protocol (S33)
 
@@ -194,15 +209,16 @@ arrays it replaced are gone.
 Child entry points are resolved through `childEntries.ts` (name → emitted `.cjs` filename) and validated at
 startup, so a stale build fails immediately with an actionable message instead of `MODULE_NOT_FOUND`.
 
-The legacy worker protocol (`queueWorkerMessage()` at
-[mainWindow.html:4916](./HBBatchBeast/mainWindow.html)) is **not** migrated; it is a 36-field array that
-`worker1.js` consumes. Port it as a typed object rather than an index-based array.
+The renderer → worker path is migrated: the 36-field legacy array that `worker1.js` consumes is translated
+at the boundary in `src/backend/run/workerProtocol.ts` (`encodeWorkerItem`/`parseWorkerEvent`), so the rest of
+the backend deals in typed `WorkerItemConfig` values and typed events only.
 
 ### Fork / child-process architecture — restructured in S33
 
-The process model was inherited straight from the legacy app and was the weakest part of the backend. It has
-since been replaced by `src/backend/processes/` (supervisor + typed protocol + entry manifest). The original
-analysis is kept below because the same rules apply to the worker pool that still has to be ported.
+The process model was inherited straight from the (now deleted) legacy app and was the weakest part of the
+backend. It has been replaced by `src/backend/processes/` (supervisor + typed protocol + entry manifest) and
+`src/backend/run/` (worker dispatch). The original analysis is kept below because the same rules apply to any
+future child process added to the app.
 
 **How it worked before S33**
 
@@ -246,7 +262,7 @@ analysis is kept below because the same rules apply to the worker pool that stil
 - Progress is deltas/counters only; the file list travels once, in `complete`.
 - No sync filesystem work happens in main while a child runs.
 
-**Still to apply to the worker pool (S19) — the design it should follow**
+**The design the worker pool was migrated to (S19, delivered in phase 4)**
 
 - One **process supervisor** module in main (`src/backend/processes/`) that owns every child: spawn, typed
   envelopes (`{ id, type, payload }` discriminated unions with a version), request/response correlation IDs,
@@ -293,7 +309,7 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S12 | Legacy app removed: `HBBatchBeast/` (including `HandBrakeCLI.exe` and test media) and `.travis.yml` are gone; a 184 KB sample for the integration test now lives in `tests/fixtures/sample.mp4`, and the README is rewritten for the rewrite |
 
 Also carried over as-is: the six legacy child-process modules are now under
-[`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and
+[`src/backend/modules/`](./src/backend/modules) (only `queueBuild.js` was reformatted and
 lightly adapted; the other five are byte-identical to the legacy copies).
 
 ---
@@ -448,40 +464,40 @@ These are all in the migrated code, not legacy-only issues.
 
 | # | Severity | Where | Problem |
 | --- | --- | --- | --- |
-| D1 | 🔴 High | [buildQueueInfoBomb.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueInfoBomb.ts) | `file_name_suffix_toggle === 1 ? ... : []` sent an **empty array** when the toggle was off, so `queueBuild` produced `aundefined.mp4` destinations. **Fixed in phase 2**: the builder always emits one suffix per source folder and pads partial lists. Covered by tests. |
-| D2 | 🔴 High | [buildQueueInfoBomb.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueInfoBomb.ts) | Standard presets are sent as plain names, but `queueBuild`/`worker1` expect HandBrake args. **Fixed in phase 2**: standard presets are wrapped as `-Z "…"` (already-argument presets are left alone) and the results table resolves labels from the active preset source. |
-| D3 | 🔴 High | [types.ts](./new/HBBatchBeast/src/common/types.ts) | `HealthCheck` mode was accepted but never built the health-check preset, so a health run would have executed as a conversion. **Fixed in phase 2**: the mode is gone from the enum and any unsupported/absent mode throws before a child is forked. |
+| D1 | 🔴 High | [buildQueueInfoBomb.ts](./src/backend/helpers/buildQueueInfoBomb.ts) | `file_name_suffix_toggle === 1 ? ... : []` sent an **empty array** when the toggle was off, so `queueBuild` produced `aundefined.mp4` destinations. **Fixed in phase 2**: the builder always emits one suffix per source folder and pads partial lists. Covered by tests. |
+| D2 | 🔴 High | [buildQueueInfoBomb.ts](./src/backend/helpers/buildQueueInfoBomb.ts) | Standard presets are sent as plain names, but `queueBuild`/`worker1` expect HandBrake args. **Fixed in phase 2**: standard presets are wrapped as `-Z "…"` (already-argument presets are left alone) and the results table resolves labels from the active preset source. |
+| D3 | 🔴 High | [types.ts](./src/common/types.ts) | `HealthCheck` mode was accepted but never built the health-check preset, so a health run would have executed as a conversion. **Fixed in phase 2**: the mode is gone from the enum and any unsupported/absent mode throws before a child is forked. |
 | D4 | 🔴 High | `package.json`, `forge.config.ts` | Runtime deps were missing/undeclared. **Fixed in phase 2**: `fs-extra`, `ffprobe` and `ffprobe-static` are declared, `node-linker=hoisted` keeps `node_modules` copyable, and `packagerConfig.ignore` keeps `package.json` + production `node_modules` in the package. Verified by running a scan from the extracted `app.asar`. **Shrunk in phase 7**: `packageAfterCopy` prunes the non-target `ffprobe-static` binaries and the package is now ~444 MB. |
 | D5 | 🟠 Medium | `tsconfig.json`, `.eslintrc.json` | `@superflag/super-ipc-*` are ESM-only with no `main`/`types`; `module: commonjs` + `moduleResolution: node16` cannot resolve them. **Fixed in phases 0–1**: TypeScript 5.9 + `moduleResolution: "bundler"`, and super-ipc 0.1.0 ships dual CJS/ESM with real type entries. |
-| D6 | 🟠 Medium | [main.ts:19](./new/HBBatchBeast/src/main.ts) | `nodeIntegration: true` alongside a contextBridge preload. **Fixed in phase 1**: now `false`. |
-| D7 | 🟠 Medium | [main.ts:36](./new/HBBatchBeast/src/main.ts) | Tray/icon paths use Windows separators (`.\assets\...`) relative to `__dirname`, but assets live in `src/assets` and are not copied to the build root. The tray is created only on Windows (so Linux/macOS get no tray at all), and the later per-platform `iconpath` assignments at lines 97–111 are dead code. |
-| D8 | 🟡 Low | [main.ts:115](./new/HBBatchBeast/src/main.ts) | Leftover legacy listeners (`item:add`, `item:ready`, `mediaview:ready`, `benchstatus:ready`) that only echo `"Test"`. |
-| D9 | 🟡 Low | [BatchOperationResults.tsx](./new/HBBatchBeast/src/frontend/home/BatchOperationResults.tsx) | Debug `console.log` plus unguarded config access. **Fixed in phase 2** while correcting preset labels. |
+| D6 | 🟠 Medium | [main.ts:19](./src/main.ts) | `nodeIntegration: true` alongside a contextBridge preload. **Fixed in phase 1**: now `false`. |
+| D7 | 🟠 Medium | [main.ts:36](./src/main.ts) | Tray/icon paths use Windows separators (`.\assets\...`) relative to `__dirname`, but assets live in `src/assets` and are not copied to the build root. The tray is created only on Windows (so Linux/macOS get no tray at all), and the later per-platform `iconpath` assignments at lines 97–111 are dead code. |
+| D8 | 🟡 Low | [main.ts:115](./src/main.ts) | Leftover legacy listeners (`item:add`, `item:ready`, `mediaview:ready`, `benchstatus:ready`) that only echo `"Test"`. |
+| D9 | 🟡 Low | [BatchOperationResults.tsx](./src/frontend/home/BatchOperationResults.tsx) | Debug `console.log` plus unguarded config access. **Fixed in phase 2** while correcting preset labels. |
 | D10 | 🟡 Low | `src/common/types.ts` | `BatchOperationMode.ScanOnly = 'scannonly'` (typo, and the comment says "replace this with flags"). `queueBuild` compares against `'healthCheck'` only, so the typo is currently harmless but confusing. |
-| D11 | 🟡 Low | `new/HBBatchBeast/dist/` | Stale, untracked `tsc` output from the earlier build; safe to delete and add to `.gitignore`. |
+| D11 | 🟡 Low | `dist/` | Stale, untracked `tsc` output from the earlier build; safe to delete and add to `.gitignore`. |
 | D12 | 🟡 Low | `package.json` | Placeholder `description` ("My Electron application description"), lowercase `productName`, no `icon` in `packagerConfig`, no `typecheck`/`test` scripts. |
 | D13 | 🟠 Medium | `src/backend/processes/` | No child lifecycle management previously: no `error` listener, timeout, kill path or restart, so a hung child left the run pending forever. **Fixed in phase 3** by `ChildSupervisor` (ready timeout, run watchdog, SIGTERM→SIGKILL, restart budget, `will-quit` shutdown). |
 | D14 | 🟠 Medium | `src/backend/handlers.ts` | Sync FS writes ran inside the child `message` handler, blocking the main event loop. **Fixed in phase 3**: the write/append message types are gone; children log through typed `log` messages only. |
 | D15 | 🟠 Medium | `src/backend/handlers.ts` | Progress re-serialized the whole result including the growing file list. **Fixed in phase 3**: progress carries counters only; the file list is sent once in `complete`. |
 | D16 | 🟡 Low | `package.json` | `@types/react` is not declared; it resolves only via peer hoisting, and the tree currently contains two incompatible copies (18.3.23 and 19.1.9). Declare it explicitly and keep it aligned with `react`/`react-dom` during the S34 upgrade. |
 | D17 | 🟡 Low | whole repo | No automated verification of any kind: no test runner, no test files, no CI workflow. Every dependency bump and refactor is validated by hand. See S35. |
-| D18 | 🟡 Low | [createLogFolders.ts](./new/HBBatchBeast/src/backend/helpers/createLogFolders.ts) | Assumed `~/Documents` already existed. **Fixed in phase 2**: all directory creation is recursive, covered by a fresh-home test. |
-| D19 | 🟠 Medium | [queueBuild.js](<./new/HBBatchBeast/src/backend/modules/queueBuild.js>) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
+| D18 | 🟡 Low | [createLogFolders.ts](./src/backend/helpers/createLogFolders.ts) | Assumed `~/Documents` already existed. **Fixed in phase 2**: all directory creation is recursive, covered by a fresh-home test. |
+| D19 | 🟠 Medium | [queueBuild.js](<./src/backend/modules/queueBuild.js>) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
 
-| D20 | 🔴 High | [stores.ts](./new/HBBatchBeast/src/frontend/core/stores.ts) | The "mirror this prop into the store" store helper (`useSetValue`) ran its effect with no argument, so any component that only wanted the setter reset the value to `undefined`. The scan result was stored and immediately wiped, leaving the queue permanently empty. **Fixed in phase 5**: the helper is gone; callers set the store explicitly (`useSetter`). |
-| D21 | 🔴 High | [HomePage.tsx](./new/HBBatchBeast/src/frontend/home/HomePage.tsx) | The loaded config was re-mirrored into the store on every render, so every settings/profile edit was silently undone by the next render. **Fixed in phase 5**: the store is seeded once per fetch result, and successful settings saves push the saved config back into the store. |
-| D22 | 🟠 Medium | [globalStyle.ts](./new/HBBatchBeast/src/frontend/ui/globalStyle.ts) | Bootstrap kept its stock light palette inside the dark shell, so the settings drawer rendered white-on-white. **Fixed in phase 5**: `--bs-*` variables are mapped to theme tokens and `data-theme`/`data-bs-theme` follow `prefers-color-scheme`. |
-| D23 | 🟠 Medium | [buildQueueBuildConfig.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueBuildConfig.ts) | `queueBuild` concatenates the container onto the file name, so a profile storing `mkv` instead of `.mkv` produced `Episode 01mkv`. **Fixed in phase 5**: the container is normalised to a dotted extension (test added). |
-| D24 | 🟠 Medium | [RunScreen.tsx](./new/HBBatchBeast/src/frontend/run/RunScreen.tsx) | The status pill read the last *progress* frame, which still says `running`, so a finished run showed "Running" forever. **Fixed in phase 5**: the terminal payload wins. |
-| D25 | 🟡 Low | [RunScreen.tsx](./new/HBBatchBeast/src/frontend/run/RunScreen.tsx) | Switching profile kept the previous profile's queue and run rows on screen, so Start could have run files from another profile. **Fixed in phase 5**: queue and run state are keyed to a signature of the active profile's queue-relevant settings. |
-| D26 | 🟡 Low | [ProfileBar.tsx](./new/HBBatchBeast/src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
-| D27 | 🟡 Low | [Panel.tsx](./new/HBBatchBeast/src/frontend/ui/Panel.tsx), [QueueTable.tsx](./new/HBBatchBeast/src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
+| D20 | 🔴 High | [stores.ts](./src/frontend/core/stores.ts) | The "mirror this prop into the store" store helper (`useSetValue`) ran its effect with no argument, so any component that only wanted the setter reset the value to `undefined`. The scan result was stored and immediately wiped, leaving the queue permanently empty. **Fixed in phase 5**: the helper is gone; callers set the store explicitly (`useSetter`). |
+| D21 | 🔴 High | [HomePage.tsx](./src/frontend/home/HomePage.tsx) | The loaded config was re-mirrored into the store on every render, so every settings/profile edit was silently undone by the next render. **Fixed in phase 5**: the store is seeded once per fetch result, and successful settings saves push the saved config back into the store. |
+| D22 | 🟠 Medium | [globalStyle.ts](./src/frontend/ui/globalStyle.ts) | Bootstrap kept its stock light palette inside the dark shell, so the settings drawer rendered white-on-white. **Fixed in phase 5**: `--bs-*` variables are mapped to theme tokens and `data-theme`/`data-bs-theme` follow `prefers-color-scheme`. |
+| D23 | 🟠 Medium | [buildQueueBuildConfig.ts](./src/backend/helpers/buildQueueBuildConfig.ts) | `queueBuild` concatenates the container onto the file name, so a profile storing `mkv` instead of `.mkv` produced `Episode 01mkv`. **Fixed in phase 5**: the container is normalised to a dotted extension (test added). |
+| D24 | 🟠 Medium | [RunScreen.tsx](./src/frontend/run/RunScreen.tsx) | The status pill read the last *progress* frame, which still says `running`, so a finished run showed "Running" forever. **Fixed in phase 5**: the terminal payload wins. |
+| D25 | 🟡 Low | [RunScreen.tsx](./src/frontend/run/RunScreen.tsx) | Switching profile kept the previous profile's queue and run rows on screen, so Start could have run files from another profile. **Fixed in phase 5**: queue and run state are keyed to a signature of the active profile's queue-relevant settings. |
+| D26 | 🟡 Low | [ProfileBar.tsx](./src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
+| D27 | 🟡 Low | [Panel.tsx](./src/frontend/ui/Panel.tsx), [QueueTable.tsx](./src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
 | D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
-| D29 | 🟠 Medium | [schema.ts](./new/HBBatchBeast/src/frontend/settings/schema.ts) | `low_process_priority_toggle` is persisted but nothing consumes it: `worker1.js` launches HandBrakeCLI without any priority handling and `priorityModule.js` is unreferenced. Needs either `nice`/`start /LOW` wiring in the encode command or removal from the UI. |
-| D30 | 🟠 Medium | [VersionWarning.tsx](./new/HBBatchBeast/src/frontend/versionWarning/VersionWarning.tsx) | The changelog notice read releases from the **upstream** repo (`HaveAGitGat/HBBatchBeast`) and never recorded that the user had seen it, so it reappeared every launch. **Fixed in phase 6**: it reads this fork's releases and persists the acknowledged version. |
+| D29 | 🟠 Medium | [schema.ts](./src/frontend/settings/schema.ts) | `low_process_priority_toggle` is persisted but nothing consumes it: `worker1.js` launches HandBrakeCLI without any priority handling and `priorityModule.js` is unreferenced. Needs either `nice`/`start /LOW` wiring in the encode command or removal from the UI. |
+| D30 | 🟠 Medium | [VersionWarning.tsx](./src/frontend/versionWarning/VersionWarning.tsx) | The changelog notice read releases from the **upstream** repo (`HaveAGitGat/HBBatchBeast`) and never recorded that the user had seen it, so it reappeared every launch. **Fixed in phase 6**: it reads this fork's releases and persists the acknowledged version. |
 | D32 | 🔴 High | `forge.config.ts` | `ffprobe-static`'s binary was packed **inside** `app.asar`, and binaries cannot be executed from an asar archive, so media info and the `mediaAnalyser` child would fail in packaged builds. **Fixed in phase 7**: `asar.unpack` extracts `ffprobe-static/bin/**`, verified by probing a file from the packaged app. |
 | D33 | 🟠 Medium | `package.json` | `license: MIT` while `LICENSE` is GPL-3.0, and the metadata was still the Electron Forge placeholder (`productName: hbbatchbeast`, "My Electron application description'). **Fixed in phase 7**: GPL-3.0-only, real description/author/repo/keywords, `productName: HBBatchBeast`. |
-| D31 | 🟡 Low | [tray.ts](./new/HBBatchBeast/src/main/tray.ts) | Legacy tray code only ran on Windows and pointed at `__dirname/assets`, which does not exist in the build output, so Linux/macOS had no tray at all and Windows had broken icons. **Fixed in phase 6**: one cross-platform tray, assets resolved through `resources/assets`, with a logged warning when an icon cannot be loaded. |
+| D31 | 🟡 Low | [tray.ts](./src/main/tray.ts) | Legacy tray code only ran on Windows and pointed at `__dirname/assets`, which does not exist in the build output, so Linux/macOS had no tray at all and Windows had broken icons. **Fixed in phase 6**: one cross-platform tray, assets resolved through `resources/assets`, with a logged warning when an icon cannot be loaded. |
 
 ---
 
