@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { setupApiHandlers } from '@superflag/super-ipc-backend';
 import squirrelStartup from 'electron-squirrel-startup';
 import path from 'path';
@@ -8,6 +8,38 @@ import { validateChildEntries } from './backend/processes/childEntries';
 import { createTray, destroyTray } from './main/tray';
 import { installAppMenu } from './main/menu';
 import { assetPath } from './main/paths';
+import {
+  describeCounts,
+  enforceProcessBudget,
+  parseMaxParallel,
+  setMaxParallel,
+} from './main/processBudget';
+
+// Optional startup guard: refuse to run when the machine already has more
+// encoder processes than the configured budget (see main/processBudget.ts).
+let startupBlocked = false;
+try {
+  const maxParallel = parseMaxParallel(process.argv, process.env);
+  if (maxParallel !== undefined) {
+    setMaxParallel(maxParallel);
+    const counts = enforceProcessBudget(maxParallel);
+    console.log(
+      `--max-parallel ${maxParallel} accepted: ${describeCounts(counts)}.`,
+    );
+  }
+} catch (error) {
+  startupBlocked = true;
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  // A terminal launch shows the message directly; a desktop launch would
+  // otherwise fail silently, so keep a dialog for that case only.
+  if (process.stdout.isTTY) {
+    app.exit(1);
+  } else {
+    dialog.showErrorBox('HBBatchBeast cannot start', message);
+    app.exit(1);
+  }
+}
 
 // Electron 45 running natively on Wayland under GNOME renders no window
 // decorations, so the titlebar (and its maximise/close buttons) disappears.
@@ -97,7 +129,13 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
+app.on('ready', () => {
+  if (startupBlocked) {
+    app.quit();
+    return;
+  }
+  createWindow();
+});
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

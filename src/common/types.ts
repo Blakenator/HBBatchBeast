@@ -48,16 +48,17 @@ export interface BatchTabConfig {
   };
   HandBrake_toggle: 0 | 1;
   FFmpeg_toggle: 0 | 1;
+  /** @deprecated Preset selection now lives in `custom_preset_string`. */
   custom_preset_toggle: 0 | 1;
+  /** @deprecated Read as a fallback for profiles saved before the unified field. */
   preset: string;
   custom_preset_string: string;
   container: string;
 }
 
-export interface SystemTabConfig {
+/** App-wide preferences. Legacy files may still store these under each profile. */
+export interface GlobalSettingsConfig {
   worker_instance_number: string;
-  max_queue_view_size: string;
-  run_on_program_startup_toggle: 0 | 1;
   save_worker_logs_toggle: 0 | 1;
 }
 
@@ -68,12 +69,14 @@ export interface SystemTabConfig {
  */
 export interface BatchConfig {
   tab_batch: Partial<BatchTabConfig>;
-  tab_system: Partial<SystemTabConfig>;
+  /** @deprecated Read only for migrating app-wide preferences from old files. */
+  tab_system?: Partial<GlobalSettingsConfig>;
   name?: string;
 }
 
 export interface GlobalAppConfig {
   lang: string;
+  app_settings?: Partial<GlobalSettingsConfig>;
   selected_config: number;
   version_message: string;
   configs: BatchConfig[];
@@ -130,6 +133,36 @@ export interface DiagnosticsInfo {
 
 /** Tray indicator states, shared by the renderer and the tray module. */
 export type TrayStatus = 'idle' | 'running' | 'paused' | 'error';
+
+export type PathPickerKind = 'folder' | 'file';
+
+export interface PathPickerRequest {
+  kind: PathPickerKind;
+  /** Lets the user select several paths in one dialog. */
+  multiple?: boolean;
+  title?: string;
+  defaultPath?: string;
+  filters?: { name: string; extensions: string[] }[];
+}
+
+export interface PathPickerResult {
+  canceled: boolean;
+  paths: string[];
+}
+
+export interface HandBrakePreset {
+  name: string;
+  category: string;
+  description?: string;
+}
+
+export interface HandBrakePresetScan {
+  /** False when HandBrakeCLI could not be run or returned nothing usable. */
+  available: boolean;
+  executable?: string;
+  presets: HandBrakePreset[];
+  error?: string;
+}
 
 export interface ConversionItem {
   path: string;

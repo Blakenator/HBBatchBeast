@@ -6,9 +6,6 @@ import { useBackend } from '../helpers';
 import { PROMISE_CHANNEL, TrayStatus } from '../../common';
 import { VersionWarning } from '../versionWarning/VersionWarning';
 import { SettingsForm } from '../settings/SettingsForm';
-import { ProfileBar } from '../settings/profile/ProfileBar';
-import { LanguageSelect } from '../settings/LanguageSelect';
-import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
 import { useGlobalConfig, useSetGlobalConfigDirect } from '../core/stores';
 import { AppShell } from '../ui/AppShell';
 import { AppStatus } from '../ui/StatusPill';
@@ -105,22 +102,13 @@ export const HomePage: React.FC = () => {
         show={settingsOpen}
         onHide={() => setSettingsOpen(false)}
         placement="end"
-        style={{ width: 520 }}
+        style={{ width: 'min(720px, 100vw)' }}
       >
         <Offcanvas.Header closeButton>
           <Offcanvas.Title>{formatMessage(homeMessages.settings)}</Offcanvas.Title>
         </Offcanvas.Header>
         <Offcanvas.Body>
-          <ProfileBar />
-          <div style={{ marginTop: 'var(--hb-space-md)' }}>
-            <LanguageSelect config={globalConfig} />
-          </div>
-          <div style={{ marginTop: 'var(--hb-space-md)' }}>
-            <SettingsForm config={globalConfig} />
-          </div>
-          <div style={{ marginTop: 'var(--hb-space-lg)' }}>
-            <DiagnosticsPanel />
-          </div>
+          <SettingsForm config={globalConfig} />
         </Offcanvas.Body>
         <div style={{ padding: 'var(--hb-space-lg)', borderTop: '1px solid var(--hb-border)' }}>
           <Button variant="secondary" onClick={() => setSettingsOpen(false)}>

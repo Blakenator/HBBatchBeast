@@ -164,8 +164,9 @@ HBBatchBeast/                      # repo root = the app
 - Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
 - Logs, worker scratch dirs and the filter-cache files are created by `createLogFolders()` on every load/save;
   the diagnostics panel lists and clears them.
-- `GlobalAppConfig = { lang, selected_config, version_message, configs: BatchConfig[] }`; each config has
-  `tab_batch` and `tab_system` (both `Partial<>`) plus optional `name`. Legacy keys such as `tab_health`,
+- `GlobalAppConfig = { lang, app_settings, selected_config, version_message, configs: BatchConfig[] }`;
+  each config has `tab_batch` plus optional `name`. Legacy `tab_system` worker/log settings are promoted
+  from the active profile into shared `app_settings` when loading old configurations. Legacy keys such as `tab_health`,
   `tab_remote` and `api_key` remain in old files and are carried through untouched.
 - `BatchOperationMode` has `ScanOnly` and `ScanAndConvert`; anything else throws before a child is forked.
 
@@ -320,11 +321,13 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 | --- | --- |
 | S34 | TypeScript 7 and ESLint 10 remain blocked upstream (see §2); everything else is current. |
 | S13 | Selector and loading are done, but the new UI strings only exist as in-code `defaultMessage`s — the 64 locale JSONs still hold the legacy sentences, so non-English users see English for the new UI. Needs a string-extraction pass (or `en.json` regeneration) plus translations. |
-| S16–S18 | Options are all editable now; two gaps remain: folder mappings are still newline textareas rather than row editors (design intent §4), and "auto-create destination folders"/NVENC-style preset warnings are not implemented. |
+| S16–S18 | Rebuilt as real list editors: paired source/destination/temp rows with OS folder pickers, chip token lists for file types and title words, key/value property-filter rows with Off/any/all, per-folder preset and suffix rows, and a container select. Presets are scanned from the installed `HandBrakeCLI --preset-list` (categorised, with a manual fallback); stale values are flagged with recovery guidance, and hardware-encoder settings warn when multiple workers are configured. Missing destination folders are already created automatically by the queue builder, now called out in the UI. |
+| — | Settings are split into Global and Profiles tabs. Language, worker count, verbose worker logs, and log/diagnostic locations are global; conversion folders, encoder, presets and file handling remain profile-scoped. Legacy `tab_system` settings migrate from the active profile on load. |
 | S21 | Queue table covers scan + run rows, status chips and path search. Row actions (cancel item, open log, reveal, media info, retry) and bulk selection are still to come. |
-| S32 | Remaining design work: keyboard-first affordances beyond the native `<details>`/modal behaviour, dark/light contrast audit on real hardware, and the row-editor rework above. |
+| S32 | Row-level inputs now have explicit accessible labels. Remaining design work: keyboard-first navigation beyond native `<details>`/modal/segmented-switch behaviour and a dark/light contrast audit on real hardware. The row-editor rework landed with the settings UX pass. |
 | — | Dropped-feature cleanup is done at the config/entry level (`scheduler.js` entry deleted, health/remote/email/`api_key` removed from the types). The health-check branches inside the vendored `queueBuild.js`/`worker1.js` are unreachable and `queueBuild` now rejects `healthCheck` mode explicitly; stripping them needs a rewrite of those modules. |
-| — | `low_process_priority_toggle` is still a no-op (D29). |
+| — | `low_process_priority_toggle` is still a no-op (D29), so it is no longer shown in the settings drawer; the stored value is preserved. |
+| — | `--max-parallel <n>` (or `HBB_MAX_PARALLEL`) is a startup guard: the app counts existing HandBrakeCLI/FFmpeg/ffprobe and worker processes and refuses to start when the total exceeds the budget. The same limit caps the worker count, and preset scans are skipped while the budget is full. |
 | — | Only the icon directory is shipped now (`resources/icons`), so the legacy fonts and promo images no longer travel with the app. |
 | — | Windows `HandBrakeCLI.exe` is not bundled automatically: the packaged app resolves it from `PATH`, and `packaging/bin` is not wired into `extraResource`. Windows/macOS packages cannot be built or verified on this Linux host. |
 
@@ -372,8 +375,8 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | ID | Feature slice | Short description | State | Depends on | Suggested | Keep? |
 | --- | --- | --- | --- | --- | --- | --- |
 | S14 | Scan / queue build | Recursively scan source folders, diff against destination, apply file-type + title filters, return queue with per-file preset and extra actions. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
-| S15 | Batch paths & folder options | Source/destination/temp folder lists (one per line), temp-conversion toggle, auto-create folders, folder validation. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
-| S16 | Encoder & preset selection | HandBrake vs FFmpeg, standard preset dropdown vs custom preset lines, container, per-folder suffix, preset validation and NVENC/imported-preset warnings. | ✅ | S15 | Keep | `[x] yes  [ ] no` |
+| S15 | Batch paths & folder options | Paired source/destination rows with optional per-row temp folders (folder pickers, add/remove row, multi-line paste), temp-conversion toggle, auto-create folders, per-row validation. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
+| S16 | Encoder & preset selection | HandBrake vs FFmpeg segmented switch, per-folder preset rows populated from the installed HandBrakeCLI, per-folder FFmpeg/custom argument rows, container select, per-folder suffix, preset validation; NVENC/imported-preset warnings remain. | ✅ | S15 | Keep | `[x] yes  [ ] no` |
 | S17 | File selection filters | Included file types, min/max size, title word filter, include/exclude media-property filters (any/all), copy-filtered-files, copy SRT files. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
 | S18 | File handling actions | Delete source, replace original (always / if smaller), remove apostrophes, reverse queue, custom batch-file hook, low process priority. | ✅ | S16 | Keep | `[x] yes  [ ] no` |
 | S19 | Worker pool execution | Fork N `worker1` processes, dispatch queue items, track per-worker status/percentages, progress, priority process, cancel item, error collection. | ⛔ | S14, S16 | Keep — core of the app | `[x] yes  [ ] no` |

@@ -4,13 +4,14 @@ import { buildWorkerItemConfig } from '../src/backend/run/buildWorkerItemConfig'
 
 function makeConfig(
   batch: GlobalAppConfig['configs'][number]['tab_batch'] = {},
-  system: GlobalAppConfig['configs'][number]['tab_system'] = {},
+  appSettings: GlobalAppConfig['app_settings'] = {},
 ): GlobalAppConfig {
   return {
     lang: 'en',
     selected_config: 0,
     version_message: 'test',
-    configs: [{ name: 'Default', tab_batch: batch, tab_system: system }],
+    app_settings: appSettings,
+    configs: [{ name: 'Default', tab_batch: batch }],
   };
 }
 
@@ -86,5 +87,25 @@ describe('buildWorkerItemConfig', () => {
     // health check is out of scope and must stay disabled
     expect(config.thoroughHealthCheck).toBe(false);
     expect(config.repairFile).toBe(false);
+  });
+
+  it('reads legacy per-profile log settings when no global value exists', () => {
+    const config = buildWorkerItemConfig(
+      {
+        ...makeConfig(),
+        configs: [
+          {
+            name: 'Legacy',
+            tab_batch: {},
+            tab_system: { save_worker_logs_toggle: 1 },
+          },
+        ],
+      },
+      item,
+      0,
+      'linux',
+    );
+
+    expect(config.saveWorkerLogs).toBe(true);
   });
 });

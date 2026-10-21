@@ -8,7 +8,10 @@ const forgeCli = require.resolve('@electron-forge/cli/dist/electron-forge.js');
 // titlebar buttons. The Ozone platform has to be chosen before the app script
 // runs, so dev has to pass it on the command line. Packaged builds re-exec
 // themselves for the same reason (see src/main.ts).
-const electronArgs = process.platform === 'linux' ? ['--', '--ozone-platform=x11'] : [];
+const ozoneArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
+// Forward extra args (e.g. `pnpm start -- --max-parallel 4`) to the app itself.
+const appArgs = [...ozoneArgs, ...process.argv.slice(2)];
+const electronArgs = ['--', ...appArgs];
 
 const child = spawn(
   process.execPath,

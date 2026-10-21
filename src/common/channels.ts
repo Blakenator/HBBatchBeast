@@ -1,8 +1,11 @@
 import {
   ConversionItem,
   DiagnosticsInfo,
+  HandBrakePresetScan,
   MediaInfo,
   GlobalAppConfig,
+  PathPickerRequest,
+  PathPickerResult,
   TrayStatus,
   RunBatchOperationProps,
   RunBatchOperationResult,
@@ -28,6 +31,8 @@ export enum PROMISE_CHANNEL {
   ClearCaches = 'CLEAR_CACHES',
   ClearRunJournal = 'CLEAR_RUN_JOURNAL',
   ProbeMedia = 'PROBE_MEDIA',
+  PickPath = 'PICK_PATH',
+  ListHandBrakePresets = 'LIST_HANDBRAKE_PRESETS',
 }
 
 export enum ASYNC_CHANNEL {
@@ -87,6 +92,14 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
   [PROMISE_CHANNEL.ProbeMedia]: {
     props: { path: string };
     result: MediaInfo;
+  };
+  [PROMISE_CHANNEL.PickPath]: {
+    props: PathPickerRequest;
+    result: PathPickerResult;
+  };
+  [PROMISE_CHANNEL.ListHandBrakePresets]: {
+    props: { refresh?: boolean };
+    result: HandBrakePresetScan;
   };
 }
 

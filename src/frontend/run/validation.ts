@@ -1,14 +1,21 @@
-import { BatchTabConfig } from '../../common';
+import {
+  BatchTabConfig,
+  HANDBRAKE_CONTAINERS,
+  normalizeContainerExtension,
+  parseMappedRows,
+} from '../../common';
 
-function lines(value?: string): string[] {
-  return (value ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+const trimTrailingSeparators = (value: string) => value.replace(/[\\/]+$/, '');
+
+export function isInside(child: string, parent: string): boolean {
+  const childPath = trimTrailingSeparators(child);
+  const parentPath = trimTrailingSeparators(parent);
+  return (
+    childPath === parentPath ||
+    childPath.startsWith(`${parentPath}/`) ||
+    childPath.startsWith(`${parentPath}\\`)
+  );
 }
-
-const isInside = (child: string, parent: string): boolean =>
-  child === parent || child.startsWith(`${parent}/`) || child.startsWith(`${parent}\\`);
 
 /** Blocking problems that must be fixed before a run may start. */
 export function validateBatchConfig(
@@ -16,47 +23,117 @@ export function validateBatchConfig(
 ): string[] {
   const problems: string[] = [];
   const paths: Partial<BatchTabConfig['path']> = batch.path ?? {};
-  const sources = lines(paths.source_path);
-  const destinations = lines(paths.destination_path);
-  const tempEnabled = paths.temp_toggle === 1;
-  const tempDestinations = lines(paths.temp_destination_path);
+  const advanced: Partial<BatchTabConfig['advanced']> = batch.advanced ?? {};
 
-  if (sources.length === 0) {
+  const sources = parseMappedRows(paths.source_path);
+  const destinations = parseMappedRows(paths.destination_path);
+  const sourceCount = sources.filter(Boolean).length;
+  const destinationCount = destinations.filter(Boolean).length;
+  const tempEnabled = paths.temp_toggle === 1;
+  const tempDestinations = tempEnabled
+    ? parseMappedRows(paths.temp_destination_path)
+    : [];
+
+  if (sourceCount === 0) {
     problems.push('Add at least one source folder.');
   }
-  if (destinations.length === 0) {
+  if (destinationCount === 0) {
     problems.push('Add at least one destination folder.');
   }
-  if (sources.length > 0 && destinations.length > 0 && sources.length !== destinations.length) {
-    problems.push(
-      `${sources.length} source folder(s) but ${destinations.length} destination folder(s) — they must match.`,
-    );
-  }
-  if (tempEnabled && tempDestinations.length !== sources.length) {
-    problems.push(
-      `Temp staging is on: ${sources.length} source folder(s) need ${sources.length} temp folder(s), found ${tempDestinations.length}.`,
-    );
-  }
-  sources.forEach((source, index) => {
-    const destination = destinations[index];
-    if (destination && isInside(destination, source)) {
+
+  const pairedRows = Math.max(sources.length, destinations.length);
+  for (let index = 0; index < pairedRows; index += 1) {
+    const source = sources[index] ?? '';
+    const destination = destinations[index] ?? '';
+    if (source && !destination) {
+      problems.push(`Row ${index + 1}: add a destination folder for ${source}.`);
+    } else if (!source && destination) {
+      problems.push(`Row ${index + 1}: add a source folder for ${destination}.`);
+    } else if (source && destination && isInside(destination, source)) {
       problems.push(
-        `Destination ${destination} is inside source ${source}; choose a folder outside it.`,
+        `Row ${index + 1}: destination ${destination} is inside source ${source}; choose a folder outside it.`,
       );
     }
-  });
+  }
 
-  const suffixes = (batch.advanced?.file_name_suffix ?? '')
-    .split('\n')
-    .filter((line) => line.trim().length > 0);
   if (
-    batch.advanced?.file_name_suffix_toggle === 1 &&
-    suffixes.length > 0 &&
-    suffixes.length < sources.length
+    sourceCount > 0 &&
+    destinationCount > 0 &&
+    sourceCount !== destinationCount
+  ) {
+    // The per-row checks above already name the incomplete row; only add a
+    // summary when the counts differ for a reason they do not explain.
+    const unexplained =
+      Math.max(sources.length, destinations.length) <=
+      Math.min(sourceCount, destinationCount);
+    if (unexplained) {
+      problems.push(
+        `${sourceCount} source folder(s) but ${destinationCount} destination folder(s) — they must match.`,
+      );
+    }
+  }
+
+  if (tempEnabled) {
+    const tempRows = Math.max(sources.length, tempDestinations.length);
+    for (let index = 0; index < tempRows; index += 1) {
+      const source = sources[index] ?? '';
+      const temp = tempDestinations[index] ?? '';
+      if (source && !temp) {
+        problems.push(`Row ${index + 1}: add a temp folder for ${source}.`);
+      } else if (!source && temp) {
+        problems.push(`Row ${index + 1}: add a source folder for ${temp}.`);
+      }
+    }
+  }
+
+  const ffmpegMode = batch.FFmpeg_toggle === 1;
+  const container = normalizeContainerExtension(batch.container);
+  if (
+    !ffmpegMode &&
+    container &&
+    !(HANDBRAKE_CONTAINERS as readonly string[]).includes(container)
   ) {
     problems.push(
-      `${suffixes.length} filename suffix(es) for ${sources.length} source folder(s); missing rows fall back to none.`,
+      `HandBrake cannot write ${container} files; choose MP4, M4V, or MKV.`,
     );
+  }
+
+  const customRows = parseMappedRows(batch.custom_preset_string);
+  const hasCustomRows = customRows.some((row) => row.trim().length > 0);
+  const presetRows = ffmpegMode
+    ? customRows
+    : hasCustomRows
+      ? customRows
+      : parseMappedRows(batch.preset);
+  const configuredPresets = presetRows.filter(Boolean).length;
+
+  if (sourceCount > 0 && configuredPresets === 0) {
+    problems.push(
+      ffmpegMode
+        ? 'Add FFmpeg arguments for each source folder.'
+        : 'Choose a HandBrake preset for each source folder.',
+    );
+  } else {
+    for (let index = 0; index < sourceCount; index += 1) {
+      const hasLaterPreset = presetRows
+        .slice(index + 1)
+        .some((row) => row.trim().length > 0);
+      if (!(presetRows[index] ?? '').trim() && hasLaterPreset) {
+        problems.push(`Folder ${index + 1} is missing a preset or arguments.`);
+      }
+    }
+  }
+
+  if (advanced.file_name_suffix_toggle === 1 && sourceCount > 0) {
+    const suffixes = parseMappedRows(advanced.file_name_suffix);
+    for (let index = 0; index < sourceCount; index += 1) {
+      const hasLaterSuffix = suffixes
+        .slice(index + 1)
+        .some((row) => row.trim().length > 0);
+      if (!(suffixes[index] ?? '').trim() && hasLaterSuffix) {
+        problems.push(`Folder ${index + 1} is missing its filename suffix.`);
+      }
+    }
   }
 
   return problems;

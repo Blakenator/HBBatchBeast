@@ -6,6 +6,7 @@ import {
   BatchTabConfig,
   GlobalAppConfig,
   PROMISE_CHANNEL,
+  countConfiguredRows,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
 import { useBatchResult, useSetBatchResultDirect } from '../core/stores';
@@ -24,11 +25,7 @@ interface RunScreenProps {
 }
 
 function splitCount(value?: string, enabled?: boolean): number {
-  if (!enabled) return 0;
-  return (value ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean).length;
+  return enabled ? countConfiguredRows(value) : 0;
 }
 
 export const RunScreen: React.FC<RunScreenProps> = ({
@@ -158,9 +155,13 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     true,
   );
   const destinationCount = splitCount(batch.path?.destination_path, true);
-  const presetCount = (batch.preset ?? '')
-    .split('\n')
-    .filter((line: string) => line.trim().length > 0).length;
+  const ffmpegMode = batch.FFmpeg_toggle === 1;
+  const customPresetCount = countConfiguredRows(batch.custom_preset_string);
+  const presetCount = countConfiguredRows(
+    ffmpegMode || customPresetCount > 0
+      ? batch.custom_preset_string
+      : batch.preset,
+  );
 
   if (sourceCount === 0) {
     return (
@@ -186,7 +187,9 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         <Panel title={formatMessage(runMessages.encoding)}>
           {batch.FFmpeg_toggle === 1 ? 'FFmpeg' : 'HandBrake'} ·{' '}
           {presetCount > 0
-            ? `${presetCount} preset${presetCount === 1 ? '' : 's'}`
+            ? `${presetCount} ${ffmpegMode ? 'argument set' : 'preset'}${
+                presetCount === 1 ? '' : 's'
+              }`
             : formatMessage(runMessages.noPreset)}{' '}
           · {batch.container ?? '.mp4'}
         </Panel>

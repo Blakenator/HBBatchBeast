@@ -4,7 +4,7 @@ import {
   DeepPartial,
   GlobalAppConfig,
 } from '../../common';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBackend } from '../helpers';
 import { cloneDeep, debounce, isEqual, merge } from 'lodash';
 import { toast } from 'react-toastify';
@@ -49,6 +49,9 @@ export function useUpdateConfigDebounced(config: GlobalAppConfig) {
       return newConfig;
     });
 
+  const mergeGlobalUpdate = (update: DeepPartial<GlobalAppConfig>) =>
+    setUpdatedConfig((recent) => merge(cloneDeep(recent), update));
+
   useEffect(() => {
     if (!isEqual(config, updatedConfig)) {
       setUpdatedConfig(config);
@@ -59,5 +62,36 @@ export function useUpdateConfigDebounced(config: GlobalAppConfig) {
       debouncedUpdate(updatedConfig);
     }
   }, [updatedConfig]);
-  return { currentConfig, mergeUpdate };
+  return {
+    currentConfig,
+    currentGlobalConfig: updatedConfig,
+    mergeUpdate,
+    mergeGlobalUpdate,
+  };
+}
+
+/** Loads HandBrake's installed presets once, and on explicit refresh. */
+export function useHandBrakePresets(enabled: boolean) {
+  const backend = useBackend({
+    channel: PROMISE_CHANNEL.ListHandBrakePresets,
+    skip: true,
+  });
+  // `refetch` is recreated whenever the hook's loading state changes, so it
+  // must not be an effect dependency: doing that re-triggers the request the
+  // moment the previous one finishes, spawning HandBrakeCLI in a loop.
+  const backendRef = useRef(backend);
+  backendRef.current = backend;
+  const requested = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || requested.current) return;
+    requested.current = true;
+    void backendRef.current.refetch({ refresh: false });
+  }, [enabled]);
+
+  const refresh = useCallback(() => {
+    void backendRef.current.refetch({ refresh: true });
+  }, []);
+
+  return { ...backend, refresh };
 }

@@ -2,7 +2,7 @@ import {
   BatchTabConfig,
   ConversionItem,
   GlobalAppConfig,
-  SystemTabConfig,
+  resolveGlobalSettings,
 } from '../../common';
 import { WorkerItemConfig } from './workerProtocol';
 
@@ -31,7 +31,7 @@ export function buildWorkerItemConfig(
   const current = config.configs[config.selected_config];
   const batch: Partial<BatchTabConfig> = current?.tab_batch ?? {};
   const advanced: Partial<BatchTabConfig['advanced']> = batch.advanced ?? {};
-  const system: Partial<SystemTabConfig> = current?.tab_system ?? {};
+  const globalSettings = resolveGlobalSettings(config);
 
   return {
     queueNumber: index,
@@ -72,6 +72,6 @@ export function buildWorkerItemConfig(
     repairCrfValue: '23',
     handBrakeCliPath: handBrakeCliPath(platform),
     ffmpegPath: 'ffmpeg',
-    saveWorkerLogs: truthy(system.save_worker_logs_toggle),
+    saveWorkerLogs: truthy(globalSettings.save_worker_logs_toggle),
   };
 }

@@ -3,6 +3,7 @@ import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { GlobalAppConfig, PROMISE_CHANNEL } from '../../common';
 import { useBackend } from '../helpers';
+import { Combobox } from '../ui/Combobox';
 import { settingsMessages } from './messages';
 
 const LANGUAGES = [
@@ -47,17 +48,15 @@ export const LanguageSelect: React.FC<LanguageSelectProps> = ({ config }) => {
       <Form.Label htmlFor="language-select">
         {formatMessage(settingsMessages.language)}
       </Form.Label>
-      <Form.Select
+      <Combobox
         id="language-select"
         value={resolveLanguage()}
-        onChange={(event) => change(event.target.value)}
-      >
-        {LANGUAGES.map((language) => (
-          <option key={language.code} value={language.code}>
-            {language.label}
-          </option>
-        ))}
-      </Form.Select>
+        options={LANGUAGES.map((language) => ({
+          value: language.code,
+          label: language.label,
+        }))}
+        onChange={change}
+      />
     </div>
   );
 };

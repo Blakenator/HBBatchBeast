@@ -19,9 +19,14 @@ the repository root.
 
 ## Using the app
 
-1. Open **Settings** and set at least one source folder and one destination folder (one line each;
-   line *n* of the destination list pairs with line *n* of the source list).
-2. Adjust encoding, filters and file handling. Advanced options are behind **Show advanced options**.
+1. Open **Settings** and add at least one source folder with its destination: each row pairs a source
+   with a destination, the **…** buttons open the OS folder picker, and **Add folders…** adds several
+   rows at once. Pasting multiple lines into a path field fills successive rows. With temp staging on,
+   every row also gets a temp folder.
+2. Adjust encoding, filters and file handling. The preset list is read from the HandBrakeCLI installed
+   on your machine — including custom presets saved in the HandBrake app — one preset per source row;
+   the custom path also accepts raw HandBrakeCLI arguments. FFmpeg mode takes its own arguments instead
+   (the parts before and after `-i`). Advanced options are behind **Advanced options**.
 3. **Scan** to build the queue — the table shows every file that does not already exist at the
    destination, with status chips and a path filter.
 4. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
@@ -32,8 +37,10 @@ the repository root.
 Destructive options (delete source, replace the original) are grouped and explained in the settings
 drawer, and a single confirmation lists exactly what a run will do before it starts.
 
-Profiles hold independent settings — create, duplicate, rename and delete them from the settings
-drawer. Settings save automatically as you edit them.
+The settings drawer separates **Global settings** from **Profiles** in tabs. Language, worker count,
+verbose worker logs, and diagnostics/log locations apply to the whole app; folders, encoding, filters,
+and file handling belong to the active profile. Create, duplicate, rename, and delete profiles from
+the **Profiles** tab. Settings save automatically as you edit them.
 
 ### Where files live
 
@@ -69,6 +76,9 @@ Useful extras:
 
 - `HBB_DEBUG_PORT=9222 pnpm start` exposes a DevTools-protocol endpoint so UI flows can be driven by
   automation.
+- `pnpm start -- --max-parallel 4` (or `HBB_MAX_PARALLEL=4`) refuses to start when more than four
+  HandBrakeCLI/FFmpeg/ffprobe or worker processes are already running, and caps the worker count at the
+  same number. Use it as a guard when other conversions or app instances may be active.
 - `scripts/dev-smoke.sh 30` runs the app for 30 seconds and tears the whole process tree down again —
   Forge leaves zombie Electron windows behind otherwise.
 - `HBB_INTEGRATION=1 pnpm test` adds a real HandBrake conversion of `tests/fixtures/sample.mp4`

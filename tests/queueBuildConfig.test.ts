@@ -66,11 +66,10 @@ describe('buildQueueBuildConfig', () => {
     expect(payload.presets).toEqual(['-Z "HQ 1080p30"', '-Z "HQ 1080p30"']);
   });
 
-  it('uses raw custom preset lines when the custom toggle is on', () => {
+  it('uses custom preset rows when they are present', () => {
     const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
-        custom_preset_toggle: 1,
         custom_preset_string:
           '--preset-import-file a.json\n--preset-import-file b.json',
       }),
@@ -80,6 +79,55 @@ describe('buildQueueBuildConfig', () => {
     expect(payload.presets).toEqual([
       '--preset-import-file a.json',
       '--preset-import-file b.json',
+    ]);
+  });
+
+  it('falls back to the legacy preset field when custom rows are empty', () => {
+    const payload = buildQueueBuildConfig({
+      config: makeConfig({
+        ...twoSources,
+        custom_preset_string: '\n',
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    expect(payload.presets).toEqual([
+      '-Z "Very Fast 1080p30"',
+      '-Z "Very Fast 1080p30"',
+    ]);
+  });
+
+  it('wraps bare custom HandBrake presets but keeps custom arguments intact', () => {
+    const payload = buildQueueBuildConfig({
+      config: makeConfig({
+        ...twoSources,
+        FFmpeg_toggle: 0,
+        custom_preset_string:
+          'H.265 MKV 1080p30 HouseHunters\n-e x264 -q 22',
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    expect(payload.presets).toEqual([
+      '-Z "H.265 MKV 1080p30 HouseHunters"',
+      '-e x264 -q 22',
+    ]);
+  });
+
+  it('uses custom arguments for FFmpeg', () => {
+    const payload = buildQueueBuildConfig({
+      config: makeConfig({
+        ...twoSources,
+        FFmpeg_toggle: 1,
+        custom_preset_string:
+          '-ss 00:00:10,-c:v libx264 -crf 20\n-ss 0,-c:v libx265 -crf 24',
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    expect(payload.presets).toEqual([
+      '-ss 00:00:10,-c:v libx264 -crf 20',
+      '-ss 0,-c:v libx265 -crf 24',
     ]);
   });
 
@@ -102,6 +150,25 @@ describe('buildQueueBuildConfig', () => {
     });
 
     expect(payload.fileSuffixes).toEqual(['_720p', '']);
+  });
+
+  it('keeps an empty suffix attached to its own row instead of shifting', () => {
+    const payload = buildQueueBuildConfig({
+      config: makeConfig({
+        path: {
+          source_path: '/media/movies\n/media/tv\n/media/home',
+          destination_path: '/out/movies\n/out/tv\n/out/home',
+        },
+        preset: 'Fast 1080p30',
+        advanced: {
+          file_name_suffix_toggle: 1,
+          file_name_suffix: '_movies\n\n_home',
+        },
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    expect(payload.fileSuffixes).toEqual(['_movies', '', '_home']);
   });
 
   it('passes temp folders only when the temp toggle is enabled', () => {

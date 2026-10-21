@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import { Form, Modal } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
+import { cloneDeep } from 'lodash';
 import {
   PROMISE_CHANNEL,
   GlobalAppConfig,
@@ -13,6 +14,7 @@ import { useBackend } from '../../helpers';
 import { useGlobalConfig, useSetGlobalConfigDirect } from '../../core/stores';
 import { profileMessages } from './messages';
 import { Button } from '../../ui/Button';
+import { Combobox } from '../../ui/Combobox';
 
 const Bar = styled.div`
   display: grid;
@@ -36,7 +38,6 @@ function emptyProfile(name: string): BatchConfig {
         included_file_types: DEFAULT_INCLUDED_FILE_TYPES,
       } as BatchTabConfig['advanced'],
     },
-    tab_system: {},
   };
 }
 
@@ -70,9 +71,11 @@ export const ProfileBar: React.FC = () => {
 
   const duplicate = () => {
     const source = config.configs[config.selected_config];
+    const copy = cloneDeep(source);
+    delete copy.tab_system;
     const profiles = [
       ...config.configs,
-      JSON.parse(JSON.stringify(source)) as (typeof config.configs)[number],
+      copy,
     ];
     persist({ ...config, configs: profiles, selected_config: profiles.length - 1 });
   };
@@ -104,17 +107,15 @@ export const ProfileBar: React.FC = () => {
       <Form.Label htmlFor="profile-select" className="mb-0">
         {formatMessage(profileMessages.active)}
       </Form.Label>
-      <Form.Select
+      <Combobox
         id="profile-select"
-        value={config.selected_config}
-        onChange={(event) => select(Number(event.target.value))}
-      >
-        {config.configs.map((profile, index) => (
-          <option key={`${profile.name}-${index}`} value={index}>
-            {profile.name ?? `Profile ${index + 1}`}
-          </option>
-        ))}
-      </Form.Select>
+        value={String(config.selected_config)}
+        options={config.configs.map((profile, index) => ({
+          value: String(index),
+          label: profile.name?.trim() || `Profile ${index + 1}`,
+        }))}
+        onChange={(next) => select(Number(next))}
+      />
 
       <Actions>
         <Button compact variant="ghost" onClick={add}>
@@ -127,8 +128,9 @@ export const ProfileBar: React.FC = () => {
           compact
           variant="ghost"
           onClick={() => {
+            const index = config.selected_config;
             setNameDraft(
-              config.configs[config.selected_config]?.name ?? '',
+              config.configs[index]?.name?.trim() || `Profile ${index + 1}`,
             );
             setRenaming(true);
           }}
@@ -158,6 +160,8 @@ export const ProfileBar: React.FC = () => {
           <Form.Control
             value={nameDraft}
             onChange={(event) => setNameDraft(event.target.value)}
+            onFocus={(event) => event.currentTarget.select()}
+            autoFocus
             aria-label={formatMessage(profileMessages.name)}
           />
         </Modal.Body>

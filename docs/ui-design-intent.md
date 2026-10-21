@@ -8,7 +8,7 @@ stories — not against the legacy UI.
 
 | # | Principle | Consequence for the build |
 | --- | --- | --- |
-| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | One primary screen. Settings are a drawer/route, never a competing tab. |
+| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | One primary screen. Settings stay in a drawer/route; Global and Profiles tabs organize settings inside the drawer, not as competing app navigation. |
 | **D2** | **Preview before commit.** Nothing is converted until the user has seen what would happen. | Scan-only is the default first action; the run button lives in the review state, not the settings form. |
 | **D3** | **Safe by default, explicit by exception.** Destructive actions are off, isolated and explained. | Delete/replace live in their own section, visually marked, with one plain-language sentence each and a run-level confirmation. |
 | **D4** | **Progress is always visible and honest.** Long runs must never look stalled or finished-early. | Persistent run bar with counts, elapsed, per-worker state; cancellation and worker death are surfaced, not silent. |
@@ -30,13 +30,13 @@ App shell
 │       ├── Progress header: counts, failures, elapsed, worker chips
 │       ├── Queue/results table: virtualized, filter chips (All / Remaining / Success / Error / Cancelled)
 │       └── Row actions: cancel item · open log · reveal in folder · media info
-├── Settings drawer (grouped, advanced collapsed)
-│   ├── Folders      — source/destination/temp rows, auto-create, profile paths
-│   ├── Encoding     — HandBrake/FFmpeg, preset per row, container, suffix, custom preset import
-│   ├── Filters      — file types, size range, title words, media properties, SRT copying
-│   ├── File handling— delete source, replace original (always/if smaller), apostrophes, queue order
-│   ├── Profiles     — create/rename/duplicate/delete
-│   └── System       — worker count, low priority, verbose logs, language
+├── Settings drawer
+│   ├── Global tab   — language, worker count, verbose worker logs, log files and locations
+│   └── Profiles tab — profile selector and per-profile conversion settings
+│       ├── Folders       — source/destination/temp rows, auto-create, profile paths
+│       ├── Encoding      — HandBrake/FFmpeg, preset per row, container, suffix
+│       ├── Filters       — file types, size range, title words, media properties, SRT copying
+│       └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
 └── Secondary views (opened from row actions or header)
     ├── Log viewer
     ├── Media info
@@ -64,10 +64,12 @@ Rationale: the legacy app put six tabs of *configuration* in front of the user a
 
 ### 3.2 Settings drawer
 
-| Group | Must contain | Notes |
+| Tab / group | Must contain | Notes |
 | --- | --- | --- |
+| Global | Language, worker count, verbose worker logs, log files and locations | Preferences shared by all profiles; legacy per-profile system values migrate to global settings. |
+| Profiles | Profile selector and create/rename/duplicate/delete actions | Conversion settings below apply only to the active profile. |
 | Folders | Paired source/destination rows, optional temp row per source, auto-create folders | Row editor; add/remove/reorder; paste-many support; per-row validation (US-02, US-03). |
-| Encoding | Encoder toggle, standard preset selector, custom preset editor/import, container, per-row suffix | Preset labels in plain language; NVENC warning inline; validation that preset count matches row count (US-04, US-05, US-08). |
+| Encoding | Encoder switch, per-row preset selector populated from the installed HandBrakeCLI, custom argument editor, container select, per-row suffix | Preset labels in plain language; only the active encoder's controls are shown; NVENC warning inline; validation that preset count matches row count (US-04, US-05, US-08). |
 | Filters | File-type token list, size min/max with units, title words, include/exclude property filters with any/all, SRT toggle | Live "matches N files" estimate shown after a scan; filters never silently override each other (US-06, US-07). |
 | File handling | Delete source, replace original (always / if smaller), remove apostrophes, reverse order, custom batch hook, low priority | Destructive pair visually grouped and explained (US-19, US-20). |
 | Profiles | List with create/rename/duplicate/delete, active marker | Deleting the last profile is blocked with an explanation (US-21). |

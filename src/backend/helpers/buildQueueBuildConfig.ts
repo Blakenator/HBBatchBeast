@@ -1,5 +1,10 @@
 import { AppError } from '@superflag/super-ipc-core';
-import { BatchOperationMode, BatchTabConfig, RunBatchOperationProps } from '../../common';
+import {
+  BatchOperationMode,
+  BatchTabConfig,
+  RunBatchOperationProps,
+  parseMappedRows,
+} from '../../common';
 import { QueueBuildConfig } from '../processes/protocol';
 
 /**
@@ -66,21 +71,28 @@ export function buildQueueBuildConfig({
     : [];
 
   // One suffix per source folder: queueBuild indexes this per source, so a short
-  // array is what produced `<name>undefined.mp4` destinations (D1).
+  // array is what produced `<name>undefined.mp4` destinations (D1). Blank rows
+  // are preserved so a suffix stays attached to its own source row.
   const configuredSuffixes =
     advanced.file_name_suffix_toggle === 1
-      ? splitLines(advanced.file_name_suffix)
+      ? parseMappedRows(advanced.file_name_suffix)
       : [];
   const fileSuffixes = padTo(sources.length, configuredSuffixes, '');
 
-  const configuredPresets =
-    batch.custom_preset_toggle === 1
-      ? splitLines(batch.custom_preset_string)
-      : splitLines(batch.preset).map(toPresetArgument);
+  // FFmpeg has no HandBrake `-Z` presets; its command arguments always live in
+  // `custom_preset_string` (one `input,output` pair per source row).
+  const ffmpegMode = batch.FFmpeg_toggle === 1;
+  const customRows = parseMappedRows(batch.custom_preset_string);
+  const hasCustomRows = customRows.some((row) => row.trim().length > 0);
+  const configuredPresets = ffmpegMode
+    ? customRows
+    : (hasCustomRows ? customRows : parseMappedRows(batch.preset)).map(
+        toPresetArgument,
+      );
   const presets = padTo(
     sources.length,
     configuredPresets,
-    configuredPresets[0] ?? '',
+    configuredPresets.find((preset) => preset.trim().length > 0) ?? '',
   );
 
   const includedFileTypes =

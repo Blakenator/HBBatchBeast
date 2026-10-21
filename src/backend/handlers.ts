@@ -1,6 +1,9 @@
 import {
   buildQueueBuildConfig,
   createLogFolders,
+  findUnavailableHandBrakePresets,
+  listHandBrakePresets,
+  pickPath,
   saveAppConfig,
 } from './helpers';
 import fs from 'fs';
@@ -12,9 +15,13 @@ import {
   BackendPromiseApi,
   BatchOperationMode,
   BatchTabConfig,
+  DEFAULT_GLOBAL_SETTINGS,
   GlobalAppConfig,
+  migrateGlobalSettings,
+  parseMappedRows,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
+  resolveGlobalSettings,
 } from '../common';
 import packageJson from '../../package.json';
 import { AppError } from '@superflag/super-ipc-core';
@@ -29,6 +36,7 @@ import { buildWorkerItemConfig } from './run/buildWorkerItemConfig';
 import { resolveChildEntry } from './processes/childEntries';
 import { QueueBuildResult } from './processes/protocol';
 import { setTrayStatus } from '../main/tray';
+import { getMaxParallel } from '../main/processBudget';
 import {
   assertOpenablePath,
   clearCaches,
@@ -82,12 +90,14 @@ function currentRunState(): RunState | null {
 }
 
 function workerCountFor(config: GlobalAppConfig): number {
-  const configured = Number(
-    config.configs[config.selected_config]?.tab_system?.worker_instance_number,
-  );
-  return Number.isFinite(configured) && configured >= 1
-    ? Math.min(Math.trunc(configured), 32)
-    : 4;
+  const configured = Number(resolveGlobalSettings(config).worker_instance_number);
+  const requested =
+    Number.isFinite(configured) && configured >= 1
+      ? Math.min(Math.trunc(configured), 32)
+      : 4;
+  // A startup --max-parallel budget also caps how many conversions may run.
+  const maxParallel = getMaxParallel();
+  return maxParallel === undefined ? requested : Math.min(requested, maxParallel);
 }
 
 export const BackendHandlers: BackendSyncHandlersType<
@@ -104,7 +114,9 @@ export const BackendHandlers: BackendSyncHandlersType<
     if (fs.existsSync(configPath)) {
       try {
         console.log('Loading configuration file');
-        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        return migrateGlobalSettings(
+          JSON.parse(fs.readFileSync(configPath, 'utf8')) as GlobalAppConfig,
+        );
       } catch (err) {
         console.log('Unable to load configuration file, archiving old version');
         fs.renameSync(configPath, configPath + '.old');
@@ -114,11 +126,11 @@ export const BackendHandlers: BackendSyncHandlersType<
     console.log('Initializing new config file');
     const config: GlobalAppConfig = {
       lang: 'en',
+      app_settings: { ...DEFAULT_GLOBAL_SETTINGS },
       selected_config: 0,
       version_message: packageJson.version,
       configs: [
         {
-          tab_system: {},
           tab_batch: {},
           name: 'Default',
         },
@@ -154,6 +166,9 @@ export const BackendHandlers: BackendSyncHandlersType<
     clearRunJournal(app.getPath('home'));
   },
   [PROMISE_CHANNEL.ProbeMedia]: ({ args }) => probeMedia(args.path),
+  [PROMISE_CHANNEL.PickPath]: ({ args }) => pickPath(args),
+  [PROMISE_CHANNEL.ListHandBrakePresets]: ({ args }) =>
+    listHandBrakePresets({ refresh: args?.refresh === true }),
   [PROMISE_CHANNEL.SetTrayStatus]: ({ args }) => {
     setTrayStatus(args.status);
   },
@@ -238,6 +253,35 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     });
 
     try {
+      const batch = currentConfig?.tab_batch;
+      if (batch && batch.FFmpeg_toggle !== 1) {
+        // Rows can be preset names (from the picker) or raw arguments; only
+        // preset rows can be checked against the installed preset list.
+        const customRows = parseMappedRows(batch.custom_preset_string);
+        const hasCustomRows = customRows.some(
+          (row) => row.trim().length > 0,
+        );
+        const presetValue = (
+          hasCustomRows ? customRows : parseMappedRows(batch.preset)
+        )
+          .filter((row) => !row.startsWith('-') || /^-Z\s/i.test(row))
+          .join('\n');
+        const presetScan = await listHandBrakePresets();
+        if (presetScan.available) {
+          const unavailable = findUnavailableHandBrakePresets(
+            presetValue,
+            presetScan.presets,
+          );
+          if (unavailable.length > 0) {
+            throw new AppError(
+              `HandBrake preset(s) not installed: ${unavailable
+                .map((preset) => `"${preset}"`)
+                .join(', ')}. Open Settings to choose an installed preset or refresh the list.`,
+            );
+          }
+        }
+      }
+
       await supervisor.start();
       supervisor.configure(payload);
       onInit({ ...progressSnapshot });
