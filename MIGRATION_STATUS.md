@@ -252,7 +252,9 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S01 | Electron 26 + Electron Forge + Vite build pipeline, per-module build entries |
 | S02 | React 18 + react-bootstrap shell; `index.html` → `renderer.ts` → `App.tsx` — **placeholder UI, replaced by S32** |
 | S04 | Config load/save handlers, schema, defaults, corrupt-config archiving, log-dir bootstrap |
-| S14 | Scan-only pipeline: React button → async IPC → forked `queueBuild` → progress + result table |
+| S14 | Scan-only pipeline: React button → async IPC → supervised `queueBuild` → progress + result table |
+| S33 | Typed process supervisor: versioned protocol, ready handshake, timeouts, kill escalation, restart budget, entry manifest, `will-quit` shutdown |
+| S35 | Test infrastructure + CI: Vitest unit/integration suites (scan contract, config, supervisor failure modes) and a typecheck/lint/test/package workflow |
 
 Also carried over as-is: the six legacy child-process modules are now under
 [`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and
@@ -264,7 +266,7 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 
 | Slice | State and what remains |
 | --- | --- |
-| S03 | Typed IPC on `@superflag/super-ipc-*` v0.0.11. Module resolution is fixed (TS 5.9, `bundler`, `paths`, `eslint-import-resolver-typescript`) and `typecheck`/`lint`/tests are green. Still to do: move to 0.1.0 as part of S34. |
+| S34 | Remaining upgrade: React 19 (+ `@types/react*`, react-intl 12, react-toastify 11, zustand 5) is scheduled with S32. TypeScript 7 and ESLint 10 are blocked upstream (see §2). |
 | S15 | Batch settings are 3 raw textareas (source, destination, custom preset) with debounced auto-save — placeholder UX, to be replaced by S32. Temp folders, auto-create folders, toggles and validation are missing. |
 | S16 | Presets are passed to `queueBuild` but in the wrong shape (see defect D2). |
 | S17 | File-type filtering and SRT copying are wired; size/title/property filters and copy-filtered-files are not. |
@@ -301,7 +303,7 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | --- | --- | --- | --- | --- | --- | --- |
 | S01 | Modern build pipeline | Electron 26, Forge 6, Vite, TypeScript; one Vite entry per child-process module. | ✅ | — | Keep | `[x] yes  [ ] no` |
 | S02 | React shell & theming | React 18 + react-bootstrap + react-toastify, `App` → `HomePage`. **Placeholder scaffolding only** — the visual layout is throwaway and gets replaced by S32. `styled-components` is installed but unused. | ✅ | S01 | Keep as scaffolding | `[x] yes  [ ] no` |
-| S03 | Typed IPC layer | `super-ipc` sync/async hooks, typed channels/API, standardized `AppError`; replace bespoke wrapper. | 🟡 | S01 | Keep (fix resolution) | `[x] yes  [ ] no` |
+| S03 | Typed IPC layer | `super-ipc` sync/async hooks, typed channels/API, standardized `AppError`; replace bespoke wrapper. | ✅ | S01 | Keep — delivered | `[x] yes  [ ] no` |
 | S04 | Config persistence | Load/save `Configuration.json`, defaults, version stamp, archive invalid file, create log dirs. | ✅ | — | Keep | `[x] yes  [ ] no` |
 | S05 | Custom window chrome | Frameless window with drag region plus min/max/close buttons; old app also prevented real minimize. | ⛔ | S02 | Drop candidate — native frame is simpler and works on all 3 OSes | `[ ] yes  [x] no` |
 | S06 | Tray icon & status icons | Tray menu (Show / Clear notification / Quit) and `iconrunning` / `iconwatching` / `iconerror` status swaps. | 🟡 | S01 | Keep, but rewrite: current code is Windows-only and points at non-existent `__dirname/assets` paths | `[x] yes  [ ] no` |
@@ -394,7 +396,7 @@ against placeholder data that the backend cannot yet produce.
 
 | ID | Feature slice | Short description | State | Depends on | Suggested | Keep? |
 | --- | --- | --- | --- | --- | --- | --- |
-| S33 | Process/fork supervisor | Replace today's ad-hoc `childProcess.fork` calls and positional-array messages with a single owned supervisor: typed message envelopes, correlation IDs and timeouts, `error`/`exit` handling with kill escalation and restart, manifest-based entry resolution, no sync FS on the main process, delta progress, and fewer long-lived processes. Full analysis in §3. | ⛔ | S14; **prerequisite for S19** | Keep — the current structure is the main robustness risk | `[ ] yes  [ ] no` |
+| S33 | Process/fork supervisor | Replace today's ad-hoc `childProcess.fork` calls and positional-array messages with a single owned supervisor: typed message envelopes, correlation IDs and timeouts, `error`/`exit` handling with kill escalation and restart, manifest-based entry resolution, no sync FS on the main process, delta progress, and fewer long-lived processes. Full analysis in §3. | ✅ | S14 | Keep — delivered in phase 3 | `[ ] yes  [ ] no` |
 | S34 | Dependency & toolchain upgrade | Bring the stack current: TypeScript 4.9 → 7 (or 5.x as a stepping stone), super-ipc 0.0.11 → 0.1.0, Electron 26 → 45, Forge 6 → 8, Vite 4 → 8, ESLint 8 → 10 with `typescript-eslint` 8, React 18 → 19 with `@types/react*`, react-intl 12, react-toastify 11, zustand 5. Matrix and ordering notes in §2. | ⛔ | S03 (same work for TS/resolution) | Keep — several fixes (D5, EOL lint stack) are blocked on it | `[ ] yes  [ ] no` |
 | S35 | Test infrastructure & CI | Add a runner (Vitest for renderer/common units, node-based integration tests for backend handlers), a first real test for the `queueBuild` fork contract (the ad-hoc smoke test in §2 becomes a fixture), schema/validation tests for config, and at least one CI workflow running typecheck + lint + tests on push/PR. | ⛔ | S34 (toolchain), S33 (fork harness) | Keep — every upgrade and refactor is currently unguarded | `[ ] yes  [ ] no` |
 
