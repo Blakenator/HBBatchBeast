@@ -1,10 +1,15 @@
-import { createLogFolders, saveAppConfig } from './helpers';
+import {
+  buildQueueInfoBomb,
+  createLogFolders,
+  saveAppConfig,
+} from './helpers';
 import fs from 'fs';
 import path from 'path';
 import {
   ASYNC_CHANNEL,
   BackendAsyncApi,
   BackendPromiseApi,
+  BatchOperationMode,
   GlobalAppConfig,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
@@ -81,32 +86,10 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     handlers: { onInit, onProgress, onComplete, onError },
   }) => {
     const currentConfig = config.configs[config.selected_config];
-    const queueInfoBomb = [
-      'queueInfoBomb',
-      currentConfig.tab_batch.path.source_path.split('\n'),
-      currentConfig.tab_batch.path.destination_path.split('\n'),
-      currentConfig.tab_batch.path.temp_toggle === 1
-        ? currentConfig.tab_batch.path.destination_path.split('\n')
-        : [],
-      currentConfig.tab_batch.path.temp_toggle === 1,
-      currentConfig.tab_batch.advanced.copy_srt_files_toggle === 1
-        ? currentConfig.tab_batch.advanced.included_file_types + ',srt,SRT'
-        : currentConfig.tab_batch.advanced.included_file_types,
-      currentConfig.tab_batch.container,
-      operationMode,
-      currentConfig.tab_batch.preset.split('\n'),
-      currentConfig.tab_batch.advanced.title_word_filter,
-      currentConfig.tab_batch.advanced
-        .replace_original_file_if_converted_is_smaller_toggle === 1,
-      currentConfig.tab_batch.advanced.file_name_suffix_toggle === 1
-        ? currentConfig.tab_batch.advanced.file_name_suffix.split('\n')
-        : [],
-      currentConfig.tab_batch.advanced.remove_filename_apostrophes === 1,
-      currentConfig.tab_batch.advanced.replace_original_file_always_toggle ===
-        1,
-      currentConfig.tab_batch.advanced.reverse_file_queue === 1,
-    ];
-    console.log(queueInfoBomb);
+    const queueInfoBomb = buildQueueInfoBomb({
+      config,
+      operationMode: operationMode ?? BatchOperationMode.ScanAndConvert,
+    });
 
     const queueBuildModulePath = 'queueBuild.cjs';
 

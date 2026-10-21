@@ -6,7 +6,22 @@ import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
 const config: ForgeConfig = {
-  packagerConfig: {},
+  packagerConfig: {
+    asar: true,
+    // The Vite plugin keeps only `/.vite` by default. The forked child modules and
+    // ffprobe-static resolve real packages at runtime, so keep the app manifest and
+    // production node_modules too (packager prunes devDependencies).
+    ignore: (file: string) => {
+      if (!file) return false;
+      // .bin holds symlinks to dev-only binaries that pruning removes
+      if (/\/\.bin(\/|$)/.test(file)) return true;
+      return !(
+        file === '/package.json' ||
+        file.startsWith('/.vite') ||
+        file.startsWith('/node_modules')
+      );
+    },
+  },
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({}),

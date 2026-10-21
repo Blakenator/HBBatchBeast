@@ -9,8 +9,6 @@ let home: string;
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-config-'));
-  // createLogFolders assumes ~/Documents already exists (see D18)
-  fs.mkdirSync(path.join(home, 'Documents'), { recursive: true });
 });
 
 afterEach(() => {
@@ -48,6 +46,17 @@ describe('createLogFolders', () => {
         file,
       ).toBe(true);
     }
+  });
+
+  it('works on a fresh home directory without an existing Documents folder', () => {
+    // `home` is an empty mkdtemp dir here; D18 used to make this throw ENOENT
+    expect(fs.existsSync(path.join(home, 'Documents'))).toBe(false);
+
+    createLogFolders(home);
+
+    expect(
+      fs.existsSync(path.join(home, 'Documents/HBBatchBeast/Logs')),
+    ).toBe(true);
   });
 
   it('is idempotent and preserves existing log contents', () => {

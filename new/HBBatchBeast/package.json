@@ -30,6 +30,7 @@
     "@electron-forge/plugin-vite": "^8.0.1",
     "@electron-forge/shared-types": "^8.0.1",
     "@eslint/js": "^10.0.1",
+    "@types/fs-extra": "^11.0.4",
     "@types/node": "^24.19.2",
     "@types/react-dom": "^18.2.7",
     "@typescript-eslint/eslint-plugin": "^8.72.0",
@@ -52,6 +53,9 @@
     "@types/lodash": "^4.14.197",
     "bootstrap": "^5.3.1",
     "electron-squirrel-startup": "^1.0.0",
+    "ffprobe": "^1.1.2",
+    "ffprobe-static": "^3.1.0",
+    "fs-extra": "^11.4.1",
     "lodash": "^4.17.21",
     "prettier": "^3.0.2",
     "react": "^18.2.0",
@@ -62,5 +66,10 @@
     "shelljs": "^0.8.5",
     "styled-components": "^6.0.7",
     "zustand": "^4.4.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "electron": "$electron"
+    }
   }
 }

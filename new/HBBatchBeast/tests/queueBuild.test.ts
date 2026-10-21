@@ -30,8 +30,6 @@ beforeEach(() => {
   home = path.join(root, 'home');
   sourceDir = path.join(root, 'source');
   destinationDir = path.join(root, 'destination');
-  // createLogFolders assumes ~/Documents already exists (see D18)
-  fs.mkdirSync(path.join(home, 'Documents'), { recursive: true });
   fs.mkdirSync(path.join(sourceDir, 'nested'), { recursive: true });
   fs.mkdirSync(destinationDir, { recursive: true });
   createLogFolders(home);

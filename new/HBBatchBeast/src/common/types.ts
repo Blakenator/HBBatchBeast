@@ -108,11 +108,9 @@ export type DeepPartial<T> = T extends object
 
 export const ASYNC_REPLY_SUFFIX = '-ASYNC_REPLY';
 
-// TODO replace this with flags
 export enum BatchOperationMode {
-  HealthCheck = 'healthCheck',
-  ScanOnly = 'scannonly',
-  ScanAndConvert = 'scanandconvert',
+  ScanOnly = 'scanOnly',
+  ScanAndConvert = 'scanAndConvert',
 }
 
 export interface RunBatchOperationProps {
