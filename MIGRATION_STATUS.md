@@ -16,6 +16,12 @@ queue controls, health check, scheduling, system settings, logs, tray, translati
 [`HBBatchBeast/mainWindow.html`](./HBBatchBeast/mainWindow.html) (~292 KB of inline JS) and
 [`HBBatchBeast/main.js`](./HBBatchBeast/main.js).
 
+**Design work is specified elsewhere.** UI intent now lives in
+[`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md) (personas, intents I1–I8, stories
+US-01–US-27, flows F1–F9, non-goals) and [`docs/ui-design-intent.md`](./docs/ui-design-intent.md) (principles
+D1–D8, IA, per-screen states, interaction patterns, a11y). The slice tables below remain the implementation
+inventory; where they disagree with the design intent on UI matters, the design intent wins.
+
 **The current React UI is a placeholder, not a design.** It exists only to exercise the new backend while
 the IPC/handler/module layer was rebuilt: three textareas, one button, one table. The legacy UI is
 feature-complete but has genuinely poor UX — ~65 raw inputs across six cramped tabs, 33 tooltip blobs,
@@ -54,12 +60,13 @@ under `.github/` are issue templates. See §2 for the matrix and slices S34/S35.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Lint | `pnpm lint` | ❌ 10 errors (8 × `import/no-unresolved` for `@superflag/super-ipc-*`, 2 style) + 15 warnings |
-| Typecheck | `npx tsc --noEmit` | ❌ 20 errors (all cascade from unresolved `@superflag/super-ipc-*`) |
+| Lint | `pnpm lint` | ✅ 0 errors, 15 pre-existing warnings |
+| Typecheck | `pnpm typecheck` (`tsc --noEmit`) | ✅ clean (TypeScript 5.9 + `moduleResolution: "bundler"`, `paths` for the super-ipc ESM packages) |
 | Build/package | `pnpm package` | ✅ Vite bundles + app packages for linux-x64 |
 | Scan pipeline | forked `.vite/build/queueBuild.js` with a synthetic `queueInfoBomb` | ✅ finds files, builds queue, emits `complete` |
 | Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ❌ `fs-extra`, `ffprobe`, `ffprobe-static` absent; `shelljs` present |
-| Tests | — | No test runner, no test files, no CI workflow (`.github/` holds only issue templates) |
+| Tests | `pnpm test` (Vitest) | ✅ 8 tests: config/log-folder helpers + a real `queueBuild` fork contract suite (scan, destination diffing, title filter, file-type filter) |
+| CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
 
 ### Dependency & toolchain currency
 
@@ -69,7 +76,7 @@ Versions checked 2026-10-21 via `npm view <pkg> version`; "installed" read from 
 | --- | --- | --- | --- | --- |
 | `electron` | `^26.0.0` | 26.6.10 | **45.0.0** | 19 majors behind. A second copy (31.7.7) is pulled in as a peer by `super-ipc-preloader`, so the tree has two Electron versions. |
 | `@electron-forge/*` | `^6.4.0` | 6.4.2 | **8.0.1** | Forge 6 cannot target modern Electron; `plugin-vite` config shape also changed. |
-| `typescript` | `^4.9.5` | 4.9.5 | **7.0.2** | TS 4.9 predates `moduleResolution: "bundler"` (5.0+) — this is why D5 cannot be fixed without an upgrade. |
+| `typescript` | `^5.9.0` | 5.9.3 | **7.0.2** | Upgraded in phase 0 (4.9 could not do `moduleResolution: "bundler"`). Moving to 7.x is still open. |
 | `@superflag/super-ipc-{core,react,backend,preloader}` | `^0.0.11` | 0.0.11 | **0.1.0** | The split-package migration is uncommitted; re-check 0.1.0's export map/types before designing around 0.0.11's ESM-only `exports`. |
 | `react` / `react-dom` | `^18.2.0` | 18.3.1 | **19.3.1** | Upgrade together with the S32 redesign — every UI component is being replaced anyway. |
 | `@types/react` | *not declared* | 18.3.23 (hoisted peer), plus a duplicate 19.1.9 | 19.3.0 | Missing from `devDependencies`; resolved only by peer hoisting. |
@@ -238,7 +245,7 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 
 | Slice | State and what remains |
 | --- | --- |
-| S03 | Typed IPC on `@superflag/super-ipc-*` v0.0.11. Package split migration is **uncommitted** and `tsc`/ESLint cannot resolve the ESM-only packages. Needs a TS 5 + `moduleResolution: "bundler"` (or resolver config) decision, plus a `typecheck` script. |
+| S03 | Typed IPC on `@superflag/super-ipc-*` v0.0.11. Module resolution is fixed (TS 5.9, `bundler`, `paths`, `eslint-import-resolver-typescript`) and `typecheck`/`lint`/tests are green. Still to do: move to 0.1.0 as part of S34. |
 | S15 | Batch settings are 3 raw textareas (source, destination, custom preset) with debounced auto-save — placeholder UX, to be replaced by S32. Temp folders, auto-create folders, toggles and validation are missing. |
 | S16 | Presets are passed to `queueBuild` but in the wrong shape (see defect D2). |
 | S17 | File-type filtering and SRT copying are wired; size/title/property filters and copy-filtered-files are not. |
@@ -317,6 +324,10 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | S32 | UI/UX redesign | Replace both the placeholder React UI and the legacy layout with a purpose-built interface. Legacy UI supplies the feature inventory; none of its markup, tab structure or styling is carried over. See the design brief below. | ⛔ | S02 (can start now), S15–S21 for feature parity | Keep — this is the visible outcome of the rewrite | `[x] yes  [ ] no` |
 
 #### S32 design brief
+
+> Superseded in detail by [`docs/ui-design-intent.md`](./docs/ui-design-intent.md), which is derived from
+> [`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md). The summary below is kept as context
+> for why S32 exists; use the design intent document for actual UI decisions.
 
 **Starting point.** The legacy UI is not a benchmark to match, it is a list of things the tool must be able to
 do. Known UX problems worth actively fixing:
@@ -397,6 +408,8 @@ These are all in the migrated code, not legacy-only issues.
 | D15 | 🟠 Medium | [handlers.ts:146-215](./new/HBBatchBeast/src/backend/handlers.ts) | Every `totalFiles` / `buildQueue` message re-serializes the whole `RunBatchOperationResult`, including the growing `fileList` — O(n²) serialized bytes over a large scan. Send counters/deltas during progress and the list once at completion. |
 | D16 | 🟡 Low | `package.json` | `@types/react` is not declared; it resolves only via peer hoisting, and the tree currently contains two incompatible copies (18.3.23 and 19.1.9). Declare it explicitly and keep it aligned with `react`/`react-dom` during the S34 upgrade. |
 | D17 | 🟡 Low | whole repo | No automated verification of any kind: no test runner, no test files, no CI workflow. Every dependency bump and refactor is validated by hand. See S35. |
+| D18 | 🟡 Low | [createLogFolders.ts:5](./new/HBBatchBeast/src/backend/helpers/createLogFolders.ts) | Assumes `~/Documents` already exists: it calls `fs.mkdirSync(home + '/Documents/HBBatchBeast')` non-recursively. On a fresh profile without a Documents folder this throws ENOENT and config load fails. Found by the first test run. |
+| D19 | 🟠 Medium | [queueBuild.js](<./new/HBBatchBeast/src/backend/modules/queueBuild.js>) / [handlers.ts:146](./new/HBBatchBeast/src/backend/handlers.ts) | Startup race: `queueBuild` sends `readyforInfo` before it registers `process.on('message')`, so the parent's immediate `queueInfoBomb` reply can be dropped. The child then waits forever and `RunBatchOperation` never settles. Observed intermittently in tests; masked in the app by nothing. Belongs to the S33 supervisor redesign (ack/handshake instead of fire-and-forget). |
 
 ---
 

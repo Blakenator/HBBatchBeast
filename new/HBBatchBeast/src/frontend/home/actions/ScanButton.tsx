@@ -6,10 +6,7 @@ import { actionMessages } from './messages';
 import { useBackendAsync } from '../../helpers';
 import { useGlobalConfigRequired, useSetBatchResult } from '../../core/stores';
 
-interface ScanButtonProps {
-}
-
-export const ScanButton: React.FC<ScanButtonProps> = ({}) => {
+export const ScanButton: React.FC = () => {
   const { formatMessage, formatNumber } = useIntl();
   const setBatchResult = useSetBatchResult();
   const config = useGlobalConfigRequired();

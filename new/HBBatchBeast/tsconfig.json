@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "module": "commonjs",
+    "module": "ESNext",
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -9,9 +9,25 @@
     "sourceMap": true,
     "baseUrl": ".",
     "outDir": "dist",
-    "moduleResolution": "node16",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "jsx": "react"
+    "jsx": "react",
+    "paths": {
+      "@superflag/super-ipc-core": [
+        "node_modules/@superflag/super-ipc-core/build/index.d.ts"
+      ],
+      "@superflag/super-ipc-backend": [
+        "node_modules/@superflag/super-ipc-backend/build/index.d.ts"
+      ],
+      "@superflag/super-ipc-preloader": [
+        "node_modules/@superflag/super-ipc-preloader/build/index.d.ts"
+      ],
+      "@superflag/super-ipc-react": [
+        "node_modules/@superflag/super-ipc-react/build/index.d.ts"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }
