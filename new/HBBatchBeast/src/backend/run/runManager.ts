@@ -38,13 +38,22 @@ export interface RunCounts {
   skipped: number;
 }
 
+export interface RunLogLine {
+  worker: number;
+  message: string;
+  at: number;
+}
+
 export interface RunState {
   status: RunStatus;
   items: RunItem[];
   counts: RunCounts;
+  logs: RunLogLine[];
   startedAt?: number;
   finishedAt?: number;
 }
+
+const MAX_LOG_LINES = 500;
 
 export interface WorkerHandlers {
   onQueueRequest: () => void;
@@ -92,6 +101,7 @@ export class RunManager {
   private state: RunState = {
     status: 'idle',
     items: [],
+    logs: [],
     counts: {
       total: 0,
       pending: 0,
@@ -131,6 +141,7 @@ export class RunManager {
         cancelled: 0,
         skipped: 0,
       },
+      logs: [],
       startedAt: Date.now(),
     };
     this.emit(true);
@@ -240,7 +251,14 @@ export class RunManager {
         this.emit(true);
         this.checkForCompletion();
       },
-      onConsole: (message) => this.deps.onConsole?.(workerNumber, message),
+      onConsole: (message) => {
+        this.deps.onConsole?.(workerNumber, message);
+        this.state.logs.push({ worker: workerNumber, message, at: Date.now() });
+        if (this.state.logs.length > MAX_LOG_LINES) {
+          this.state.logs.splice(0, this.state.logs.length - MAX_LOG_LINES);
+        }
+        this.emit();
+      },
       onExit: () => this.checkForCompletion(),
     });
     return worker;

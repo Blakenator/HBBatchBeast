@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, Button, Card, Spinner } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { ASYNC_CHANNEL, GlobalAppConfig, PROMISE_CHANNEL } from '../../common';
@@ -15,6 +15,7 @@ interface RunPanelProps {
 export const RunPanel: React.FC<RunPanelProps> = ({ config, items }) => {
   const { formatMessage } = useIntl();
   const setBatchResult = useSetBatchResult();
+  const [showConsole, setShowConsole] = useState(false);
 
   const { refetch: startRun, loading, error, lastProgressData, completeData } =
     useBackendAsync({
@@ -97,6 +98,37 @@ export const RunPanel: React.FC<RunPanelProps> = ({ config, items }) => {
                 ))}
             </ul>
           </Alert>
+        )}
+
+        {state && state.logs.length > 0 && (
+          <div className="mt-2">
+            <Button
+              size="sm"
+              variant="link"
+              onClick={() => setShowConsole((visible) => !visible)}
+            >
+              {formatMessage(runMessages.console)}
+            </Button>
+            {showConsole && (
+              <pre
+                style={{
+                  maxHeight: 200,
+                  overflow: 'auto',
+                  fontSize: '.75rem',
+                  background: '#f5f5f5',
+                  padding: '.5em',
+                }}
+              >
+                {state.logs
+                  .slice(-200)
+                  .map((line, index) => (
+                    <div key={`${line.at}-${index}`}>
+                      [{line.worker}] {line.message}
+                    </div>
+                  ))}
+              </pre>
+            )}
+          </div>
         )}
 
         {error && <Alert variant="danger">{error.message}</Alert>}

@@ -270,9 +270,9 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S14 | Scan-only pipeline: React button → async IPC → supervised `queueBuild` → progress + result table |
 | S33 | Typed process supervisor: versioned protocol, ready handshake, timeouts, kill escalation, restart budget, entry manifest, `will-quit` shutdown |
 | S35 | Test infrastructure + CI: Vitest unit/integration suites (scan contract, config, supervisor failure modes) and a typecheck/lint/test/package workflow |
-| S19 | Worker pool core: named worker item payload, typed event translation, `RunManager` dispatch over `ChildSupervisor` workers (UI controls still partial) |
+| S19 | Worker pool: named worker item payload, typed event translation of worker1's arrays, `RunManager` dispatch over `ChildSupervisor` workers, verified with a real HandBrake conversion |
 | S20 | Queue control core: start, pause, resume, stop and cancel-item with authoritative state in main |
-| S21 | Run journal: state persisted per run so an interrupted run is reported instead of looking completed |
+| S21 | Run state UI (minimal): counts, failures, console output; run journal persists state so an interrupted run is reported instead of looking completed |
 
 Also carried over as-is: the six legacy child-process modules are now under
 [`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and

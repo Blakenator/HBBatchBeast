@@ -106,9 +106,18 @@ describe('parseWorkerEvent', () => {
       preset: '-Z "x"',
       detail: '',
     });
+    expect(parseWorkerEvent([1, 'success', 4, '-Z "x"', ''])).toMatchObject({
+      state: 'OK',
+    });
     expect(parseWorkerEvent([1, 'Fail', 5, '-Z "x"', 'boom'])).toMatchObject({
       state: 'Fail',
       detail: 'boom',
+    });
+    expect(
+      parseWorkerEvent([1, 'Skipped: Not selected', 6, 'Skip', '']),
+    ).toMatchObject({ state: 'Skip', preset: '' });
+    expect(parseWorkerEvent([1, 'copied', 7, 'Copy', ''])).toMatchObject({
+      state: 'Copy',
     });
     expect(parseWorkerEvent([1, 'cancelled', 6, '-Z "x"', ''])).toMatchObject({
       state: 'cancelled',

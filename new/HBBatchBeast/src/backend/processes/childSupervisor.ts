@@ -34,6 +34,8 @@ export interface ChildSupervisorOptions {
   events?: ChildSupervisorEvents;
   /** Overrides the default queueBuild message parser. */
   parseMessage?: (raw: unknown) => ChildMessage | null;
+  /** Legacy children announce readiness with their own message shape. */
+  isReadyMessage?: (raw: unknown) => boolean;
 }
 
 /**
@@ -191,8 +193,18 @@ export class ChildSupervisor {
 
   private onReady?: () => void;
 
+  private markReady(): void {
+    if (this.ready) return;
+    this.ready = true;
+    this.onReady?.();
+  }
+
   private handleMessage(raw: unknown): void {
     this.options.events?.onRawMessage?.(raw);
+
+    if (!this.ready && this.options.isReadyMessage?.(raw)) {
+      this.markReady();
+    }
 
     const customParser = this.options.parseMessage;
     const message = (customParser ?? parseChildMessage)(raw);
@@ -213,8 +225,7 @@ export class ChildSupervisor {
 
     switch (message.type) {
       case 'ready':
-        this.ready = true;
-        this.onReady?.();
+        this.markReady();
         break;
       case 'log':
         this.options.events?.onLog?.(message.level, message.message);

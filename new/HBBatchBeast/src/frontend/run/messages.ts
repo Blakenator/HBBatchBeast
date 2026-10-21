@@ -11,4 +11,5 @@ export const runMessages = createMessages({
   },
   noQueue: { defaultMessage: 'Scan first to build a queue' },
   failures: { defaultMessage: 'Failures' },
+  console: { defaultMessage: 'Console output' },
 });

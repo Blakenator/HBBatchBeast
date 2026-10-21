@@ -13,6 +13,7 @@ import {
 } from '../core/stores';
 import { BatchOperationResults } from './BatchOperationResults';
 import { RunPanel } from '../run/RunPanel';
+import { SystemSettings } from '../settings/systemSettings/SystemSettings';
 
 export const HomePage: React.FC = () => {
   const { data, error, loading } = useBackend({
@@ -40,6 +41,7 @@ export const HomePage: React.FC = () => {
       {globalConfig && (
         <>
           <BatchTab config={globalConfig} />
+          <SystemSettings config={globalConfig} />
           <ScanButton />
           <RunPanel
             config={globalConfig}

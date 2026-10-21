@@ -4,6 +4,7 @@ import { versionWarningMessages } from './versionWarning/messages';
 import { actionMessages } from './home/actions/messages';
 import { batchOperationResultsMessages } from './home/messages';
 import { runMessages } from './run/messages';
+import { systemMessages } from './settings/systemSettings/messages';
 
 export const allMessages = {
   settingsMessages,
@@ -12,6 +13,7 @@ export const allMessages = {
   actionMessages,
   batchOperationResultsMessages,
   runMessages,
+  systemMessages,
 };
 
 /**

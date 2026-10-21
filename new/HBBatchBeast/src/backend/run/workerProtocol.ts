@@ -76,8 +76,22 @@ export type WorkerEvent =
   | { worker: number; type: 'logAppend'; filePath: string; text: string }
   | { worker: number; type: 'exitRequest' };
 
+/**
+ * worker1 is inconsistent about where it puts the outcome: some messages carry
+ * it in slot 3 (`['copied', n, 'Copy', log]`), others use the tag itself
+ * (`['success', n, preset, detail]`). Both are handled here.
+ */
+const STATE_TOKENS: Record<string, WorkerItemState> = {
+  OK: 'OK',
+  Fail: 'Fail',
+  Skip: 'Skip',
+  Copy: 'Copy',
+  cancelled: 'cancelled',
+};
+
 const RESULT_TAGS: Record<string, WorkerItemState> = {
   OK: 'OK',
+  success: 'OK',
   Fail: 'Fail',
   Skip: 'Skip',
   Copy: 'Copy',
@@ -135,14 +149,16 @@ export function parseWorkerEvent(raw: unknown): WorkerEvent | null {
   }
   if (tag === 'exitRequest') return { worker, type: 'exitRequest' };
 
-  const state = RESULT_TAGS[tag];
+  const state = STATE_TOKENS[asString(raw[3])] ?? RESULT_TAGS[tag];
   if (state) {
+    const presetFromSlot = asString(raw[3]);
     return {
       worker,
       type: 'result',
       queueNumber: toWorkerNumber(raw[2]),
       state,
-      preset: asString(raw[3]),
+      // slot 3 holds the outcome token for Skip/Copy, the preset otherwise
+      preset: STATE_TOKENS[presetFromSlot] ? '' : presetFromSlot,
       detail: asString(raw[4]),
     };
   }

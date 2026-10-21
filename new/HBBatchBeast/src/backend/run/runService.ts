@@ -22,6 +22,8 @@ export interface RunServiceOptions {
   onState?: (state: RunState) => void;
   onConsole?: (worker: number, message: string) => void;
   journalPath?: string;
+  /** Overrides where child entry points are resolved from (tests/dev). */
+  entryBaseDir?: string;
 }
 
 export function defaultJournalPath(homePath: string): string {
@@ -34,13 +36,17 @@ export function defaultJournalPath(homePath: string): string {
 function createWorkerHandle(
   workerNumber: number,
   handlers: WorkerHandlers,
+  entryBaseDir?: string,
 ): WorkerHandle {
   const supervisor = new ChildSupervisor({
     name: `worker-${workerNumber}`,
-    entry: resolveChildEntry('worker1'),
+    entry: resolveChildEntry('worker1', entryBaseDir),
     args: [String(workerNumber)],
     // worker1 still emits its own array format; translate it in the callback.
     parseMessage: () => null,
+    // worker1's first message is its queue request, which doubles as readiness.
+    isReadyMessage: (raw) =>
+      Array.isArray(raw) && raw[1] === 'queueRequest',
     events: {
       onRawMessage: (raw) => {
         const event = parseWorkerEvent(raw);
@@ -108,6 +114,7 @@ export function createRunManager(
     onConsole: options.onConsole,
     journalPath: options.journalPath ?? defaultJournalPath(homePath),
     buildItemConfig: options.buildItemConfig,
-    createWorker: createWorkerHandle,
+    createWorker: (workerNumber, handlers) =>
+      createWorkerHandle(workerNumber, handlers, options.entryBaseDir),
   });
 }
