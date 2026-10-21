@@ -26,16 +26,16 @@ function createSimpleStore<T>(initialValue?: T) {
         return state.value!;
       }),
     useSetValue: (data?: T) => {
-      const { setValue, value } = useStore((state) => ({
-        value: state.value,
-        setValue: state.setValue,
-      }));
+      // Select fields individually: returning a fresh object from a zustand v5
+      // selector makes useSyncExternalStore loop forever.
+      const value = useStore((state) => state.value);
+      const setValue = useStore((state) => state.setValue);
 
       useEffect(() => {
         if (!isEqual(data, value)) {
           setValue(data);
         }
-      }, [data]);
+      }, [data, value, setValue]);
 
       return setValue;
     },
