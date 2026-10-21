@@ -36,6 +36,8 @@ export interface ChildSupervisorOptions {
   parseMessage?: (raw: unknown) => ChildMessage | null;
   /** Legacy children announce readiness with their own message shape. */
   isReadyMessage?: (raw: unknown) => boolean;
+  /** Message that asks the child to stop (legacy children use their own shape). */
+  shutdownMessage?: unknown;
 }
 
 /**
@@ -109,7 +111,12 @@ export class ChildSupervisor {
     const exited = this.waitForExit();
     if (child.connected) {
       try {
-        child.send({ v: PROTOCOL_VERSION, type: 'shutdown' });
+        child.send(
+          (this.options.shutdownMessage ?? {
+            v: PROTOCOL_VERSION,
+            type: 'shutdown',
+          }) as never,
+        );
       } catch {
         // child already gone; the exit handler will settle this
       }

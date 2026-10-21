@@ -16,6 +16,11 @@ process.on('uncaughtException', function (err) {
   process.exit();
 });
 
+// Do not linger as an orphan analyser when the app disappears.
+process.on('disconnect', function () {
+  process.exit(0);
+});
+
 //console.log(randomvariable)
 
 

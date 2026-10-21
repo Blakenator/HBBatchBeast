@@ -15,6 +15,11 @@ process.on('uncaughtException', function(err) {
   process.exit(1);
 });
 
+// Do not linger as an orphan scanner when the app disappears.
+process.on('disconnect', function() {
+  process.exit(0);
+});
+
 
 //console.log(randomvariable)
 

@@ -33,10 +33,19 @@ if (mode === 'flaky' && marker) {
 }
 
 process.on('message', (message) => {
+  if (mode === 'legacy-suicide') {
+    if (Array.isArray(message) && message[0] === 'suicide') {
+      if (marker) fs.writeFileSync(marker, 'suicide');
+      process.exit(0);
+    }
+    return;
+  }
+
   if (!message || message.v !== V) return;
 
   if (message.type === 'shutdown') {
-    if (mode !== 'hang') process.exit(0);
+    // `legacy-suicide` only understands its own array-shaped stop command.
+    if (mode !== 'hang' && mode !== 'legacy-suicide') process.exit(0);
     return;
   }
 

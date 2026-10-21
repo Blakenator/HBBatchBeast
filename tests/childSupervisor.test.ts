@@ -140,6 +140,27 @@ describe('ChildSupervisor', () => {
     expect(readyCount).toBeGreaterThanOrEqual(1);
   });
 
+  it('sends a legacy shutdown command to children that ignore the typed protocol', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-fixture-'));
+    const marker = path.join(root, 'suicide');
+
+    const supervisor = makeSupervisor('legacy-suicide', {
+      shutdownMessage: ['suicide'],
+      env: {
+        FIXTURE_MODE: 'legacy-suicide',
+        FIXTURE_MARKER: marker,
+      },
+    });
+
+    await supervisor.start();
+    await supervisor.stop('test');
+
+    expect(fs.readFileSync(marker, 'utf8')).toBe('suicide');
+    expect(supervisor.isRunning).toBe(false);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it('shutdownAll stops every registered child', async () => {
     const first = makeSupervisor('ok');
     const second = makeSupervisor('ok');

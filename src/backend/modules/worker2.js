@@ -24,6 +24,33 @@ var fs = require('fs');
 var home = require("os").homedir();
 
 
+function stopShellWorker() {
+    if (!shellWorker || !shellWorker.pid) return;
+
+    try {
+        if (process.platform == 'win32') {
+            shell.exec('taskkill /PID ' + shellWorker.pid + ' /T /F');
+        } else {
+            shell.exec('pkill -P ' + shellWorker.pid);
+            process.kill(shellWorker.pid, 'SIGTERM');
+        }
+    } catch (err) { }
+}
+
+// Make sure a signal, parent crash or closed terminal also stops the encoder.
+for (const shutdownSignal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(shutdownSignal, function () {
+        stopShellWorker();
+        process.exit(0);
+    });
+}
+
+process.on('disconnect', function () {
+    stopShellWorker();
+    process.exit(0);
+});
+
+
 
 //console.log(randomvariable)
 
@@ -66,26 +93,8 @@ process.on('message', (infoArray) => {
 
         }
 
-        try {
+        stopShellWorker();
 
-            if (process.platform == 'win32') {
-                var killCommand = 'taskkill /PID ' + shellWorker.pid + ' /T /F'
-            }
-            if (process.platform == 'linux') {
-                //var killCommand = 'vps -o pid --no-headers --ppid ' + shellWorker.pid
-                var killCommand = 'pkill -P ' + shellWorker.pid
-            }
-            if (process.platform == 'darwin') {
-                //var killCommand = 'pgrep -P ' + shellWorker.pid
-                var killCommand = 'pkill -P ' + shellWorker.pid
-            }
-            if (shell.exec(killCommand).code !== 0) {
-                shell.exit(1);
-            }
-
-        } catch (err) { }
-
-        //process.send("Exit,"+"Cancelled");
         process.exit();
     }
 });

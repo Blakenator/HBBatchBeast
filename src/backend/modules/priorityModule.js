@@ -10,6 +10,11 @@ var shell = require('shelljs');
 var fs = require('fs');
 
 
+process.on('disconnect', function () {
+    process.exit(0);
+});
+
+
 
 process.on('message', (infoArray) => {
 

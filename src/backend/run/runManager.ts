@@ -95,6 +95,8 @@ export interface WorkerHandlers {
 export interface WorkerHandle {
   start: () => Promise<void>;
   sendItem: (config: WorkerItemConfig) => void;
+  /** Stops the item this worker is processing without killing the worker. */
+  cancelItem: () => void;
   resume: () => void;
   stop: () => Promise<void>;
 }
@@ -219,12 +221,26 @@ export class RunManager {
   cancelItem(index: number): void {
     const item = this.state.items[index];
     if (!item || TERMINAL_STATES.includes(item.state)) return;
+
+    const workerNumber = item.worker;
+    const runningWorker =
+      workerNumber !== undefined &&
+      this.activeByWorker.get(workerNumber) === index
+        ? this.workers[workerNumber - 1]
+        : undefined;
+
     item.state = 'cancelled';
     item.reason = 'Cancelled by user';
+    item.percent = undefined;
+    item.progress = undefined;
     if (item.startedAt !== undefined) item.finishedAt = Date.now();
-    if (item.worker !== undefined) this.activeByWorker.delete(item.worker);
+    if (workerNumber !== undefined) this.activeByWorker.delete(workerNumber);
     this.recount();
     this.emit(true);
+
+    // A pending item has no process yet; a running one must have its encoder
+    // killed so the worker can request the next item.
+    runningWorker?.cancelItem();
     this.checkForCompletion();
   }
 
@@ -266,7 +282,8 @@ export class RunManager {
       },
       onProgress: (queueNumber, percent, raw) => {
         const item = this.state.items[queueNumber];
-        if (!item) return;
+        // Cancelled items must ignore late encoder telemetry.
+        if (!item || item.state !== 'running') return;
         item.percent = percent;
 
         const parsed = parseProgressText(raw);
@@ -285,7 +302,7 @@ export class RunManager {
       },
       onFileSizes: (queueNumber, sourceBytes, outputBytes) => {
         const item = this.state.items[queueNumber];
-        if (!item) return;
+        if (!item || item.state !== 'running') return;
         if (sourceBytes > 0) item.sourceBytes = sourceBytes;
         if (outputBytes > 0) item.outputBytes = outputBytes;
         this.emit();

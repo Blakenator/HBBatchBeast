@@ -159,7 +159,39 @@ var saveWorkerLogs
 
 var handBrakePresetImportFiles
 
+var itemCancelled = false
+
 var exitRequestSent = false
+
+
+function stopChildProcesses() {
+    var killCommand = '';
+
+    if (process.platform == 'win32') {
+        killCommand = 'taskkill /PID ' + process.pid + ' /T /F';
+    } else {
+        killCommand = 'pkill -P ' + process.pid;
+    }
+
+    try {
+        shell.exec(killCommand);
+    } catch (err) { }
+}
+
+
+// The parent may disappear without a chance to send `suicide` (crash, SIGKILL,
+// closing terminal); never leave an encoder running behind it.
+for (const shutdownSignal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(shutdownSignal, function () {
+        stopChildProcesses();
+        process.exit(0);
+    });
+}
+
+process.on('disconnect', function () {
+    stopChildProcesses();
+    process.exit(0);
+});
 
 
 
@@ -196,17 +228,8 @@ process.on('message', (m) => {
 
         updateConsole(workerNumber, "Stop command received. Closing sub-processes")
 
-        if (process.platform == 'win32') {
-            var killCommand = 'taskkill /PID ' + process.pid + ' /T /F'
-        } else if (process.platform == 'linux') {
-            var killCommand = 'pkill -P ' + process.pid
-        } else if (process.platform == 'darwin') {
-            var killCommand = 'pkill -P ' + process.pid
-        }
-
-        if (shell.exec(killCommand).code !== 0) {
-            shell.exit(1);
-        }
+        stopChildProcesses();
+        process.exit(0);
 
     }
 
@@ -216,6 +239,8 @@ process.on('message', (m) => {
     if (m[0] == "exitThread") {
 
         updateConsole(workerNumber, "Cancelling")
+
+        itemCancelled = true
 
         var infoArray = [
             "exitThread",
@@ -265,10 +290,7 @@ process.on('message', (m) => {
 
     if (m[0] == "queueNumber") {
 
-
-
-
-
+        itemCancelled = false
 
         //globalQueueNumber=m.substring(m.indexOf(":")+1);
 
@@ -972,7 +994,10 @@ process.on('message', (m) => {
                     }
 
                     function processFile() {
-                        //
+                        if (itemCancelled) {
+                            workerEncounteredError("Cancelled");
+                            return;
+                        }
 
                         var childProcess = require("child_process");
                         var shellThreadPath = "worker2.cjs"
@@ -1203,7 +1228,11 @@ process.on('message', (m) => {
 
 
 
-                                if (mode != "healthCheck" && !fs.existsSync(currentDestinationLine)) {
+                                if (message[1] == "Cancelled") {
+
+                                    workerEncounteredError("Cancelled");
+
+                                } else if (mode != "healthCheck" && !fs.existsSync(currentDestinationLine)) {
 
                                     updateConsole(workerNumber, "HBBatchBeast ALERT: NO OUTPUT FILE PRODUCED" + currentDestinationLine)
 
@@ -1803,8 +1832,15 @@ function workerNotEncounteredError() {
 
 
 function checkifQueuePause() {
-    var f = fs.readFileSync(homePath + '/Documents/HBBatchBeast/Config/queueStartStop.txt', 'utf8');
-    if (f == "1") {
+    var queueRunning = true;
+
+    try {
+        queueRunning = fs.readFileSync(homePath + '/Documents/HBBatchBeast/Config/queueStartStop.txt', 'utf8').trim() == "1";
+    } catch (err) {
+        // The legacy pause file is optional; without it the worker keeps pulling items.
+    }
+
+    if (queueRunning) {
         var message = [
             workerNumber,
             "queueRequest",

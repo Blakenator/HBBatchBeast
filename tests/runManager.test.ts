@@ -14,6 +14,7 @@ class FakeWorker implements WorkerHandle {
   readonly sent: WorkerItemConfig[] = [];
   stopped = false;
   resumed = 0;
+  cancelled = 0;
   private pendingTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -34,6 +35,19 @@ class FakeWorker implements WorkerHandle {
       this.handlers.onResult(config.queueNumber, this.result, this.result === 'Fail' ? 'boom' : '');
       this.handlers.onQueueRequest();
     }, 5);
+  }
+
+  cancelItem(): void {
+    this.cancelled += 1;
+    if (this.pendingTimer) clearTimeout(this.pendingTimer);
+    const current = this.sent[this.sent.length - 1];
+    if (!current) return;
+    this.handlers.onResult(current.queueNumber, 'cancelled', 'Cancelled by user');
+    this.handlers.onQueueRequest();
+  }
+
+  emitProgress(queueNumber: number, percent: string): void {
+    this.handlers.onProgress(queueNumber, percent);
   }
 
   resume(): void {
@@ -202,6 +216,35 @@ describe('RunManager', () => {
     expect(state.counts.cancelled).toBe(1);
   });
 
+  it('stops the encoder and dispatches the next item when the running item is cancelled', async () => {
+    const manager = makeManager('OK', 1);
+    await manager.start(items);
+
+    manager.cancelItem(0);
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+
+    const state = manager.getState();
+    expect(workers[0].cancelled).toBe(1);
+    expect(state.items[0].state).toBe('cancelled');
+    expect(state.items[1].state).toBe('success');
+    expect(state.items[2].state).toBe('success');
+  });
+
+  it('ignores late progress from a cancelled item', async () => {
+    const manager = makeManager('OK', 1);
+    await manager.start(items);
+
+    manager.cancelItem(0);
+    workers[0].emitProgress(0, '99.00%');
+
+    const item = manager.getState().items[0];
+    expect(item.state).toBe('cancelled');
+    expect(item.percent).toBeUndefined();
+    expect(item.progress).toBeUndefined();
+
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+  });
+
   it('writes a journal that reports an interrupted run', async () => {
     const journalPath = path.join(root, 'journal.json');
     const manager = makeManager('OK', 1, true);
@@ -233,6 +276,7 @@ describe('RunManager', () => {
       buildItemConfig: buildConfig,
       createWorker: (_number, handlers) => ({
         start: async () => handlers.onQueueRequest(),
+        cancelItem: () => undefined,
         resume: () => undefined,
         stop: async () => undefined,
         sendItem: (config) => {
@@ -273,6 +317,7 @@ describe('RunManager', () => {
       buildItemConfig: buildConfig,
       createWorker: (_number, handlers) => ({
         start: async () => handlers.onQueueRequest(),
+        cancelItem: () => undefined,
         resume: () => undefined,
         stop: async () => undefined,
         sendItem: (config) => {

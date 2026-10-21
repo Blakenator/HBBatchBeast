@@ -47,6 +47,9 @@ function createWorkerHandle(
     // worker1's first message is its queue request, which doubles as readiness.
     isReadyMessage: (raw) =>
       Array.isArray(raw) && raw[1] === 'queueRequest',
+    // worker1 predates the typed protocol; `suicide` makes it kill its
+    // encoder/analyser children before exiting.
+    shutdownMessage: ['suicide'],
     events: {
       onRawMessage: (raw) => {
         const event = parseWorkerEvent(raw);
@@ -91,6 +94,13 @@ function createWorkerHandle(
   return {
     start: () => supervisor.start(),
     sendItem: (config) => supervisor.sendRaw(encodeWorkerItem(config)),
+    cancelItem: () => {
+      try {
+        supervisor.sendRaw(['exitThread']);
+      } catch {
+        // The worker may already be exiting; the item stays cancelled.
+      }
+    },
     resume: () => supervisor.sendRaw(['continueWork']),
     stop: async () => {
       try {

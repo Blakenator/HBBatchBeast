@@ -86,11 +86,36 @@ try {
   console.error('Build output is incomplete; child processes cannot start.', error);
 }
 
-// Never leave worker processes behind when the app shuts down.
-app.on('will-quit', () => {
+// Never leave worker processes behind when the app shuts down. Quitting is
+// asynchronous, so defer the actual quit until children have been stopped.
+let quitting = false;
+
+app.on('before-quit', (event) => {
+  if (quitting) return;
+  quitting = true;
+  event.preventDefault();
+
+  // A stuck child must not keep the app alive forever.
+  const forceExit = setTimeout(() => app.exit(1), 10000);
+  forceExit.unref?.();
+
   destroyTray();
-  void ChildSupervisor.shutdownAll();
+  void ChildSupervisor.shutdownAll('app-quit')
+    .catch((error) => console.error('Failed to stop child processes', error))
+    .finally(() => {
+      clearTimeout(forceExit);
+      app.quit();
+    });
 });
+
+// Electron does not quit on console signals by itself; route Ctrl+C, `kill`
+// and a closing terminal through the normal graceful shutdown path.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, () => {
+    console.log(`Received ${signal}; quitting`);
+    app.quit();
+  });
+}
 
 const createWindow = () => {
   // Create the browser window.

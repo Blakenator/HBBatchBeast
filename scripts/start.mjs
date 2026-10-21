@@ -16,13 +16,37 @@ const electronArgs = ['--', ...appArgs];
 const child = spawn(
   process.execPath,
   [forgeCli, 'start', ...electronArgs],
-  { stdio: 'inherit' },
+  {
+    stdio: 'inherit',
+    // Give the whole dev tree its own process group so Ctrl+C / SIGTERM can be
+    // forwarded to Electron and every encoder it spawned, not just Forge.
+    detached: process.platform !== 'win32',
+  },
 );
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => child.kill(signal));
+const killTree = (signal) => {
+  if (!child.pid) return;
+  try {
+    if (process.platform === 'win32') child.kill(signal);
+    else process.kill(-child.pid, signal);
+  } catch {
+    // The tree may already be gone.
+  }
+};
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    killTree(signal);
+    // Never leave the dev app running if a child ignores the signal.
+    setTimeout(() => {
+      killTree('SIGKILL');
+      process.exit(1);
+    }, 8000).unref();
+  });
 }
 
 child.on('exit', (code, signal) => {
+  // Workers or encoders can outlive Electron if it was killed abruptly.
+  if (process.platform !== 'win32') killTree('SIGTERM');
   process.exit(signal ? 1 : (code ?? 0));
 });
