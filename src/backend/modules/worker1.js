@@ -1008,7 +1008,8 @@ process.on('message', (m) => {
                                         workerNumber,
                                         "percentage",
                                         globalQueueNumber,
-                                        output
+                                        output,
+                                        str
                                     ];
                                     process.send(message);
 
@@ -1035,7 +1036,8 @@ process.on('message', (m) => {
                                                 workerNumber,
                                                 "percentage",
                                                 globalQueueNumber,
-                                                output
+                                                output,
+                                                str
                                             ];
                                             process.send(message);
 
@@ -1086,7 +1088,8 @@ process.on('message', (m) => {
                                         workerNumber,
                                         "percentage",
                                         globalQueueNumber,
-                                        output
+                                        output,
+                                        str
                                     ];
                                     process.send(message);
 
@@ -1117,7 +1120,8 @@ process.on('message', (m) => {
                                                 workerNumber,
                                                 "percentage",
                                                 globalQueueNumber,
-                                                output
+                                                output,
+                                                str
                                             ];
                                             process.send(message);
 

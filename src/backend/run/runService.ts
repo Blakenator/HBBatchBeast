@@ -63,7 +63,14 @@ function createWorkerHandle(
             handlers.onStarted(event.queueNumber);
             break;
           case 'progress':
-            handlers.onProgress(event.queueNumber, event.percent);
+            handlers.onProgress(event.queueNumber, event.percent, event.raw);
+            break;
+          case 'fileSizes':
+            handlers.onFileSizes(
+              event.queueNumber,
+              event.sourceBytes,
+              event.outputBytes,
+            );
             break;
           case 'result':
             handlers.onResult(event.queueNumber, event.state, event.detail);

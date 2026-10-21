@@ -81,17 +81,28 @@ scroll to the field.
 
 ### 3.3 Queue / results table
 
-- Virtualized; stable scroll and selection at 10k+ rows (US-15, F3).
-- Columns: `#`, file path (truncated middle, full on hover/copy), preset (resolved), state, reason, actions.
+- Virtualized; stable scroll and selection at 10k+ rows (US-15, F3). Implemented with TanStack Table (models, sorting,
+  filtering, sizing, visibility) and TanStack Virtual (row windowing).
+- Columns: `#`, file path (truncated middle, full on hover/copy), preset (resolved), state, progress, ETA, speed, size,
+  reason, actions. Every data column is sortable (ascending → descending → unsorted), resizable (drag the header edge,
+  or focus the separator and use arrow keys), reorderable (drag the grip or use the column menu arrows) and hideable.
+  Widths, order and visibility persist per user; Actions stays visible.
 - Filter chips: All / Remaining / Success / Error / Cancelled / Skipped; search by path substring.
-- Per-row actions: cancel (in flight), open log, reveal in folder, media info (converted items), retry (errors).
-- Selecting rows + "Convert selected" and "Retry selected" operate on the current filter.
+- Per-row actions: log, media info, and cancel while the item is pending or in flight.
+- Failure panel above the queue groups identical messages with counts; a group expands to its files, each opening the
+  per-file log. "Copy all errors" produces a shareable aggregate.
+- Per-file log dialog shows the full error detail and the worker console tail captured while that file ran, with copy.
+- Live telemetry above the queue: status and completion donuts, files-per-minute bars, data-throughput and frame-rate
+  line charts, plus remaining duration and estimated finish time. Charts update from the run's progress stream and use
+  ECharts, so they re-render on theme changes.
 
 ### 3.4 Log viewer
 
+- The per-file log dialog is the entry point from a row or a failure group; it shows error detail, timestamps, sizes and
+  the worker console tail captured for that item.
 - List of known logs with size and last-modified; empty states explain that a log appears after the first run.
 - Per-item log link opens the log scrolled to that item's section.
-- Copy/download affordance; no editing.
+- Copy affordance; no editing. Long error blocks scroll inside the dialog rather than expanding the row.
 
 ### 3.5 Media info
 

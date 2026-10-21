@@ -221,4 +221,70 @@ describe('RunManager', () => {
     await expect(manager.start(items)).rejects.toThrow(/already in progress/);
     await manager.stop();
   });
+
+  it('records progress telemetry, timings and a failure log tail', async () => {
+    const sourcePath = path.join(root, 'source.mp4');
+    fs.writeFileSync(sourcePath, '0123456789');
+    const result: 'OK' | 'Fail' = 'Fail';
+
+    const manager = new RunManager({
+      workerCount: 1,
+      buildItemConfig: buildConfig,
+      createWorker: (_number, handlers) => ({
+        start: async () => handlers.onQueueRequest(),
+        resume: () => undefined,
+        stop: async () => undefined,
+        sendItem: (config) => {
+          handlers.onStarted(config.queueNumber);
+          handlers.onProgress(
+            config.queueNumber,
+            '42.50%',
+            'Encoding: task 1 of 1, 42.50 % (45.67 fps, avg 50.00 fps, ETA 00h00m30s)',
+          );
+          handlers.onConsole('sub worker error: boom');
+          handlers.onFileSizes(config.queueNumber, 10, 4);
+          handlers.onResult(config.queueNumber, result, 'trace line');
+        },
+      }),
+    });
+
+    await manager.start([{ path: sourcePath, preset: '-Z "x"' }]);
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+
+    const item = manager.getState().items[0];
+    expect(item.state).toBe('error');
+    expect(item.sourceBytes).toBe(10);
+    expect(item.outputBytes).toBe(4);
+    expect(item.startedAt).toBeTypeOf('number');
+    expect(item.finishedAt).toBeGreaterThanOrEqual(item.startedAt!);
+    expect(item.progress).toMatchObject({
+      percent: 42.5,
+      fps: 45.67,
+      etaSeconds: 30,
+    });
+    expect(item.reason).toBe('trace line');
+    expect(item.logTail).toEqual(['sub worker error: boom']);
+  });
+
+  it('drops the console tail of successful items', async () => {
+    const manager = new RunManager({
+      workerCount: 1,
+      buildItemConfig: buildConfig,
+      createWorker: (_number, handlers) => ({
+        start: async () => handlers.onQueueRequest(),
+        resume: () => undefined,
+        stop: async () => undefined,
+        sendItem: (config) => {
+          handlers.onStarted(config.queueNumber);
+          handlers.onConsole('launching sub worker');
+          handlers.onResult(config.queueNumber, 'OK', '');
+        },
+      }),
+    });
+
+    await manager.start([items[0]]);
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+
+    expect(manager.getState().items[0].logTail).toBeUndefined();
+  });
 });

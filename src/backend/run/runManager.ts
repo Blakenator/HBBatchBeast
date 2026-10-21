@@ -1,6 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { WorkerItemConfig } from './workerProtocol';
+import {
+  parsePercent,
+  parseProgressText,
+  RunItemProgress,
+} from '../../common/runTelemetry';
 
 export type RunStatus =
   | 'idle'
@@ -26,6 +31,18 @@ export interface RunItem {
   worker?: number;
   percent?: string;
   reason?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  /** Size measured when the item starts, used for live byte throughput. */
+  sourceBytes?: number;
+  /** Size of the converted file, reported by the worker after success. */
+  outputBytes?: number;
+  progress?: RunItemProgress;
+  /**
+   * Console lines the worker emitted while this item was in flight. Only kept
+   * for items that did not succeed, so a large successful run stays small.
+   */
+  logTail?: string[];
 }
 
 export interface RunCounts {
@@ -49,16 +66,23 @@ export interface RunState {
   items: RunItem[];
   counts: RunCounts;
   logs: RunLogLine[];
+  workerCount: number;
   startedAt?: number;
   finishedAt?: number;
 }
 
 const MAX_LOG_LINES = 500;
+const MAX_ITEM_LOG_LINES = 80;
 
 export interface WorkerHandlers {
   onQueueRequest: () => void;
   onStarted: (queueNumber: number) => void;
-  onProgress: (queueNumber: number, percent: string) => void;
+  onProgress: (queueNumber: number, percent: string, raw?: string) => void;
+  onFileSizes: (
+    queueNumber: number,
+    sourceBytes: number,
+    outputBytes: number,
+  ) => void;
   onResult: (
     queueNumber: number,
     state: 'OK' | 'Fail' | 'Skip' | 'Copy' | 'cancelled' | 'error',
@@ -102,6 +126,7 @@ export class RunManager {
     status: 'idle',
     items: [],
     logs: [],
+    workerCount: 1,
     counts: {
       total: 0,
       pending: 0,
@@ -114,6 +139,8 @@ export class RunManager {
   };
 
   private workers: WorkerHandle[] = [];
+  /** Which queue item each worker is converting right now. */
+  private activeByWorker = new Map<number, number>();
   private stopped = false;
   private lastJournalWrite = 0;
 
@@ -129,6 +156,8 @@ export class RunManager {
     }
 
     this.stopped = false;
+    this.activeByWorker.clear();
+    const workerCount = Math.max(1, this.deps.workerCount ?? 1);
     this.state = {
       status: 'running',
       items: items.map((item) => ({ ...item, state: 'pending' as const })),
@@ -142,11 +171,11 @@ export class RunManager {
         skipped: 0,
       },
       logs: [],
+      workerCount,
       startedAt: Date.now(),
     };
     this.emit(true);
 
-    const workerCount = Math.max(1, this.deps.workerCount ?? 1);
     for (let index = 0; index < workerCount; index += 1) {
       this.workers.push(this.createWorker(index + 1));
     }
@@ -175,12 +204,14 @@ export class RunManager {
       if (item.state === 'running' || item.state === 'pending') {
         item.state = 'cancelled';
         item.reason = 'Stopped by user';
+        if (item.startedAt !== undefined) item.finishedAt = Date.now();
       }
     });
     this.recount();
     this.emit(true);
 
     await Promise.all(this.workers.map((worker) => worker.stop()));
+    this.activeByWorker.clear();
     this.workers = [];
     this.finish('completed');
   }
@@ -190,6 +221,8 @@ export class RunManager {
     if (!item || TERMINAL_STATES.includes(item.state)) return;
     item.state = 'cancelled';
     item.reason = 'Cancelled by user';
+    if (item.startedAt !== undefined) item.finishedAt = Date.now();
+    if (item.worker !== undefined) this.activeByWorker.delete(item.worker);
     this.recount();
     this.emit(true);
     this.checkForCompletion();
@@ -223,14 +256,38 @@ export class RunManager {
       },
       onStarted: (queueNumber) => {
         const item = this.state.items[queueNumber];
-        if (item && item.state === 'pending') item.state = 'running';
+        if (!item) return;
+        if (item.state === 'pending') item.state = 'running';
+        if (item.startedAt === undefined) item.startedAt = Date.now();
+        item.progress = undefined;
+        this.activeByWorker.set(workerNumber, queueNumber);
         this.recount();
         this.emit();
       },
-      onProgress: (queueNumber, percent) => {
+      onProgress: (queueNumber, percent, raw) => {
         const item = this.state.items[queueNumber];
         if (!item) return;
         item.percent = percent;
+
+        const parsed = parseProgressText(raw);
+        const numeric = parsePercent(percent) ?? parsed.percent;
+        const previous = item.progress ?? {};
+        item.progress = {
+          ...previous,
+          ...(numeric !== undefined ? { percent: numeric } : {}),
+          ...(parsed.fps !== undefined ? { fps: parsed.fps } : {}),
+          ...(parsed.speed !== undefined ? { speed: parsed.speed } : {}),
+          ...(parsed.etaSeconds !== undefined ? { etaSeconds: parsed.etaSeconds } : {}),
+          ...(parsed.frame !== undefined ? { frame: parsed.frame } : {}),
+          ...(parsed.bytes !== undefined ? { bytes: parsed.bytes } : {}),
+        };
+        this.emit();
+      },
+      onFileSizes: (queueNumber, sourceBytes, outputBytes) => {
+        const item = this.state.items[queueNumber];
+        if (!item) return;
+        if (sourceBytes > 0) item.sourceBytes = sourceBytes;
+        if (outputBytes > 0) item.outputBytes = outputBytes;
         this.emit();
       },
       onResult: (queueNumber, result, detail) => {
@@ -246,7 +303,15 @@ export class RunManager {
                   : 'error';
           item.reason = detail || undefined;
           item.percent = undefined;
+          if (item.state === 'success') {
+            item.progress = { ...item.progress, percent: 100 };
+          }
+          if (item.startedAt !== undefined) item.finishedAt = Date.now();
+          // A successful item's console tail is noise and would bloat a
+          // 10k-item run; failures keep it for diagnosis.
+          if (item.state === 'success') item.logTail = undefined;
         }
+        this.activeByWorker.delete(workerNumber);
         this.recount();
         this.emit(true);
         this.checkForCompletion();
@@ -256,6 +321,13 @@ export class RunManager {
         this.state.logs.push({ worker: workerNumber, message, at: Date.now() });
         if (this.state.logs.length > MAX_LOG_LINES) {
           this.state.logs.splice(0, this.state.logs.length - MAX_LOG_LINES);
+        }
+        const active = this.activeByWorker.get(workerNumber);
+        const item = active === undefined ? undefined : this.state.items[active];
+        if (item && item.state === 'running') {
+          item.logTail = [...(item.logTail ?? []), message].slice(
+            -MAX_ITEM_LOG_LINES,
+          );
         }
         this.emit();
       },
@@ -268,11 +340,26 @@ export class RunManager {
   private takeNextItem(worker: number): number | undefined {
     const index = this.state.items.findIndex((item) => item.state === 'pending');
     if (index === -1) return undefined;
-    this.state.items[index].state = 'running';
-    this.state.items[index].worker = worker;
+    const item = this.state.items[index];
+    item.state = 'running';
+    item.worker = worker;
+    item.startedAt = Date.now();
+    item.logTail = [];
+    item.sourceBytes = this.readFileSize(item.path);
+    this.activeByWorker.set(worker, index);
     this.recount();
     this.emit();
     return index;
+  }
+
+  /** Best-effort source size for byte throughput; never fails the run. */
+  private readFileSize(filePath: string): number | undefined {
+    try {
+      const stats = fs.statSync(filePath);
+      return Number.isFinite(stats.size) ? stats.size : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private dispatch(): void {

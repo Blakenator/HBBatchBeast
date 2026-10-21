@@ -57,7 +57,21 @@ export type WorkerEvent =
   | { worker: number; type: 'queueRequest' }
   | { worker: number; type: 'console'; message: string }
   | { worker: number; type: 'started'; queueNumber: number }
-  | { worker: number; type: 'progress'; queueNumber: number; percent: string }
+  | {
+      worker: number;
+      type: 'progress';
+      queueNumber: number;
+      percent: string;
+      /** Encoder line the percentage came from (HandBrake/FFmpeg telemetry). */
+      raw?: string;
+    }
+  | {
+      worker: number;
+      type: 'fileSizes';
+      queueNumber: number;
+      sourceBytes: number;
+      outputBytes: number;
+    }
   | {
       worker: number;
       type: 'probe';
@@ -123,11 +137,27 @@ export function parseWorkerEvent(raw: unknown): WorkerEvent | null {
     return { worker, type: 'started', queueNumber: toWorkerNumber(raw[2]) };
   }
   if (tag === 'percentage') {
+    const rawLine = asString(raw[4]);
     return {
       worker,
       type: 'progress',
       queueNumber: toWorkerNumber(raw[2]),
       percent: asString(raw[3]),
+      ...(rawLine ? { raw: rawLine } : {}),
+    };
+  }
+  if (tag === 'fileSizes') {
+    // worker1 reports sizes in gigabytes; normalize them to bytes.
+    const gigabytes = (value: unknown) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? Math.round(parsed * 1e9) : 0;
+    };
+    return {
+      worker,
+      type: 'fileSizes',
+      queueNumber: toWorkerNumber(raw[2]),
+      sourceBytes: gigabytes(raw[3]),
+      outputBytes: gigabytes(raw[4]),
     };
   }
   if (tag === 'FFPROBE') {

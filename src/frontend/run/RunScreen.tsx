@@ -14,6 +14,10 @@ import { AppStatus } from '../ui/StatusPill';
 import { Panel, PanelGrid } from '../ui/Panel';
 import { Button } from '../ui/Button';
 import { QueueTable, QueueRow } from './QueueTable';
+import { FailuresPanel } from './FailuresPanel';
+import { ItemLogModal } from './ItemLogModal';
+import { RunCharts } from './RunCharts';
+import { useRunTelemetry } from './useRunTelemetry';
 import { runMessages } from './messages';
 import { RunStatePayload } from './types';
 import { validateBatchConfig } from './validation';
@@ -89,6 +93,11 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const pause = useBackend({ channel: PROMISE_CHANNEL.PauseRun, skip: true });
   const resume = useBackend({ channel: PROMISE_CHANNEL.ResumeRun, skip: true });
   const stop = useBackend({ channel: PROMISE_CHANNEL.StopRun, skip: true });
+  const cancelItem = useBackend({
+    channel: PROMISE_CHANNEL.CancelRunItem,
+    skip: true,
+  });
+  const [logRow, setLogRow] = useState<QueueRow | null>(null);
 
   // A run only describes the settings it was started with. Keep the signature it
   // ran against so switching profiles or folders cannot show the previous run.
@@ -119,19 +128,39 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     onStatusChange(status);
   }, [status, onStatusChange]);
 
-  const rows: QueueRow[] = runState
-    ? runState.items.map((item) => ({
-        path: item.path,
-        preset: item.preset,
-        state: item.state,
-        percent: item.percent,
-        reason: item.reason,
-      }))
-    : scanItems.map((item) => ({
-        path: item.path,
-        preset: item.preset,
-        state: 'pending' as const,
-      }));
+  const rows: QueueRow[] = useMemo(
+    () =>
+      runState
+        ? runState.items.map((item, index) => ({
+            index,
+            path: item.path,
+            preset: item.preset,
+            state: item.state,
+            percent: item.percent,
+            reason: item.reason,
+            worker: item.worker,
+            startedAt: item.startedAt,
+            finishedAt: item.finishedAt,
+            sourceBytes: item.sourceBytes,
+            outputBytes: item.outputBytes,
+            progress: item.progress,
+            logTail: item.logTail,
+          }))
+        : scanItems.map((item, index) => ({
+            index,
+            path: item.path,
+            preset: item.preset,
+            state: 'pending' as const,
+          })),
+    [runState, scanItems],
+  );
+
+  const telemetry = useRunTelemetry(runState);
+  const runActive =
+    runState?.status === 'running' || runState?.status === 'paused';
+  // Re-resolve the open log against the latest rows so a running file's log
+  // keeps streaming while the modal is open.
+  const activeLogRow = logRow ? rows[logRow.index] ?? logRow : null;
 
   const startRun = () => {
     setRunSignature(queueSignature);
@@ -271,6 +300,8 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </div>
       )}
 
+      {runState && <RunCharts state={runState} telemetry={telemetry} />}
+
       {scan.error && <Alert variant="danger">{scan.error.message}</Alert>}
       {run.error && <Alert variant="danger">{run.error.message}</Alert>}
 
@@ -308,6 +339,8 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </Modal.Footer>
       </Modal>
 
+      <FailuresPanel rows={rows} onOpenLog={setLogRow} />
+
       <Panel
         title={formatMessage(runMessages.queue)}
         actions={
@@ -327,9 +360,21 @@ export const RunScreen: React.FC<RunScreenProps> = ({
                   })}
           </div>
         ) : (
-          <QueueTable rows={rows} />
+          <QueueTable
+            rows={rows}
+            onOpenLog={setLogRow}
+            onCancel={
+              runActive
+                ? (row) => {
+                    void cancelItem.refetch({ index: row.index });
+                  }
+                : undefined
+            }
+          />
         )}
       </Panel>
+
+      <ItemLogModal row={activeLogRow} onClose={() => setLogRow(null)} />
     </div>
   );
 };
