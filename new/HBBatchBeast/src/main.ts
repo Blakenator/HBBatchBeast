@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
-import { setupApiHandlers } from '@superflag/super-ipc/backend';
+import { setupApiHandlers } from '@superflag/super-ipc-backend';
 import path from 'path';
 import { BackendAsyncHandlers, BackendHandlers } from './backend';
 

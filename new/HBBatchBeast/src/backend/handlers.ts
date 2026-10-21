@@ -11,11 +11,11 @@ import {
 } from '../common';
 import packageJson from '../../package.json';
 import childProcess from 'child_process';
-import { AppError } from '@superflag/super-ipc/common';
+import { AppError } from '@superflag/super-ipc-core';
 import {
   BackendAsyncHandlersType,
   BackendSyncHandlersType,
-} from '@superflag/super-ipc/backend';
+} from '@superflag/super-ipc-backend';
 
 export const BackendHandlers: BackendSyncHandlersType<
   PROMISE_CHANNEL,

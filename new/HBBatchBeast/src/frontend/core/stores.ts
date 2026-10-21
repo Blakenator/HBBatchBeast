@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { GlobalAppConfig, RunBatchOperationResult } from '../../common';
 import { useEffect } from 'react';
 import { isEqual } from 'lodash';
-import { AppError } from '@superflag/super-ipc/common';
+import { AppError } from '@superflag/super-ipc-core';
 
 interface SimpleStore<T> {
   value: T;

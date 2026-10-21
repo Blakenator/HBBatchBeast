@@ -6,7 +6,7 @@ import {
 import {
   BackendAsyncApiType,
   BackendSyncApiType,
-} from '@superflag/super-ipc/common';
+} from '@superflag/super-ipc-core';
 
 export enum PROMISE_CHANNEL {
   LoadConfiguration = 'LOAD_CONFIGURATION',

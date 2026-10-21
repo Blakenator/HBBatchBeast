@@ -1,6 +1,6 @@
 import { GlobalAppConfig } from '../../common';
 import fs from 'fs';
-import { AppError } from '@superflag/super-ipc/common';
+import { AppError } from '@superflag/super-ipc-core';
 
 export function saveAppConfig(configPath: string, config: GlobalAppConfig) {
   try {

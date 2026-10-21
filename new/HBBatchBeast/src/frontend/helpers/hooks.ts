@@ -8,7 +8,7 @@ import {
 import {
   createUseBackendAsyncHook,
   createUseBackendSyncHook,
-} from '@superflag/super-ipc/react';
+} from '@superflag/super-ipc-react';
 
 export const useBackend = createUseBackendSyncHook<
   PROMISE_CHANNEL,
