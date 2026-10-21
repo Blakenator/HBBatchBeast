@@ -143,6 +143,9 @@ new/HBBatchBeast/
 
 ### Runtime layout / config
 
+- `pnpm start` runs `scripts/start.mjs`, which adds `--ozone-platform=x11` on Linux because Electron 45 draws
+  no window decorations on native Wayland (no titlebar buttons). Packaged builds re-exec themselves with the
+  same flag; `HBB_OZONE_PLATFORM=wayland` opts out.
 - Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
 - Logs and worker scratch dirs are created by `createLogFolders()` on every load/save.
 - `GlobalAppConfig = { lang, selected_config, version_message, api_key, configs: BatchConfig[] }`;

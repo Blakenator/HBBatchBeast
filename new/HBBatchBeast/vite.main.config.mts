@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { defineConfig } from 'vite';
-import packageJson from './package.json';
+
+const packageJson = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+) as { dependencies?: Record<string, string> };
 
 // Modules that must stay external: the Electron runtime, Node built-ins, and
 // anything the forked child-process modules `require()` at runtime. Bundling

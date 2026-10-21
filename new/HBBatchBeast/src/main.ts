@@ -6,6 +6,35 @@ import { BackendAsyncHandlers, BackendHandlers } from './backend';
 import { ChildSupervisor } from './backend/processes/childSupervisor';
 import { validateChildEntries } from './backend/processes/childEntries';
 
+// Electron 45 running natively on Wayland under GNOME renders no window
+// decorations, so the titlebar (and its maximise/close buttons) disappears.
+// XWayland restores normal chrome. The switch has to be present before Chromium
+// picks its Ozone platform, which is earlier than this script runs, so relaunch
+// once with it. Set HBB_OZONE_PLATFORM=wayland to keep native Wayland.
+const ozonePlatformOverride = process.env.HBB_OZONE_PLATFORM;
+const runningOnWayland = process.env.XDG_SESSION_TYPE === 'wayland';
+const platformAlreadySelected = process.argv.some((arg) =>
+  arg.startsWith('--ozone-platform'),
+);
+
+// In development `scripts/start.mjs` passes the flag, so only packaged builds
+// need to re-exec (and only they can do so safely: Forge supervises dev).
+if (
+  app.isPackaged &&
+  process.platform === 'linux' &&
+  runningOnWayland &&
+  !ozonePlatformOverride &&
+  !platformAlreadySelected
+) {
+  process.env.HBB_OZONE_RELAUNCHED = '1';
+  app.relaunch({ args: ['--ozone-platform=x11', ...process.argv.slice(1)] });
+  app.exit(0);
+}
+
+if (process.platform === 'linux' && ozonePlatformOverride) {
+  app.commandLine.appendSwitch('ozone-platform', ozonePlatformOverride);
+}
+
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (squirrelStartup) {
   app.quit();
@@ -25,8 +54,12 @@ app.on('will-quit', () => {
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1280,
+    height: 860,
+    minWidth: 900,
+    minHeight: 600,
+    frame: true,
+    backgroundColor: '#f7f7f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -43,8 +76,9 @@ const createWindow = () => {
     );
   }
 
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
   let appIcon: Tray;
   let platform = 'win';
   let iconpath = path.join(__dirname, '.\\assets\\icons\\win\\icon.ico');

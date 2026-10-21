@@ -1,4 +1,4 @@
-import { createMessages } from '../core';
+import { createMessages } from '../core/utils';
 
 export const batchOperationResultsMessages = createMessages({
   index: {

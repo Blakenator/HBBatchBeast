@@ -138,6 +138,10 @@ must act on. Errors are never toast-only.
 - Live regions announce scan counts and run-state changes at a throttled rate (not every tick).
 - Contrast ≥ 4.5:1 for text in both themes; state is never conveyed by colour alone (icon + label).
 - Native window frame and OS menus; tray status (where available) mirrors the in-app status pill.
+- **Linux/Wayland caveat:** Electron 45 renders no window decorations when running natively on Wayland
+  under GNOME, so the titlebar and its minimise/maximise/close buttons disappear. The app therefore runs on
+  XWayland (`--ozone-platform=x11`) by default on Wayland; `HBB_OZONE_PLATFORM=wayland` opts back in. Dev uses
+  `scripts/start.mjs` to pass the flag; packaged builds re-exec themselves with it.
 - Localized strings via react-intl; no concatenated sentences; numbers/dates via `Intl`.
 
 ## 7. Explicitly rejected legacy patterns
