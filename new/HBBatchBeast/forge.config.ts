@@ -8,6 +8,8 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // Tray and window icons are read at runtime through `resources/assets`.
+    extraResource: ['src/assets'],
     // The Vite plugin keeps only `/.vite` by default. The forked child modules and
     // ffprobe-static resolve real packages at runtime, so keep the app manifest and
     // production node_modules too (packager prunes devDependencies).
@@ -52,11 +54,6 @@ const config: ForgeConfig = {
         {
           // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
           entry: 'src/backend/modules/queueBuild.js',
-          config: 'vite.main.config.mts',
-        },
-        {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/scheduler.js',
           config: 'vite.main.config.mts',
         },
         {

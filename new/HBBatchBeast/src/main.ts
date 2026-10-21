@@ -1,10 +1,13 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { setupApiHandlers } from '@superflag/super-ipc-backend';
 import squirrelStartup from 'electron-squirrel-startup';
 import path from 'path';
 import { BackendAsyncHandlers, BackendHandlers } from './backend';
 import { ChildSupervisor } from './backend/processes/childSupervisor';
 import { validateChildEntries } from './backend/processes/childEntries';
+import { createTray, destroyTray } from './main/tray';
+import { installAppMenu } from './main/menu';
+import { assetPath } from './main/paths';
 
 // Electron 45 running natively on Wayland under GNOME renders no window
 // decorations, so the titlebar (and its maximise/close buttons) disappears.
@@ -53,6 +56,7 @@ try {
 
 // Never leave worker processes behind when the app shuts down.
 app.on('will-quit', () => {
+  destroyTray();
   void ChildSupervisor.shutdownAll();
 });
 
@@ -64,7 +68,8 @@ const createWindow = () => {
     minWidth: 900,
     minHeight: 600,
     frame: true,
-    backgroundColor: '#f7f7f7',
+    backgroundColor: '#16161a',
+    icon: assetPath('icons/png/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -81,109 +86,12 @@ const createWindow = () => {
     );
   }
 
-  if (!app.isPackaged) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  }
-  let appIcon: Tray;
-  let platform = 'win';
-  let iconpath = path.join(__dirname, '.\\assets\\icons\\win\\icon.ico');
-  let type = 'ico';
+  // Tray and menu are created once; the legacy build only had a Windows tray
+  // and re-registered its IPC listeners on every window.
+  createTray(mainWindow);
+  installAppMenu();
 
-  if (process.platform == 'win32') {
-    appIcon = new Tray(iconpath);
-
-    const contextMenu = Menu.buildFromTemplate([
-      {
-        label: 'Show',
-        click: () => {
-          mainWindow.show();
-        },
-      },
-      {
-        label: 'Clear notification',
-        click: () => {
-          appIcon.setImage(iconpath);
-        },
-      },
-      {
-        label: 'Quit',
-        click: () => {
-          // app.isQuiting = true;
-          app.quit();
-        },
-      },
-    ]);
-
-    appIcon.setContextMenu(contextMenu);
-
-    mainWindow.on('close', (event) => {
-      //  mainWindow = null
-      // app.isQuiting = true;
-      app.quit();
-    });
-
-    mainWindow.on('minimize', () => {
-      mainWindow.hide();
-    });
-
-    mainWindow.on('show', () => {
-      // appIcon.setHighlightMode('always');
-      //appIcon.setImage(iconpath);
-    });
-
-    //appIcon.setToolTip('Error!');
-  }
-
-  if (process.platform == 'win32') {
-    platform = 'win';
-    iconpath = path.join(__dirname, '.\\assets\\icons\\win\\icon.ico');
-    type = 'ico';
-    //var iconpath = "./assets/icons/win/icon.ico"
-  }
-
-  if (process.platform == 'linux') {
-    platform = 'png';
-    type = 'png';
-    iconpath = './assets/icons/png/icon.png';
-  }
-
-  if (process.platform == 'darwin') {
-    platform = 'mac';
-    type = 'icns';
-    iconpath = './assets/icons/mac/icon.icns';
-  }
-
-  //Catch icon updates
-  ipcMain.on('item:add', (e, item) => {
-    //  console.log(item);
-
-    const icon = path.join(
-      __dirname,
-      '.\\assets\\icons\\' + platform + '\\' + item + '.ico',
-    );
-
-    //var icon ="./assets/icons/"+platform+"/"+item+"."+type;
-    appIcon.setImage(icon);
-  });
-
-  ipcMain.on('item:ready', (e, item) => {
-    mainWindow.webContents.send('item:ready', 'Test');
-  });
-
-  ipcMain.on('mediaview:ready', (e, item) => {
-    mainWindow.webContents.send('mediaview:ready', 'Test');
-  });
-
-  ipcMain.on('benchstatus:ready', (e, item) => {
-    mainWindow.webContents.send('benchstatus:ready', 'Test');
-  });
-
-  // ------------------- refactored ---------------------
-
-  // setup handlers
   setupApiHandlers(app, BackendHandlers, BackendAsyncHandlers, ipcMain);
-
-  // ----------------- end refactored -------------------
 };
 
 // This method will be called when Electron has finished

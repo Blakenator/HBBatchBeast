@@ -84,13 +84,10 @@ describe('saveAppConfig', () => {
       lang: 'en',
       selected_config: 0,
       version_message: '2.1.5',
-      api_key: '',
       configs: [
         {
           name: 'Default',
           tab_batch: {},
-          tab_health: {},
-          tab_remote: {},
           tab_system: {},
         },
       ],

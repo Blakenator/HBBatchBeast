@@ -5,6 +5,7 @@ import {
 } from './helpers';
 import fs from 'fs';
 import path from 'path';
+import { shell } from 'electron';
 import {
   ASYNC_CHANNEL,
   BackendAsyncApi,
@@ -27,6 +28,14 @@ import { createRunManager } from './run/runService';
 import { buildWorkerItemConfig } from './run/buildWorkerItemConfig';
 import { resolveChildEntry } from './processes/childEntries';
 import { QueueBuildResult } from './processes/protocol';
+import { setTrayStatus } from '../main/tray';
+import {
+  assertOpenablePath,
+  clearCaches,
+  clearRunJournal,
+  collectDiagnostics,
+} from './helpers/diagnostics';
+import { probeMedia } from './helpers/probeMedia';
 
 
 function mapQueueBuildResult(
@@ -58,6 +67,10 @@ function mapQueueBuildResult(
       };
     }),
   };
+}
+
+function ensureLogFolders(app: Electron.App) {
+  createLogFolders(app.getPath('home'));
 }
 
 /** Only one run may be active at a time; the renderer observes it via GetRunState. */
@@ -102,14 +115,11 @@ export const BackendHandlers: BackendSyncHandlersType<
     const config: GlobalAppConfig = {
       lang: 'en',
       selected_config: 0,
-      api_key: '',
       version_message: packageJson.version,
       configs: [
         {
           tab_system: {},
           tab_batch: {},
-          tab_health: {},
-          tab_remote: {},
           name: 'Default',
         },
       ],
@@ -128,6 +138,24 @@ export const BackendHandlers: BackendSyncHandlersType<
     );
 
     saveAppConfig(configPath, config);
+  },
+  [PROMISE_CHANNEL.GetDiagnostics]: ({ app }) =>
+    collectDiagnostics(app.getPath('home')),
+  [PROMISE_CHANNEL.OpenAppPath]: ({ app, args }) => {
+    ensureLogFolders(app);
+    const target = assertOpenablePath(app.getPath('home'), args.path);
+    void shell.openPath(target);
+  },
+  [PROMISE_CHANNEL.ClearCaches]: ({ app }) => {
+    ensureLogFolders(app);
+    return { cleared: clearCaches(app.getPath('home')) };
+  },
+  [PROMISE_CHANNEL.ClearRunJournal]: ({ app }) => {
+    clearRunJournal(app.getPath('home'));
+  },
+  [PROMISE_CHANNEL.ProbeMedia]: ({ args }) => probeMedia(args.path),
+  [PROMISE_CHANNEL.SetTrayStatus]: ({ args }) => {
+    setTrayStatus(args.status);
   },
   [PROMISE_CHANNEL.GetRunState]: () => currentRunState(),
   [PROMISE_CHANNEL.PauseRun]: () => {

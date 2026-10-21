@@ -65,7 +65,7 @@ under `.github/` are issue templates. See §2 for the matrix and slices S34/S35.
 | Build/package | `pnpm package` | ✅ Vite bundles + app packages for linux-x64 |
 | Scan pipeline | forked `.vite/build/queueBuild.js` with a synthetic `queueInfoBomb` | ✅ finds files, builds queue, emits `complete` |
 | Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ✅ `fs-extra`, `ffprobe`, `ffprobe-static` present after phase 2 |
-| Tests | `pnpm test` (Vitest) | ✅ 45 tests + 1 opt-in integration test: config/log-folder helpers, `queueBuild` fork contract, queue-build config, worker protocol, run manager, supervisor failure modes |
+| Tests | `pnpm test` (Vitest) | ✅ 50 tests + 1 opt-in integration test: config/log-folder helpers, `queueBuild` fork contract, queue-build config, worker protocol, run manager, supervisor failure modes |
 | CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
 | Real run (phase 5) | dev app driven over the DevTools protocol: create profile → set folders → scan → convert 20 files → pause/resume/stop wiring, destructive confirmation, profile switch, language switch, both themes | ✅ scan/convert produce correct `.mkv` destinations, terminal status reaches the pill, queue clears on profile switch, 0 `MISSING_TRANSLATION` errors |
 | Dev-loop cleanup | `scripts/dev-smoke.sh [seconds]` | ✅ runs the app for N seconds and tears down the whole process tree (Forge leaves zombie Electron windows behind otherwise, and they report `electronApi not found`) |
@@ -281,6 +281,11 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S23 | Real profile CRUD (new/duplicate/rename/delete) replacing the fixed ten slots; new profiles seed the default file-type list and a `.mkv` container |
 | S13 | Language selector (11 locales) wired to `localStorage` + persisted `lang`; see the backfill note in §5 |
 | S32 | Phase 5c UI: themed Bootstrap surface (`--bs-*` mapped to tokens, `data-bs-theme`), token `Button`, first-run empty state, destructive-run confirmation, profile bar, language selector |
+| S06 | Cross-platform tray: status icons (idle/running/paused/error) driven by the run status, Show/Quit menu, click to toggle the window. Icons ship via `extraResource` → `resources/assets` |
+| S07 | Application menu: File/View/Window/Help with reload, zoom, devtools (dev builds), fullscreen and a "Report an issue" link |
+| S10 | Logs & diagnostics panel in the settings drawer: log files with sizes, open log/config folders, clear the healthy-file and replaced-file caches, and clear the recovered run journal |
+| S27 | Media info viewer: `PROBE_MEDIA` channel backed by ffprobe, with a per-row "Info" action showing container, duration, bit rate and per-stream codec/resolution/channels/language |
+| S09 | Version/changelog notice kept on the GitHub Releases API, now reading this fork's releases and persisting the acknowledged version so it stops re-appearing |
 
 Also carried over as-is: the six legacy child-process modules are now under
 [`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and
@@ -297,8 +302,9 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 | S16–S18 | Options are all editable now; two gaps remain: folder mappings are still newline textareas rather than row editors (design intent §4), and "auto-create destination folders"/NVENC-style preset warnings are not implemented. |
 | S21 | Queue table covers scan + run rows, status chips and path search. Row actions (cancel item, open log, reveal, media info, retry) and bulk selection are still to come. |
 | S32 | Remaining design work: keyboard-first affordances beyond the native `<details>`/modal behaviour, dark/light contrast audit on real hardware, and the row-editor rework above. |
-| S09 | Version changelog modal exists, but is a *new* implementation (GitHub Releases API) rather than the old server-version banner. Decide whether to keep. |
-| S12 | Repo still contains the legacy app, `HandBrakeCLI.exe` (52 MB), test media, `.travis.yml` and old installer scripts. |
+| — | Dropped-feature cleanup is done at the config/entry level (`scheduler.js` entry deleted, health/remote/email/`api_key` removed from the types). The health-check branches inside the vendored `queueBuild.js`/`worker1.js` are unreachable and `queueBuild` now rejects `healthCheck` mode explicitly; stripping them needs a rewrite of those modules. |
+| — | `low_process_priority_toggle` is still a no-op (D29). |
+| S12 | Repo still contains the legacy app, `HandBrakeCLI.exe` (52 MB), test media, `.travis.yml` and old installer scripts. The packaged app also ships `src/assets` wholesale (fonts, promo images) — narrow that in phase 7. |
 | — | Tooling: `package.json` still has a placeholder `description`/lowercase `productName`, no icons, and the package is ~700 MB because `ffprobe-static` ships three platforms (phase 7). |
 
 ---
@@ -331,11 +337,11 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | S03 | Typed IPC layer | `super-ipc` sync/async hooks, typed channels/API, standardized `AppError`; replace bespoke wrapper. | ✅ | S01 | Keep — delivered | `[x] yes  [ ] no` |
 | S04 | Config persistence | Load/save `Configuration.json`, defaults, version stamp, archive invalid file, create log dirs. | ✅ | — | Keep | `[x] yes  [ ] no` |
 | S05 | Custom window chrome | Frameless window with drag region plus min/max/close buttons; old app also prevented real minimize. | ⛔ | S02 | Drop candidate — native frame is simpler and works on all 3 OSes | `[ ] yes  [x] no` |
-| S06 | Tray icon & status icons | Tray menu (Show / Clear notification / Quit) and `iconrunning` / `iconwatching` / `iconerror` status swaps. | 🟡 | S01 | Keep, but rewrite: current code is Windows-only and points at non-existent `__dirname/assets` paths | `[x] yes  [ ] no` |
-| S07 | App menu & devtools | File→Quit accelerator, dev-only devtools/reload menu. | 🟡 | S01 | Keep (small) | `[x] yes  [ ] no` |
+| S06 | Tray icon & status icons | Tray menu (Show / Clear notification / Quit) and `iconrunning` / `iconwatching` / `iconerror` status swaps. | ✅ | S01 | Keep, but rewrite: current code is Windows-only and points at non-existent `__dirname/assets` paths | `[x] yes  [ ] no` |
+| S07 | App menu & devtools | File→Quit accelerator, dev-only devtools/reload menu. | ✅ | S01 | Keep (small) | `[x] yes  [ ] no` |
 | S08 | Autostart / launch behaviour | "Start scan+convert when opened", hide-to-tray on minimize, single-instance guard. | ⛔ | S05/S06 | Keep only launch-scan; drop hide-to-tray if S05 dropped | `[ ] yes  [x] no` |
-| S09 | Version / changelog notice | Notify users of a new release and show the changelog. New impl uses GitHub Releases instead of `hbbatchbeast.io/api/version`. | 🟡 | S04 | Keep (already re-implemented) | `[x] yes  [ ] no` |
-| S10 | Logs & cache tools | View master/error/conversion/scan logs, open log folder, clear healthy-file and replace-attempt caches. | ⛔ | S04 | Keep | `[x] yes  [ ] no` |
+| S09 | Version / changelog notice | Notify users of a new release and show the changelog. New impl uses GitHub Releases instead of `hbbatchbeast.io/api/version`. | ✅ | S04 | Keep (already re-implemented) | `[x] yes  [ ] no` |
+| S10 | Logs & cache tools | View master/error/conversion/scan logs, open log folder, clear healthy-file and replace-attempt caches. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
 | S11 | Packaging & bundled binaries | Forge makers (squirrel/zip/rpm/deb), app icons/metadata, bundle `HandBrakeCLI.exe` + ffmpeg/ffprobe binaries. | 🟡 | S01 | Keep — required before release | `[x] yes  [ ] no` |
 | S12 | Legacy cleanup | Delete `HBBatchBeast/` (`mainWindow.html`, `main.js`, old installers, 52 MB `HandBrakeCLI.exe`, test media), retire `.travis.yml`. | ⛔ | S11 | Keep — required for a coherent repo | `[x] yes  [ ] no` |
 | S13 | Localization | 64 locale JSONs, localized messages, language selector; old app auto-extracted `en.json` from the DOM in dev. | 🟡 | S02 | Keep (backfill strings) | `[x] yes  [ ] no` |
@@ -357,7 +363,7 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | S24 | System settings | Worker instance count, queue-view size limit, run-on-startup, save verbose logs, queue table behaviour. | ⛔ | S19 | Keep | `[x] yes  [ ] no` |
 | S25 | Email error alerts | SMTP/emailjs notification when a run ends with errors (plaintext password, no OAuth/2FA support). | ⛔ | S19 | **Drop candidate** — insecure credential handling and unmaintained deps | `[ ] yes  [x] no` |
 | S26 | Health check tab | Quick HandBrake `--scan` vs thorough FFmpeg `-v error` check, optional repair (CRF), move corrupt files to folder, healthy-file cache + clear, health summary. | ⛔ | S19 | Undecided — feature is valuable but needs its own validation pass | `[ ] yes  [x] no` |
-| S27 | Media info viewer | Standalone ffprobe browser to inspect a file's video/audio stream properties. | ⛔ | S11 | **Drop candidate** — side tool, unrelated to the rewrite goal | `[x] yes  [ ] no` |
+| S27 | Media info viewer | Standalone ffprobe browser to inspect a file's video/audio stream properties. | ✅ | S11 | **Drop candidate** — side tool, unrelated to the rewrite goal | `[x] yes  [ ] no` |
 | S28 | Benchmark tab | Download a 4K H.265 sample, run 4 HandBrake workers, show/upload results. | ⛔ | S19 | **Drop candidate** | `[ ] yes  [x] no` |
 | S29 | Remote monitoring | Remote view toggle, generated API key, PUT status/metrics to `hbbatchbeast.io`, open browser status page. | ⛔ | S19 | **Drop** (owner stated intent) — also relies on a third-party service | `[ ] yes  [x] no` |
 | S30 | Help tab & tooltips | In-app help tab plus 33 contextual tooltip blocks embedded in the old HTML. | ⛔ | S02 | Drop in-app help; link to docs/wiki instead | `[ ] yes  [x] no` |
@@ -466,6 +472,9 @@ These are all in the migrated code, not legacy-only issues.
 | D26 | 🟡 Low | [ProfileBar.tsx](./new/HBBatchBeast/src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
 | D27 | 🟡 Low | [Panel.tsx](./new/HBBatchBeast/src/frontend/ui/Panel.tsx), [QueueTable.tsx](./new/HBBatchBeast/src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
 | D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
+| D29 | 🟠 Medium | [schema.ts](./new/HBBatchBeast/src/frontend/settings/schema.ts) | `low_process_priority_toggle` is persisted but nothing consumes it: `worker1.js` launches HandBrakeCLI without any priority handling and `priorityModule.js` is unreferenced. Needs either `nice`/`start /LOW` wiring in the encode command or removal from the UI. |
+| D30 | 🟠 Medium | [VersionWarning.tsx](./new/HBBatchBeast/src/frontend/versionWarning/VersionWarning.tsx) | The changelog notice read releases from the **upstream** repo (`HaveAGitGat/HBBatchBeast`) and never recorded that the user had seen it, so it reappeared every launch. **Fixed in phase 6**: it reads this fork's releases and persists the acknowledged version. |
+| D31 | 🟡 Low | [tray.ts](./new/HBBatchBeast/src/main/tray.ts) | Legacy tray code only ran on Windows and pointed at `__dirname/assets`, which does not exist in the build output, so Linux/macOS had no tray at all and Windows had broken icons. **Fixed in phase 6**: one cross-platform tray, assets resolved through `resources/assets`, with a logged warning when an icon cannot be loaded. |
 
 ---
 

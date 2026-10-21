@@ -10,3 +10,9 @@ declare module 'electron-squirrel-startup' {
   const squirrelStartup: boolean;
   export default squirrelStartup;
 }
+
+// ffprobe-static ships no types; it exports the path to the bundled binary.
+declare module 'ffprobe-static' {
+  const ffprobe: { path: string };
+  export default ffprobe;
+}

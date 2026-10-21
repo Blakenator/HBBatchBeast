@@ -142,6 +142,12 @@ process.on('message', (message) => {
 
     mode = queueInfoBomb.mode;
 
+    // The health-check feature is gone; its branches below are unreachable and
+    // kept only because this module is otherwise vendored legacy code.
+    if (mode === 'healthCheck') {
+      throw new Error('healthCheck mode is no longer supported');
+    }
+
     presetArray = queueInfoBomb.presets;
 
     titleWordFilterArrayImport = queueInfoBomb.titleWordFilter;

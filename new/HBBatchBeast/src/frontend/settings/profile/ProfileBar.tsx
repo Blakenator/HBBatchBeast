@@ -36,8 +36,6 @@ function emptyProfile(name: string): BatchConfig {
         included_file_types: DEFAULT_INCLUDED_FILE_TYPES,
       } as BatchTabConfig['advanced'],
     },
-    tab_health: {},
-    tab_remote: {},
     tab_system: {},
   };
 }

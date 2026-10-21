@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { useIntl } from 'react-intl';
 import { runMessages } from './messages';
+import { mediaMessages } from './mediaMessages';
+import { MediaInfoModal } from './MediaInfoModal';
+import { Button } from '../ui/Button';
 
 export type QueueRowState =
   | 'pending'
@@ -47,7 +50,7 @@ const Viewport = styled.div`
 
 const Row = styled.div`
   display: grid;
-  grid-template-columns: 3rem minmax(0, 1fr) 12rem 6rem;
+  grid-template-columns: 3rem minmax(0, 1fr) 12rem 6rem 7rem;
   gap: var(--hb-space-sm);
   align-items: center;
   height: ${ROW_HEIGHT}px;
@@ -104,6 +107,7 @@ export const QueueTable: React.FC<QueueTableProps> = ({ rows }) => {
   const [filter, setFilter] = useState<QueueRowState | 'all'>('all');
   const [search, setSearch] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
+  const [inspecting, setInspecting] = useState<string | null>(null);
 
   const filtered = useMemo(
     () =>
@@ -224,12 +228,25 @@ export const QueueTable: React.FC<QueueTableProps> = ({ rows }) => {
                   >
                     {row.state}
                   </span>
+                  <span role="gridcell">
+                    <Button
+                      compact
+                      variant="ghost"
+                      onClick={() => setInspecting(row.path)}
+                      title={formatMessage(mediaMessages.inspectTitle)}
+                      aria-label={`${formatMessage(mediaMessages.inspectTitle)}: ${row.path}`}
+                    >
+                      {formatMessage(mediaMessages.inspect)}
+                    </Button>
+                  </span>
                 </Row>
               );
             })}
           </div>
         </div>
       </Viewport>
+
+      <MediaInfoModal path={inspecting} onClose={() => setInspecting(null)} />
     </div>
   );
 };

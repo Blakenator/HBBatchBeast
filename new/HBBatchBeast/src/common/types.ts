@@ -13,16 +13,6 @@ export interface BackendResult<T = string> {
   callId?: number;
 }
 
-export interface HealthTabConfig {
-  path: {
-    corrupt_destination_path: string;
-  };
-  move_corrupt_files_toggle: 0 | 1;
-  thorough_health_check_toggle: 0 | 1;
-  thorough_health_check_repair_toggle: 0 | 1;
-  crf_repair_value: string;
-}
-
 export interface BatchTabConfig {
   path: {
     source_path: string;
@@ -31,9 +21,6 @@ export interface BatchTabConfig {
     temp_destination_path: string;
   };
   advanced: {
-    periodic_scan_interval: string;
-    daily_run_time: string;
-    daily_run_time_end: string;
     file_name_suffix: string;
     file_name_suffix_toggle: 0 | 1;
     included_file_types: string;
@@ -65,12 +52,6 @@ export interface BatchTabConfig {
   preset: string;
   custom_preset_string: string;
   container: string;
-  periodic_scanning_toggle: 0 | 1;
-  daily_scanning_toggle: 0 | 1;
-}
-
-export interface RemoteTabConfig {
-  remote_view_toggle: 0 | 1;
 }
 
 export interface SystemTabConfig {
@@ -78,17 +59,16 @@ export interface SystemTabConfig {
   max_queue_view_size: string;
   run_on_program_startup_toggle: 0 | 1;
   save_worker_logs_toggle: 0 | 1;
-  email_address: string;
-  smtp_server: string;
 }
 
+/**
+ * One saved profile. Scheduling, health-check, remote and email settings are no
+ * longer part of the app; legacy files may still contain those keys, which are
+ * carried through untouched (see LoadConfiguration) instead of being rejected.
+ */
 export interface BatchConfig {
-  tab_health: Partial<HealthTabConfig>;
   tab_batch: Partial<BatchTabConfig>;
-  tab_remote: Partial<RemoteTabConfig>;
   tab_system: Partial<SystemTabConfig>;
-
-  // new props
   name?: string;
 }
 
@@ -96,7 +76,6 @@ export interface GlobalAppConfig {
   lang: string;
   selected_config: number;
   version_message: string;
-  api_key: string;
   configs: BatchConfig[];
 }
 
@@ -112,6 +91,45 @@ export enum BatchOperationMode {
   ScanOnly = 'scanOnly',
   ScanAndConvert = 'scanAndConvert',
 }
+
+export interface MediaStreamInfo {
+  index: number;
+  type: string;
+  codec?: string;
+  width?: number;
+  height?: number;
+  channels?: number;
+  channelLayout?: string;
+  sampleRate?: number;
+  bitRate?: number;
+  frameRate?: string;
+  duration?: number;
+  language?: string;
+  title?: string;
+}
+
+export interface MediaInfo {
+  path: string;
+  container?: string;
+  duration?: number;
+  size?: number;
+  bitRate?: number;
+  streams: MediaStreamInfo[];
+}
+
+export interface DiagnosticsInfo {
+  logDir: string;
+  configDir: string;
+  journalPath: string;
+  journalExists: boolean;
+  /** Status recorded in the journal; `running`/`paused` means it was interrupted. */
+  journalStatus?: string;
+  logs: { name: string; path: string; size: number }[];
+  caches: { name: string; path: string; size: number; exists: boolean }[];
+}
+
+/** Tray indicator states, shared by the renderer and the tray module. */
+export type TrayStatus = 'idle' | 'running' | 'paused' | 'error';
 
 export interface ConversionItem {
   path: string;

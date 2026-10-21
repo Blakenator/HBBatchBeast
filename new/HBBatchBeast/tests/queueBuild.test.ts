@@ -48,7 +48,6 @@ function makeConfig(
     lang: 'en',
     selected_config: 0,
     version_message: 'test',
-    api_key: '',
     configs: [{ name: 'Default', tab_batch: batch }],
   };
 }

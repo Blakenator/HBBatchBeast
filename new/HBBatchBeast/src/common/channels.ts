@@ -1,10 +1,14 @@
 import {
   ConversionItem,
+  DiagnosticsInfo,
+  MediaInfo,
   GlobalAppConfig,
+  TrayStatus,
   RunBatchOperationProps,
   RunBatchOperationResult,
 } from './types';
 import type { RunState } from '../backend/run/runManager';
+
 import {
   BackendAsyncApiType,
   BackendSyncApiType,
@@ -18,6 +22,12 @@ export enum PROMISE_CHANNEL {
   ResumeRun = 'RESUME_RUN',
   StopRun = 'STOP_RUN',
   CancelRunItem = 'CANCEL_RUN_ITEM',
+  SetTrayStatus = 'SET_TRAY_STATUS',
+  GetDiagnostics = 'GET_DIAGNOSTICS',
+  OpenAppPath = 'OPEN_APP_PATH',
+  ClearCaches = 'CLEAR_CACHES',
+  ClearRunJournal = 'CLEAR_RUN_JOURNAL',
+  ProbeMedia = 'PROBE_MEDIA',
 }
 
 export enum ASYNC_CHANNEL {
@@ -53,6 +63,30 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
   [PROMISE_CHANNEL.CancelRunItem]: {
     props: { index: number };
     result: RunState | null;
+  };
+  [PROMISE_CHANNEL.SetTrayStatus]: {
+    props: { status: TrayStatus };
+    result: void;
+  };
+  [PROMISE_CHANNEL.GetDiagnostics]: {
+    props: void;
+    result: DiagnosticsInfo;
+  };
+  [PROMISE_CHANNEL.OpenAppPath]: {
+    props: { path: string };
+    result: void;
+  };
+  [PROMISE_CHANNEL.ClearCaches]: {
+    props: void;
+    result: { cleared: string[] };
+  };
+  [PROMISE_CHANNEL.ClearRunJournal]: {
+    props: void;
+    result: void;
+  };
+  [PROMISE_CHANNEL.ProbeMedia]: {
+    props: { path: string };
+    result: MediaInfo;
   };
 }
 
