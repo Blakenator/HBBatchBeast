@@ -5,6 +5,7 @@ import {
   resolveGlobalSettings,
 } from '../../common';
 import { WorkerItemConfig } from './workerProtocol';
+import { userPresetFiles } from '../helpers/handBrakePresets';
 
 function truthy(value: number | undefined): boolean {
   return value === 1;
@@ -27,6 +28,7 @@ export function buildWorkerItemConfig(
   item: ConversionItem,
   index: number,
   platform: NodeJS.Platform = process.platform,
+  presetImportFiles: string[] = userPresetFiles(),
 ): WorkerItemConfig {
   const current = config.configs[config.selected_config];
   const batch: Partial<BatchTabConfig> = current?.tab_batch ?? {};
@@ -73,5 +75,6 @@ export function buildWorkerItemConfig(
     handBrakeCliPath: handBrakeCliPath(platform),
     ffmpegPath: 'ffmpeg',
     saveWorkerLogs: truthy(globalSettings.save_worker_logs_toggle),
+    handBrakePresetImportFiles: presetImportFiles,
   };
 }

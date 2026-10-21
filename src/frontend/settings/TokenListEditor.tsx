@@ -4,6 +4,7 @@ import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { parseTokenList, serializeTokenList } from '../../common';
 import { Button } from '../ui/Button';
+import { TokenBox, TokenChip } from '../ui/Tokens';
 import { settingsMessages } from './messages';
 
 interface TokenListEditorProps {
@@ -16,27 +17,6 @@ interface TokenListEditorProps {
   defaultsLabel?: string;
   describedBy?: string;
 }
-
-const Box = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--hb-space-xs);
-  padding: var(--hb-space-xs);
-  border: 1px solid var(--hb-border);
-  border-radius: var(--hb-radius-sm);
-  background: var(--hb-surface);
-`;
-
-const Chip = styled.span`
-  display: inline-flex;
-  align-items: center;
-  gap: var(--hb-space-xs);
-  padding: 1px var(--hb-space-xs);
-  border-radius: var(--hb-radius-sm);
-  background: var(--hb-surfaceMuted);
-  font-size: var(--hb-font-sm);
-`;
 
 const ChipRemove = styled.button`
   border: 0;
@@ -105,9 +85,9 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
 
   return (
     <div>
-      <Box>
+      <TokenBox>
         {tokens.map((token, index) => (
-          <Chip key={`${token}-${index}`}>
+          <TokenChip key={`${token}-${index}`}>
             {token}
             <ChipRemove
               type="button"
@@ -116,7 +96,7 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
             >
               ×
             </ChipRemove>
-          </Chip>
+          </TokenChip>
         ))}
         <Entry
           id={id}
@@ -141,7 +121,7 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
             }
           }}
         />
-      </Box>
+      </TokenBox>
       {tokens.length === 0 && defaults && defaults.length > 0 && (
         <Button
           compact

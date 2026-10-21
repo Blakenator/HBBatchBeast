@@ -31,6 +31,7 @@ import { runMessages } from './messages';
 import { mediaMessages } from './mediaMessages';
 import { MediaInfoModal } from './MediaInfoModal';
 import { Button } from '../ui/Button';
+import { normalizePresetName } from '../../common';
 import { RunItemProgress, parsePercent } from '../../common/runTelemetry';
 import {
   firstLine,
@@ -365,6 +366,7 @@ const DEFAULT_COLUMN_SIZES: Record<string, number> = {
   index: 48,
   path: 260,
   preset: 130,
+  presetArgs: 220,
   state: 100,
   percent: 88,
   eta: 84,
@@ -377,6 +379,7 @@ const DEFAULT_COLUMN_SIZES: Record<string, number> = {
 const DEFAULT_VISIBILITY: ColumnVisibilityState = {
   speed: false,
   size: false,
+  presetArgs: false,
 };
 
 const DEFAULT_ORDER = Object.keys(DEFAULT_COLUMN_SIZES);
@@ -419,6 +422,15 @@ function splitPath(filePath: string): { directory: string; name: string } {
   };
 }
 
+/** The queue stores CLI arguments; the preset column shows the name inside them. */
+function presetNameFromArgs(preset?: string): string {
+  const trimmed = (preset ?? '').trim();
+  if (!trimmed) return '';
+  const match = /^-Z\s+("[^"]*"|'[^']*'|\S+)/i.exec(trimmed);
+  if (match) return normalizePresetName(`-Z ${match[1]}`);
+  return trimmed.startsWith('-') ? '' : trimmed;
+}
+
 interface StoredLayout {
   visibility?: ColumnVisibilityState;
   order?: ColumnOrderState;
@@ -434,7 +446,7 @@ function loadLayout(): StoredLayout {
 
     const hasVisibility =
       parsed.visibility !== null && typeof parsed.visibility === 'object';
-    const visibility: ColumnVisibilityState = {};
+    const visibility: ColumnVisibilityState = { ...DEFAULT_VISIBILITY };
     if (hasVisibility) {
       for (const [key, value] of Object.entries(parsed.visibility!)) {
         if (typeof value === 'boolean') visibility[key] = value;
@@ -571,8 +583,24 @@ export const QueueTable: React.FC<QueueTableProps> = ({
         minSize: 80,
         maxSize: 400,
         sortFn: 'text',
+        cell: (info) => {
+          const raw = (info.getValue() ?? '').trim();
+          const name = presetNameFromArgs(raw);
+          const text = name || (raw ? formatMessage(runMessages.customArguments) : '—');
+          return <span title={raw || undefined}>{text}</span>;
+        },
+      }),
+      columnHelper.accessor((row) => row.preset ?? '', {
+        id: 'presetArgs',
+        header: label('colPresetArgs'),
+        size: DEFAULT_COLUMN_SIZES.presetArgs,
+        minSize: 80,
+        maxSize: 600,
+        sortFn: 'text',
         cell: (info) => (
-          <span title={info.getValue() || undefined}>{info.getValue() || '—'}</span>
+          <span title={info.getValue() || undefined}>
+            {info.getValue() || '—'}
+          </span>
         ),
       }),
       columnHelper.accessor((row) => row.state, {

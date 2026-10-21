@@ -31,9 +31,9 @@ function executableCandidates(): string[] {
  * Presets created in the HandBrake GUI live in a per-user `presets.json`.
  * `HandBrakeCLI --preset-list` only reports its built-ins unless that file is
  * imported explicitly, so a custom preset would otherwise be missing from the
- * picker.
+ * picker — and unusable by `-Z` during a conversion.
  */
-function userPresetFiles(): string[] {
+export function userPresetFiles(): string[] {
   const home = os.homedir();
   const candidates: string[] = [];
 

@@ -40,6 +40,7 @@ const item: WorkerItemConfig = {
   handBrakeCliPath: 'HandBrakeCLI',
   ffmpegPath: '/usr/bin/ffmpeg',
   saveWorkerLogs: false,
+  handBrakePresetImportFiles: ['/home/user/.config/ghb/presets.json'],
 };
 
 describe('encodeWorkerItem', () => {
@@ -56,7 +57,8 @@ describe('encodeWorkerItem', () => {
     expect(encoded[23]).toBe('-Z "Very Fast 1080p30"');
     expect(encoded[24]).toBe('/dst/a.mp4');
     expect(encoded[35]).toBe(false); // saveWorkerLogs
-    expect(encoded).toHaveLength(36);
+    expect(encoded[36]).toEqual(['/home/user/.config/ghb/presets.json']);
+    expect(encoded).toHaveLength(37);
   });
 });
 

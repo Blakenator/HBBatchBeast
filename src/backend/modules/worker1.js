@@ -157,6 +157,8 @@ var ffmpegPath
 
 var saveWorkerLogs
 
+var handBrakePresetImportFiles
+
 var exitRequestSent = false
 
 
@@ -305,6 +307,7 @@ process.on('message', (m) => {
         handBrakeCLIPath = m[33]
         ffmpegPath = m[34]
         saveWorkerLogs = m[35]
+        handBrakePresetImportFiles = m[36]
 
 
 
@@ -361,8 +364,28 @@ process.on('message', (m) => {
         presetSplit = preset.split(',')
         var workerCommand = "";
 
+        // Custom presets live in the HandBrake GUI's presets.json; HandBrakeCLI
+        // can only resolve their names when that file is imported.
+        var handBrakePresetImportArguments = "";
+
+        if (handBrakeMode == true && Array.isArray(handBrakePresetImportFiles)) {
+            handBrakePresetImportArguments = handBrakePresetImportFiles
+                .filter(function (file) {
+                    return typeof file === 'string' && file.length > 0;
+                })
+                .map(function (file) {
+                    if (process.platform == 'win32') {
+                        return '--preset-import-file "' + file + '"';
+                    }
+                    return "--preset-import-file '" + file.replace(/'/g, '\'\"\'\"\'') + "'";
+                })
+                .join(' ');
+        }
+
+        var handBrakeImportPrefix = handBrakePresetImportArguments ? handBrakePresetImportArguments + " " : "";
+
         if (process.platform == 'win32' && handBrakeMode == true) {
-            workerCommand = handBrakeCLIPath + " -i \"" + currentSourceLine + "\" -o \"" + currentDestinationLine + "\" " + preset;
+            workerCommand = handBrakeCLIPath + " " + handBrakeImportPrefix + "-i \"" + currentSourceLine + "\" -o \"" + currentDestinationLine + "\" " + preset;
         } else if (process.platform == 'win32' && FFmpegMode == true) {
             workerCommand = ffmpegPath + " " + presetSplit[0] + " -i \"" + currentSourceLine + "\" " + presetSplit[1] + " \"" + currentDestinationLine + "\" "
 
@@ -386,7 +409,7 @@ process.on('message', (m) => {
 
         if (process.platform == 'linux' && handBrakeMode == true) {
 
-            workerCommand = "HandBrakeCLI -i '" + currentSourceLineUnix + "' -o '" + currentDestinationLineUnix + "' " + presetUnix;
+            workerCommand = "HandBrakeCLI " + handBrakeImportPrefix + "-i '" + currentSourceLineUnix + "' -o '" + currentDestinationLineUnix + "' " + presetUnix;
 
         } else if (process.platform == 'linux' && FFmpegMode == true) {
 
@@ -398,7 +421,7 @@ process.on('message', (m) => {
         //
 
         if (process.platform == 'darwin' && handBrakeMode == true) {
-            workerCommand = "/usr/local/bin/HandBrakeCLI -i '"  + currentSourceLineUnix + "' -o '" + currentDestinationLineUnix + "' " + presetUnix;
+            workerCommand = "/usr/local/bin/HandBrakeCLI " + handBrakeImportPrefix + "-i '"  + currentSourceLineUnix + "' -o '" + currentDestinationLineUnix + "' " + presetUnix;
         } else if (process.platform == 'darwin' && FFmpegMode == true) {
             workerCommand = ffmpegPathUnix + " " + preset0Unix + " -i '" + currentSourceLineUnix + "' " + preset1Unix + " '" + currentDestinationLineUnix + "' "
         }

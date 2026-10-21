@@ -89,6 +89,28 @@ describe('buildWorkerItemConfig', () => {
     expect(config.repairFile).toBe(false);
   });
 
+  it('carries GUI preset files so custom preset names resolve at runtime', () => {
+    const withPresets = buildWorkerItemConfig(
+      makeConfig(),
+      { ...item, preset: '-Z "H.265 MKV 1080p30 HouseHunters"' },
+      0,
+      'linux',
+      ['/home/user/.config/ghb/presets.json'],
+    );
+    const withoutPresets = buildWorkerItemConfig(
+      makeConfig(),
+      item,
+      0,
+      'linux',
+      [],
+    );
+
+    expect(withPresets.handBrakePresetImportFiles).toEqual([
+      '/home/user/.config/ghb/presets.json',
+    ]);
+    expect(withoutPresets.handBrakePresetImportFiles).toEqual([]);
+  });
+
   it('reads legacy per-profile log settings when no global value exists', () => {
     const config = buildWorkerItemConfig(
       {

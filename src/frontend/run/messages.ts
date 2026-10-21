@@ -107,6 +107,8 @@ export const runMessages = createMessages({
   colIndex: { defaultMessage: '#' },
   colPath: { defaultMessage: 'File' },
   colPreset: { defaultMessage: 'Preset' },
+  colPresetArgs: { defaultMessage: 'Arguments' },
+  customArguments: { defaultMessage: 'Custom arguments' },
   colState: { defaultMessage: 'State' },
   colPercent: { defaultMessage: 'Progress' },
   colEta: { defaultMessage: 'ETA' },

@@ -82,6 +82,7 @@ function buildConfig(item: { path: string }, index: number): WorkerItemConfig {
     handBrakeCliPath: 'HandBrakeCLI',
     ffmpegPath: 'ffmpeg',
     saveWorkerLogs: false,
+    handBrakePresetImportFiles: [],
   };
 }
 

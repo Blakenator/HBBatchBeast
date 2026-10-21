@@ -164,6 +164,36 @@ describe('QueueTable', () => {
     expect(labels().slice(0, 2)).toEqual(['Preset', '#']);
   });
 
+  it('shows the preset name and keeps raw arguments in a hidden column', () => {
+    renderTable([
+      {
+        index: 0,
+        path: '/media/movies/a.mkv',
+        preset: '-Z "H.265 MKV 1080p30"',
+        state: 'pending',
+      },
+    ]);
+
+    expect(screen.getByText('H.265 MKV 1080p30')).toBeTruthy();
+    expect(screen.queryByText('-Z "H.265 MKV 1080p30"')).toBeNull();
+  });
+
+  it('shows raw arguments once the Arguments column is enabled', async () => {
+    renderTable([
+      {
+        index: 0,
+        path: '/media/movies/a.mkv',
+        preset: '-Z "H.265 MKV 1080p30"',
+        state: 'pending',
+      },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Arguments' }));
+
+    expect(screen.getByText('-Z "H.265 MKV 1080p30"')).toBeTruthy();
+  });
+
   it('offers cancel for in-flight rows while a run is active', () => {
     const onCancel = vi.fn();
     renderTable(rows, vi.fn(), onCancel);

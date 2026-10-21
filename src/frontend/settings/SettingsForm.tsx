@@ -22,7 +22,6 @@ import {
 } from './schema';
 import { settingsMessages } from './messages';
 import { validateBatchConfig } from '../run/validation';
-import { Button } from '../ui/Button';
 import { Combobox } from '../ui/Combobox';
 import { Field, Help, Label, LabelRow } from './FieldLayout';
 import { SegmentedControl } from './SegmentedControl';
@@ -66,8 +65,9 @@ const GroupDescription = styled.p`
 
 const Destructive = styled.div`
   margin-top: var(--hb-space-md);
-  padding-top: var(--hb-space-md);
-  border-top: 1px dashed var(--hb-danger);
+  padding: var(--hb-space-md);
+  border: 1px solid var(--hb-danger);
+  border-radius: var(--hb-radius-md);
 `;
 
 const DestructiveCaption = styled.p`
@@ -667,15 +667,14 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
                 marginTop: 'var(--hb-space-sm)',
               }}
             >
-              <Button
-                compact
-                variant={showAdvanced ? 'secondary' : 'ghost'}
-                onClick={() => setShowAdvanced((value) => !value)}
-                aria-pressed={showAdvanced}
+              <Form.Check
+                id="settings-show-advanced"
+                type="switch"
+                checked={showAdvanced}
+                onChange={(event) => setShowAdvanced(event.target.checked)}
+                label={formatMessage(settingsMessages.advanced)}
                 title={formatMessage(settingsMessages.advancedHint)}
-              >
-                {formatMessage(settingsMessages.advanced)}
-              </Button>
+              />
             </div>
 
             {settingsSchema.map((group) => (

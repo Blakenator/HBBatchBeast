@@ -43,6 +43,8 @@ export interface WorkerItemConfig {
   handBrakeCliPath: string;
   ffmpegPath: string;
   saveWorkerLogs: boolean;
+  /** GUI preset files HandBrakeCLI must import to resolve custom `-Z` names. */
+  handBrakePresetImportFiles: string[];
 }
 
 export type WorkerItemState =
@@ -239,5 +241,6 @@ export function encodeWorkerItem(config: WorkerItemConfig): unknown[] {
     config.handBrakeCliPath,
     config.ffmpegPath,
     config.saveWorkerLogs,
+    config.handBrakePresetImportFiles,
   ];
 }

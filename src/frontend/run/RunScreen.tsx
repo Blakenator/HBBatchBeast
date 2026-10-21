@@ -7,12 +7,14 @@ import {
   GlobalAppConfig,
   PROMISE_CHANNEL,
   countConfiguredRows,
+  parseTokenList,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
 import { useBatchResult, useSetBatchResultDirect } from '../core/stores';
 import { AppStatus } from '../ui/StatusPill';
 import { Panel, PanelGrid } from '../ui/Panel';
 import { Button } from '../ui/Button';
+import { TokenChips } from '../ui/Tokens';
 import { QueueTable, QueueRow } from './QueueTable';
 import { FailuresPanel } from './FailuresPanel';
 import { ItemLogModal } from './ItemLogModal';
@@ -223,7 +225,10 @@ export const RunScreen: React.FC<RunScreenProps> = ({
           · {batch.container ?? '.mp4'}
         </Panel>
         <Panel title={formatMessage(runMessages.filters)}>
-          {batch.advanced?.included_file_types || '—'}
+          <TokenChips
+            tokens={parseTokenList(batch.advanced?.included_file_types)}
+            ariaLabel={formatMessage(runMessages.filters)}
+          />
         </Panel>
       </PanelGrid>
 
