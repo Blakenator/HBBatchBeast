@@ -1,8 +1,8 @@
 {
   "name": "hbbatchbeast",
-  "productName": "hbbatchbeast",
+  "productName": "HBBatchBeast",
   "version": "2.1.5",
-  "description": "My Electron application description",
+  "description": "Batch convert video with HandBrake or FFmpeg: per-folder presets, filters, safe file handling and a live queue.",
   "main": ".vite/build/main.cjs",
   "scripts": {
     "start": "node scripts/start.mjs",
@@ -14,12 +14,19 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": [],
+  "keywords": [
+    "handbrake",
+    "ffmpeg",
+    "batch",
+    "video",
+    "conversion",
+    "electron"
+  ],
   "author": {
-    "name": "Blake",
+    "name": "Blake Stacks",
     "email": "blakestacks@rocketmail.com"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
     "@electron-forge/maker-deb": "^8.0.1",
@@ -72,5 +79,13 @@
     "overrides": {
       "electron": "$electron"
     }
+  },
+  "homepage": "https://github.com/Blakenator/HBBatchBeast",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Blakenator/HBBatchBeast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Blakenator/HBBatchBeast/issues"
   }
 }

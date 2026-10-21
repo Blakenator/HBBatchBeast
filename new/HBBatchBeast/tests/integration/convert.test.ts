@@ -17,7 +17,7 @@ const integration = process.env.HBB_INTEGRATION === '1' ? describe : describe.sk
 
 const buildDir = fileURLToPath(new URL('../../.vite/build', import.meta.url));
 const sample = fileURLToPath(
-  new URL('../../../../HBBatchBeast/TestInputFolder/Test file 1.mp4', import.meta.url),
+  new URL('../fixtures/sample.mp4', import.meta.url),
 );
 
 integration('conversion integration', () => {

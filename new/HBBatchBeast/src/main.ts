@@ -69,7 +69,7 @@ const createWindow = () => {
     minHeight: 600,
     frame: true,
     backgroundColor: '#16161a',
-    icon: assetPath('icons/png/icon.png'),
+    icon: assetPath('png/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,

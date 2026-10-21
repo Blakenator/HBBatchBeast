@@ -1,15 +1,57 @@
-import type { ForgeConfig } from '@electron-forge/shared-types';
+import fs from 'fs';
+import path from 'path';
+import type { ForgeConfig, ResolvedForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
-import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
+/** Packaging runs once per target platform, so pick that platform's icon. */
+function iconFor(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case 'win32':
+      return 'src/assets/icons/win/icon.ico';
+    case 'darwin':
+      return 'src/assets/icons/mac/icon.icns';
+    default:
+      return 'src/assets/icons/png/icon.png';
+  }
+}
+
+/**
+ * `ffprobe-static` ships darwin/win32/linux binaries (~340 MB). Only the target
+ * platform's copy can ever run, so drop the rest before the asar is built.
+ */
+function pruneForeignFfprobe(buildPath: string, platform: string): void {
+  const binDir = path.join(buildPath, 'node_modules', 'ffprobe-static', 'bin');
+  if (!fs.existsSync(binDir)) return;
+
+  for (const entry of fs.readdirSync(binDir)) {
+    if (entry === platform) continue;
+    fs.rmSync(path.join(binDir, entry), { recursive: true, force: true });
+  }
+}
+
 const config: ForgeConfig = {
+  hooks: {
+    packageAfterCopy: async (
+      _config: ResolvedForgeConfig,
+      buildPath: string,
+      _electronVersion: string,
+      platform: string,
+    ) => {
+      pruneForeignFfprobe(buildPath, platform);
+    },
+  },
   packagerConfig: {
-    asar: true,
-    // Tray and window icons are read at runtime through `resources/assets`.
-    extraResource: ['src/assets'],
+    // Binaries cannot be executed from inside an asar archive, so ffprobe is
+    // unpacked next to it (the code swaps app.asar for app.asar.unpacked).
+    asar: { unpack: '**/node_modules/ffprobe-static/bin/**' },
+    icon: iconFor(process.platform),
+    // Linux makers (and the generated .desktop `Exec=` line) look for the package
+    // name, not the product name.
+    executableName: 'hbbatchbeast',
+    // Tray and window icons are read at runtime through `resources/icons`.
+    extraResource: ['src/assets/icons'],
     // The Vite plugin keeps only `/.vite` by default. The forked child modules and
     // ffprobe-static resolve real packages at runtime, so keep the app manifest and
     // production node_modules too (packager prunes devDependencies).
@@ -28,8 +70,28 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    {
+      name: '@electron-forge/maker-rpm',
+      config: {
+        options: {
+          homepage: 'https://github.com/Blakenator/HBBatchBeast',
+          categories: ['AudioVideo', 'Utility'],
+        },
+      },
+    },
+    {
+      name: '@electron-forge/maker-deb',
+      config: {
+        options: {
+          homepage: 'https://github.com/Blakenator/HBBatchBeast',
+          categories: ['AudioVideo', 'Utility'],
+          maintainer: 'Blake Stacks <blakestacks@rocketmail.com>',
+          // Adds --ozone-platform=x11 so the launcher matches the Wayland workaround
+          // in main.ts instead of relying on the packaged re-exec alone.
+          desktopTemplate: 'packaging/desktop.ejs',
+        },
+      },
+    },
   ],
   plugins: [
     new VitePlugin({

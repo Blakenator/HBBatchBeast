@@ -1,61 +1,108 @@
-# HBBatchBeast for HandBrake and FFmpeg/FFprobe (Windows, macOS, Linux & Docker)
+# HBBatchBeast (rewrite)
 
-[![Reddit](https://img.shields.io/badge/Reddit-HBBatchBeast-FF5700.svg?style=flat-square)](https://www.reddit.com/r/HBBatchBeast/)     [![paypal](https://img.shields.io/badge/-donate-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=L5MWTNDLLB6AC&source=url)    [![Discord](https://img.shields.io/badge/Discord-Chat-green.svg)](https://discord.gg/X4khmE96hS)    [![Docker](https://img.shields.io/badge/docker%20build-passing-green.svg)](https://hub.docker.com/r/haveagitgat/hbbatchbeast)    
+A desktop app for batch-converting video with **HandBrakeCLI** or **FFmpeg**. Point it at source
+folders, choose a destination, pick a preset per folder, and it scans recursively, skips files that
+already have output at the destination, and works through the queue with a configurable number of
+workers.
 
+This is the rewritten Electron + React + TypeScript app in [`new/HBBatchBeast`](./new/HBBatchBeast). It
+is a fork of [HaveAGitGat/HBBatchBeast](https://github.com/HaveAGitGat/HBBatchBeast); the original
+single-file jQuery app has been replaced rather than patched.
 
-<h2>
-<a class="gumroad-button" href="https://github.com/HaveAGitGat/HBBatchBeast/wiki/2-Installation">Setup/Installation</a>
-</h2>  
+## Requirements
 
+- **Node.js 22+** and **pnpm 10** (development only).
+- **HandBrakeCLI** on `PATH` (`apt install handbrake-cli`, `brew install handbrake`). Windows builds
+  expect `HandBrakeCLI.exe` on `PATH` as well.
+- **FFmpeg** on `PATH` (only needed for the FFmpeg encoder mode).
+- ffprobe is bundled through `ffprobe-static`, so media inspection works without a system install.
 
-![Screenshot](https://i.imgur.com/pSNJFSj.png)
+## Using the app
 
-Demo video - https://youtu.be/mHMXfInoqfE
+1. Open **Settings** and set at least one source folder and one destination folder (one line each;
+   line *n* of the destination list pairs with line *n* of the source list).
+2. Adjust encoding, filters and file handling. Advanced options are behind **Show advanced options**.
+3. **Scan** to build the queue — the table shows every file that does not already exist at the
+   destination, with status chips and a path filter.
+4. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
+   the current state.
+5. Per-file **Info** opens the media-info viewer (container, duration, bit rate, per-stream codec,
+   resolution/channels, language).
 
+Destructive options (delete source, replace the original) are grouped and explained in the settings
+drawer, and a single confirmation lists exactly what a run will do before it starts.
 
-Discord: https://discord.gg/X4khmE96hS
+Profiles hold independent settings — create, duplicate, rename and delete them from the settings
+drawer. Settings save automatically as you edit them.
 
-A free GUI application for HandBrake and FFmpeg/FFprobe on Windows, macOS and Linux (+ Linux Docker image) with an emphasis on multi HandBrake/FFmpeg instance batch conversion (including recursive folder scans and folder watching). The destination folder structure is kept the same as the source folder structure. Media in subfolders is also converted. Multiple folders can be monitored and different conversion presets can be specified for each folder. Also included:
+### Where files live
 
--Remote monitoring feature to monitor batch file conversions in any browser
+| Path | Purpose |
+| --- | --- |
+| `~/Documents/HBBatchBeast/Config/Configuration.json` | profiles and app settings |
+| `~/Documents/HBBatchBeast/Config/run-journal.json` | state of the last run, used to report an interrupted run |
+| `~/Documents/HBBatchBeast/Logs/` | master, error, conversion and scan logs plus filter caches |
 
--Basic h265 benchmarking
+**Logs & diagnostics** in the settings drawer lists those logs, opens the folders, clears the filter
+caches and clears a recovered run journal.
 
--Health check feature which can scan for corrupt video files using HandBrake (quick scan) or FFmpeg (thorough scan), although this is not always accurate. Attempt repair file feature included too. 
+### Linux / Wayland
 
-This is a standalone program on Windows but requires HandBrakeCLI to be installed on Linux and Mac. For a server application with similar functionality please see [Tdarr](https://github.com/HaveAGitGat/Tdarr). 
+Electron draws no window decorations under native Wayland on GNOME, so the app runs on XWayland:
+`scripts/start.mjs` passes `--ozone-platform=x11` in development, packaged builds re-exec once with
+that flag, and the generated `.desktop` entry also carries it. Set `HBB_OZONE_PLATFORM=wayland` to
+opt back into native Wayland.
 
+## Development
 
+```bash
+cd new/HBBatchBeast
+pnpm install
+pnpm start          # Electron Forge + Vite dev app
+pnpm typecheck      # tsc --noEmit
+pnpm lint           # eslint (flat config)
+pnpm test           # vitest unit + fork-contract suites
+pnpm package        # unpacked build in out/
+pnpm make           # installers (deb/rpm/zip/squirrel) for the host platform
+```
 
-Settings help is available by pressing the blue ? diamond icons spread throughout the program:
+Useful extras:
 
-![Screenshot](https://i.imgur.com/qwxlJkX.png)
+- `HBB_DEBUG_PORT=9222 pnpm start` exposes a DevTools-protocol endpoint so UI flows can be driven by
+  automation.
+- `scripts/dev-smoke.sh 30` runs the app for 30 seconds and tears the whole process tree down again —
+  Forge leaves zombie Electron windows behind otherwise.
+- `HBB_INTEGRATION=1 pnpm test` adds a real HandBrake conversion of `tests/fixtures/sample.mp4`
+  (requires HandBrakeCLI, takes a few seconds).
 
+## Changes from the original app
 
-The program scans the source folders for all files. It then compares the source folder files with the destination folder files to see if any of the source files exist in the destination folder already. If not, the program queues the files for conversion.
- 
-4 worker modules (default number) then work through the conversion queue. If periodic scanning is enabled then the program will run at the chosen interval.
+Deliberately **removed** (the rewrite has no equivalent and legacy config keys are simply ignored):
 
-After it a bit more testing it seems that weird things can happen if you monitor a folder which is being downloaded to. It seems sometimes conversions start before a file has fully downloaded. To solve this, I recommend using a temporary download folder before moving completed files into your HBBB source folder.
+- Remote monitoring / web view and API keys
+- Scheduling: periodic re-scanning, daily run windows, folder watching
+- Health check and repair
+- Email notification settings
+- h265 benchmarking
+- Docker image and Travis CI
 
-If you use a download program which has an 'incomplete downloads' folder etc, do not put that folder inside your main source folder else you may end up converting each file twice.
+Also different:
 
-The program won't work properly if you put the destination folder in a folder inside the source folder because the program is recreating the source folder structure inside the destination folder. It will cause an infinite loop of creating more and more sub-folders each time you run the program. So it will NOT work properly if you do something like this:
+- Settings are per **profile** with real create/duplicate/rename/delete instead of ten fixed slots.
+- The UI is a single job-centric screen (choose folders → scan → review → run) rather than tabs.
+- A cross-platform tray icon with status indicators, and an application menu with reload, zoom,
+  devtools (development builds) and a bug-report link.
+- A run journal means an interrupted run is reported as interrupted instead of looking completed.
 
-Source:
+## Documentation
 
-D:\Videos
+- [`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md) — personas, intents, user
+  stories and the flows the UI is built around.
+- [`docs/ui-design-intent.md`](./docs/ui-design-intent.md) — design principles, information
+  architecture, screen states and accessibility notes.
+- [`MIGRATION_STATUS.md`](./MIGRATION_STATUS.md) — feature-slice inventory, defect log and the current
+  state of the migration.
 
-Destination:
+## License
 
-D:\Videos\Converted
-
-It will work properly if you do something like this etc:
-
-Source:
-
-D:\Videos
-
-Destination:
-
-D:\Converted
+GPL-3.0, inherited from the original HBBatchBeast project. See [`LICENSE`](./LICENSE).

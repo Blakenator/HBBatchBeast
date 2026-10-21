@@ -67,6 +67,9 @@ under `.github/` are issue templates. See §2 for the matrix and slices S34/S35.
 | Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ✅ `fs-extra`, `ffprobe`, `ffprobe-static` present after phase 2 |
 | Tests | `pnpm test` (Vitest) | ✅ 50 tests + 1 opt-in integration test: config/log-folder helpers, `queueBuild` fork contract, queue-build config, worker protocol, run manager, supervisor failure modes |
 | CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
+| Packaged app (phase 7) | `out/HBBatchBeast-linux-x64/hbbatchbeast --remote-debugging-port=9222`: renders, loads config, probes media through the unpacked ffprobe, tray icon loads from `resources/icons` | ✅ |
+| Debian package (phase 7) | `pnpm make --targets @electron-forge/maker-deb` → `out/make/deb/x64/hbbatchbeast_2.1.5_amd64.deb` (125 MB); its `.desktop` entry is `Exec=hbbatchbeast --ozone-platform=x11 %U` | ✅ |
+| Package size | `du -sh out/HBBatchBeast-linux-x64` | ✅ 444 MB (was 680 MB); foreign `ffprobe-static` binaries pruned per target platform |
 | Real run (phase 5) | dev app driven over the DevTools protocol: create profile → set folders → scan → convert 20 files → pause/resume/stop wiring, destructive confirmation, profile switch, language switch, both themes | ✅ scan/convert produce correct `.mkv` destinations, terminal status reaches the pill, queue clears on profile switch, 0 `MISSING_TRANSLATION` errors |
 | Dev-loop cleanup | `scripts/dev-smoke.sh [seconds]` | ✅ runs the app for N seconds and tears down the whole process tree (Forge leaves zombie Electron windows behind otherwise, and they report `electronApi not found`) |
 
@@ -286,6 +289,8 @@ analysis is kept below because the same rules apply to the worker pool that stil
 | S10 | Logs & diagnostics panel in the settings drawer: log files with sizes, open log/config folders, clear the healthy-file and replaced-file caches, and clear the recovered run journal |
 | S27 | Media info viewer: `PROBE_MEDIA` channel backed by ffprobe, with a per-row "Info" action showing container, duration, bit rate and per-stream codec/resolution/channels/language |
 | S09 | Version/changelog notice kept on the GitHub Releases API, now reading this fork's releases and persisting the acknowledged version so it stops re-appearing |
+| S11 | Packaging: real metadata/icons, per-platform icon selection, `packageAfterCopy` pruning of foreign `ffprobe-static` binaries (680 MB → 444 MB), ffprobe unpacked out of the asar so it can execute, makers configured (deb/rpm with a `--ozone-platform=x11` desktop entry, zip, squirrel) |
+| S12 | Legacy app removed: `HBBatchBeast/` (including `HandBrakeCLI.exe` and test media) and `.travis.yml` are gone; a 184 KB sample for the integration test now lives in `tests/fixtures/sample.mp4`, and the README is rewritten for the rewrite |
 
 Also carried over as-is: the six legacy child-process modules are now under
 [`src/backend/modules/`](./new/HBBatchBeast/src/backend/modules) (only `queueBuild.js` was reformatted and
@@ -304,8 +309,8 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 | S32 | Remaining design work: keyboard-first affordances beyond the native `<details>`/modal behaviour, dark/light contrast audit on real hardware, and the row-editor rework above. |
 | — | Dropped-feature cleanup is done at the config/entry level (`scheduler.js` entry deleted, health/remote/email/`api_key` removed from the types). The health-check branches inside the vendored `queueBuild.js`/`worker1.js` are unreachable and `queueBuild` now rejects `healthCheck` mode explicitly; stripping them needs a rewrite of those modules. |
 | — | `low_process_priority_toggle` is still a no-op (D29). |
-| S12 | Repo still contains the legacy app, `HandBrakeCLI.exe` (52 MB), test media, `.travis.yml` and old installer scripts. The packaged app also ships `src/assets` wholesale (fonts, promo images) — narrow that in phase 7. |
-| — | Tooling: `package.json` still has a placeholder `description`/lowercase `productName`, no icons, and the package is ~700 MB because `ffprobe-static` ships three platforms (phase 7). |
+| — | Only the icon directory is shipped now (`resources/icons`), so the legacy fonts and promo images no longer travel with the app. |
+| — | Windows `HandBrakeCLI.exe` is not bundled automatically: the packaged app resolves it from `PATH`, and `packaging/bin` is not wired into `extraResource`. Windows/macOS packages cannot be built or verified on this Linux host. |
 
 ---
 
@@ -342,8 +347,8 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 | S08 | Autostart / launch behaviour | "Start scan+convert when opened", hide-to-tray on minimize, single-instance guard. | ⛔ | S05/S06 | Keep only launch-scan; drop hide-to-tray if S05 dropped | `[ ] yes  [x] no` |
 | S09 | Version / changelog notice | Notify users of a new release and show the changelog. New impl uses GitHub Releases instead of `hbbatchbeast.io/api/version`. | ✅ | S04 | Keep (already re-implemented) | `[x] yes  [ ] no` |
 | S10 | Logs & cache tools | View master/error/conversion/scan logs, open log folder, clear healthy-file and replace-attempt caches. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
-| S11 | Packaging & bundled binaries | Forge makers (squirrel/zip/rpm/deb), app icons/metadata, bundle `HandBrakeCLI.exe` + ffmpeg/ffprobe binaries. | 🟡 | S01 | Keep — required before release | `[x] yes  [ ] no` |
-| S12 | Legacy cleanup | Delete `HBBatchBeast/` (`mainWindow.html`, `main.js`, old installers, 52 MB `HandBrakeCLI.exe`, test media), retire `.travis.yml`. | ⛔ | S11 | Keep — required for a coherent repo | `[x] yes  [ ] no` |
+| S11 | Packaging & bundled binaries | Forge makers (squirrel/zip/rpm/deb), app icons/metadata, bundle `HandBrakeCLI.exe` + ffmpeg/ffprobe binaries. | ✅ | S01 | Keep — required before release | `[x] yes  [ ] no` |
+| S12 | Legacy cleanup | Delete `HBBatchBeast/` (`mainWindow.html`, `main.js`, old installers, 52 MB `HandBrakeCLI.exe`, test media), retire `.travis.yml`. | ✅ | S11 | Keep — required for a coherent repo | `[x] yes  [ ] no` |
 | S13 | Localization | 64 locale JSONs, localized messages, language selector; old app auto-extracted `en.json` from the DOM in dev. | 🟡 | S02 | Keep (backfill strings) | `[x] yes  [ ] no` |
 
 ### B. Batch pipeline
@@ -446,7 +451,7 @@ These are all in the migrated code, not legacy-only issues.
 | D1 | 🔴 High | [buildQueueInfoBomb.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueInfoBomb.ts) | `file_name_suffix_toggle === 1 ? ... : []` sent an **empty array** when the toggle was off, so `queueBuild` produced `aundefined.mp4` destinations. **Fixed in phase 2**: the builder always emits one suffix per source folder and pads partial lists. Covered by tests. |
 | D2 | 🔴 High | [buildQueueInfoBomb.ts](./new/HBBatchBeast/src/backend/helpers/buildQueueInfoBomb.ts) | Standard presets are sent as plain names, but `queueBuild`/`worker1` expect HandBrake args. **Fixed in phase 2**: standard presets are wrapped as `-Z "…"` (already-argument presets are left alone) and the results table resolves labels from the active preset source. |
 | D3 | 🔴 High | [types.ts](./new/HBBatchBeast/src/common/types.ts) | `HealthCheck` mode was accepted but never built the health-check preset, so a health run would have executed as a conversion. **Fixed in phase 2**: the mode is gone from the enum and any unsupported/absent mode throws before a child is forked. |
-| D4 | 🔴 High | `package.json`, `forge.config.ts` | Runtime deps were missing/undeclared. **Fixed in phase 2**: `fs-extra`, `ffprobe` and `ffprobe-static` are declared, `node-linker=hoisted` keeps `node_modules` copyable, and `packagerConfig.ignore` keeps `package.json` + production `node_modules` in the package. Verified by running a scan from the extracted `app.asar`. Package size is still ~700 MB because `ffprobe-static` ships all three platforms — S11 tightens that. |
+| D4 | 🔴 High | `package.json`, `forge.config.ts` | Runtime deps were missing/undeclared. **Fixed in phase 2**: `fs-extra`, `ffprobe` and `ffprobe-static` are declared, `node-linker=hoisted` keeps `node_modules` copyable, and `packagerConfig.ignore` keeps `package.json` + production `node_modules` in the package. Verified by running a scan from the extracted `app.asar`. **Shrunk in phase 7**: `packageAfterCopy` prunes the non-target `ffprobe-static` binaries and the package is now ~444 MB. |
 | D5 | 🟠 Medium | `tsconfig.json`, `.eslintrc.json` | `@superflag/super-ipc-*` are ESM-only with no `main`/`types`; `module: commonjs` + `moduleResolution: node16` cannot resolve them. **Fixed in phases 0–1**: TypeScript 5.9 + `moduleResolution: "bundler"`, and super-ipc 0.1.0 ships dual CJS/ESM with real type entries. |
 | D6 | 🟠 Medium | [main.ts:19](./new/HBBatchBeast/src/main.ts) | `nodeIntegration: true` alongside a contextBridge preload. **Fixed in phase 1**: now `false`. |
 | D7 | 🟠 Medium | [main.ts:36](./new/HBBatchBeast/src/main.ts) | Tray/icon paths use Windows separators (`.\assets\...`) relative to `__dirname`, but assets live in `src/assets` and are not copied to the build root. The tray is created only on Windows (so Linux/macOS get no tray at all), and the later per-platform `iconpath` assignments at lines 97–111 are dead code. |
@@ -474,6 +479,8 @@ These are all in the migrated code, not legacy-only issues.
 | D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
 | D29 | 🟠 Medium | [schema.ts](./new/HBBatchBeast/src/frontend/settings/schema.ts) | `low_process_priority_toggle` is persisted but nothing consumes it: `worker1.js` launches HandBrakeCLI without any priority handling and `priorityModule.js` is unreferenced. Needs either `nice`/`start /LOW` wiring in the encode command or removal from the UI. |
 | D30 | 🟠 Medium | [VersionWarning.tsx](./new/HBBatchBeast/src/frontend/versionWarning/VersionWarning.tsx) | The changelog notice read releases from the **upstream** repo (`HaveAGitGat/HBBatchBeast`) and never recorded that the user had seen it, so it reappeared every launch. **Fixed in phase 6**: it reads this fork's releases and persists the acknowledged version. |
+| D32 | 🔴 High | `forge.config.ts` | `ffprobe-static`'s binary was packed **inside** `app.asar`, and binaries cannot be executed from an asar archive, so media info and the `mediaAnalyser` child would fail in packaged builds. **Fixed in phase 7**: `asar.unpack` extracts `ffprobe-static/bin/**`, verified by probing a file from the packaged app. |
+| D33 | 🟠 Medium | `package.json` | `license: MIT` while `LICENSE` is GPL-3.0, and the metadata was still the Electron Forge placeholder (`productName: hbbatchbeast`, "My Electron application description'). **Fixed in phase 7**: GPL-3.0-only, real description/author/repo/keywords, `productName: HBBatchBeast`. |
 | D31 | 🟡 Low | [tray.ts](./new/HBBatchBeast/src/main/tray.ts) | Legacy tray code only ran on Windows and pointed at `__dirname/assets`, which does not exist in the build output, so Linux/macOS had no tray at all and Windows had broken icons. **Fixed in phase 6**: one cross-platform tray, assets resolved through `resources/assets`, with a logged warning when an icon cannot be loaded. |
 
 ---

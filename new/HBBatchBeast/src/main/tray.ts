@@ -3,10 +3,10 @@ import { TrayStatus } from '../common';
 import { assetPath } from './paths';
 
 const ICONS: Record<TrayStatus, string> = {
-  idle: 'icons/png/icon.png',
-  running: 'icons/png/iconrunning.png',
-  paused: 'icons/png/iconwatching.png',
-  error: 'icons/png/iconerror.png',
+  idle: 'png/icon.png',
+  running: 'png/iconrunning.png',
+  paused: 'png/iconwatching.png',
+  error: 'png/iconerror.png',
 };
 
 const TOOLTIPS: Record<TrayStatus, string> = {
