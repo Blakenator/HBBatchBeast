@@ -54,6 +54,7 @@ const stateColor: Record<QueueRow['state'], string> = {
   success: 'var(--hb-success)',
   error: 'var(--hb-danger)',
   cancelled: 'var(--hb-warning)',
+  excluded: 'var(--hb-textMuted)',
   skipped: 'var(--hb-textMuted)',
 };
 
@@ -98,6 +99,7 @@ export const ItemLogModal: React.FC<{
     success: formatMessage(runMessages.success),
     error: formatMessage(runMessages.error),
     cancelled: formatMessage(runMessages.cancelled),
+    excluded: formatMessage(runMessages.excluded),
     skipped: formatMessage(runMessages.skipped),
   };
 

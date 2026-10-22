@@ -7,11 +7,16 @@ export const runMessages = createMessages({
   stop: { defaultMessage: 'Stop' },
   status: { defaultMessage: 'Status: {status}' },
   progress: {
-    defaultMessage: '{done} of {total} done · {failed} failed · {cancelled} cancelled',
+    defaultMessage:
+      '{done} of {total} done · {failed} failed · {cancelled} cancelled · {excluded} excluded',
   },
   allConverted: {
     defaultMessage:
       'Nothing to convert — {total} matching files already have output at the destination.',
+  },
+  nothingRunnable: {
+    defaultMessage:
+      'Nothing to convert — all {total} matching files are excluded ({excluded} excluded).',
   },
   noMatchingFiles: {
     defaultMessage: 'No files matched the current filters in the source folders.',
@@ -24,9 +29,17 @@ export const runMessages = createMessages({
   success: { defaultMessage: 'Success' },
   error: { defaultMessage: 'Error' },
   cancelled: { defaultMessage: 'Cancelled' },
-  skipped: { defaultMessage: 'Skipped' },
+  excluded: { defaultMessage: 'Excluded' },
+  skipped: { defaultMessage: 'Copied' },
   search: { defaultMessage: 'Filter by path' },
   folders: { defaultMessage: 'Folders' },
+  sourceFolder: { defaultMessage: 'Source' },
+  destinationFolder: { defaultMessage: 'Destination' },
+  folderNumber: { defaultMessage: 'Folder {number}' },
+  open: { defaultMessage: 'Open' },
+  openSourceFolder: { defaultMessage: 'Open source folder' },
+  openDestinationFolder: { defaultMessage: 'Open destination folder' },
+  openFolderFailed: { defaultMessage: 'Could not open folder' },
   encoding: { defaultMessage: 'Encoding' },
   filters: { defaultMessage: 'Filters' },
   noPreset: { defaultMessage: 'no preset set' },
@@ -70,6 +83,46 @@ export const runMessages = createMessages({
   perSecond: { defaultMessage: 'MB/s' },
   framesPerSecond: { defaultMessage: 'fps' },
   framesPerSecondLabel: { defaultMessage: 'Frames per second' },
+  sizeChange: { defaultMessage: 'Before / after sizes' },
+  sizeAbsolute: { defaultMessage: 'Absolute' },
+  sizePercent: { defaultMessage: 'Percent' },
+  sizeNoData: {
+    defaultMessage: 'No file size data yet.',
+  },
+  sizeTotals: { defaultMessage: 'Total: {before} → {after} · {change} ({percent})' },
+  sizeSaved: { defaultMessage: '{size} saved' },
+  sizeLarger: { defaultMessage: '{size} larger' },
+  sizeUnchanged: { defaultMessage: 'No change' },
+  sizeAcrossFiles: {
+    defaultMessage: 'Across {count, plural, one {# file} other {# files}}',
+  },
+  sizeExpectedAcross: {
+    defaultMessage:
+      '{count, plural, one {# in progress (expected)} other {# in progress (expected)}}',
+  },
+  sizeOmitted: { defaultMessage: '+{count} earlier files not shown' },
+  sizeBefore: { defaultMessage: 'Before' },
+  sizeAfter: { defaultMessage: 'After' },
+  sizeExpected: { defaultMessage: 'Expected' },
+  sizeExpectedTotals: {
+    defaultMessage:
+      'Expected total (incl. {count} in progress): {before} → {after} · {change} ({percent})',
+  },
+  sizeExpectedTooltip: {
+    defaultMessage:
+      '{name}\nWritten so far: {written}\nExpected size: {expected}\nExpected change: {change} ({percent})',
+  },
+  sizeTooltip: {
+    defaultMessage:
+      '{name}\nBefore: {before}\nAfter: {after}\nChange: {change} ({percent})',
+  },
+  sizePercentExpectedTooltip: {
+    defaultMessage:
+      '{name}\nExpected change: {percent}\n{before} → {after}',
+  },
+  sizePercentTooltip: {
+    defaultMessage: '{name}\nChange: {percent}\n{before} → {after}',
+  },
   filesLabel: { defaultMessage: 'files' },
   remainingWhenResumed: {
     defaultMessage: '{duration} remaining when resumed',

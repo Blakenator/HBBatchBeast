@@ -7,7 +7,6 @@ import {
   formatLogTimestamp,
   LOG_FILES,
   moveFile,
-  pathExists,
   removeFile,
   replaceOriginalFile,
   runCustomBat,
@@ -139,6 +138,7 @@ export class WorkerRuntime {
     item: WorkerItemConfig,
     state: WorkerResultState,
     detail: string,
+    reason?: string,
   ): void {
     this.emit({
       type: 'result',
@@ -146,6 +146,7 @@ export class WorkerRuntime {
       state,
       detail,
       preset: item.encoder.preset,
+      ...(reason ? { reason } : {}),
     });
   }
 
@@ -156,7 +157,8 @@ export class WorkerRuntime {
 
     try {
       if (item.action === 'skip') {
-        this.result(item, 'skipped', item.skipReason ?? 'Skipped');
+        const reason = item.skipReason ?? 'Excluded by the file filter';
+        this.result(item, 'excluded', reason, reason);
       } else if (item.action === 'copy') {
         await this.copyItem(item, 'Copied');
       } else {
@@ -182,7 +184,7 @@ export class WorkerRuntime {
     try {
       await copyFile(item.sourcePath, target);
       this.console('info', `Copied: ${item.sourcePath} -> ${target}`);
-      this.result(item, 'skipped', detail);
+      this.result(item, 'skipped', detail, detail);
       if (item.deleteSource) {
         await removeFile(item.sourcePath);
         this.console('info', `Deleted source: ${item.sourcePath}`);
@@ -233,8 +235,8 @@ export class WorkerRuntime {
       if (item.copyFilteredFiles || isSubtitle) {
         await this.copyItem(item, `Copied: ${filterReason}`);
       } else {
-        this.console('info', `Skipped: ${filterReason} (${item.sourcePath})`);
-        this.result(item, 'skipped', `Skipped: ${filterReason}`);
+        this.console('info', `Excluded: ${filterReason} (${item.sourcePath})`);
+        this.result(item, 'excluded', filterReason, filterReason);
       }
       return;
     }
@@ -283,16 +285,19 @@ export class WorkerRuntime {
     await this.flushEncoderLogs(item, stdout, stderr);
 
     if (this.active?.cancelRequested || runner.isCancelled) {
+      await removeFile(item.outputPath);
       this.console('info', `Cancelled: ${item.sourcePath}`);
       this.result(item, 'cancelled', 'Cancelled by user');
       return;
     }
 
     const errorLog = `Command: \n\n${commandDescription}\n\n${cap(stderr, MAX_ERROR_TAIL)}`;
+    const outputBytes = await statSize(item.outputPath);
 
-    if (!(await pathExists(item.outputPath))) {
+    if (outputBytes === undefined || outputBytes === 0) {
       const detail = `HBBatchBeast ALERT: NO OUTPUT FILE PRODUCED\n${errorLog}`;
       this.console('error', `No output file: ${item.outputPath}`);
+      await removeFile(item.outputPath);
       this.result(item, 'error', detail);
       await this.writeErrorLog(item, errorLog);
       return;
@@ -301,12 +306,13 @@ export class WorkerRuntime {
     if (runResult.code !== 0) {
       const detail = `Encoder exited with code ${runResult.code ?? 'null'}\n${errorLog}`;
       this.console('error', `Encoder failed: ${item.outputPath}`);
+      await removeFile(item.outputPath);
       this.result(item, 'error', detail);
       await this.writeErrorLog(item, errorLog);
       return;
     }
 
-    await this.finishSuccessfulItem(item);
+    await this.finishSuccessfulItem(item, outputBytes);
   }
 
   private async evaluateFilters(
@@ -330,9 +336,9 @@ export class WorkerRuntime {
 
   private async finishSuccessfulItem(
     item: WorkerItemConfig,
+    outputBytes: number,
   ): Promise<void> {
     const sourceBytes = (await statSize(item.sourcePath)) ?? 0;
-    const outputBytes = (await statSize(item.outputPath)) ?? 0;
     this.emit({
       type: 'file-sizes',
       queueNumber: item.queueNumber,

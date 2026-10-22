@@ -29,8 +29,17 @@ const state: RunStatePayload = {
       state: 'success',
       startedAt: now - 60_000,
       finishedAt: now - 30_000,
+      sourceBytes: 10 * 1024 * 1024,
+      outputBytes: 4 * 1024 * 1024,
     },
-    { path: '/media/b.mkv', preset: 'Fast', state: 'running', progress: { percent: 40 } },
+    {
+      path: '/media/b.mkv',
+      preset: 'Fast',
+      state: 'running',
+      sourceBytes: 10 * 1024 * 1024,
+      writtenBytes: 2 * 1024 * 1024,
+      progress: { percent: 40 },
+    },
     { path: '/media/c.mkv', preset: 'Fast', state: 'pending' },
   ],
   counts: {
@@ -81,6 +90,18 @@ describe('RunCharts', () => {
     expect(screen.getByText('Frames per second')).toBeTruthy();
     expect(screen.getByText('Time remaining')).toBeTruthy();
     expect(screen.getByText('1m 30s')).toBeTruthy();
+    expect(screen.getByText('Before / after sizes')).toBeTruthy();
+    expect(
+      screen.getByText('Total: 10.0 MB → 4.0 MB · 6.0 MB saved (−60%)'),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Expected total (incl. 1 in progress): 20.0 MB → 9.0 MB · 11.0 MB saved (−55%)',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Across 1 file · 1 in progress (expected)'),
+    ).toBeTruthy();
     // ECharts mounts an SVG per chart.
     expect(document.querySelectorAll('svg').length).toBeGreaterThanOrEqual(5);
   });

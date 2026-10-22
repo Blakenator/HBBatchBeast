@@ -59,6 +59,7 @@ process.on('message', (message) => {
         sources: ['/src/a.mp4'],
         presets: ['-Z "x"'],
         skipOrCopy: [0],
+        excluded: [null],
         destinations: ['/dst/a.mp4'],
         destinationsFinal: [null],
         notExists: 1,

@@ -1,7 +1,12 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { parseTokenList } from '../../common/configValues';
-import { QueueBuildConfig, QueueBuildResult } from '../processes/protocol';
+import {
+  ExclusionCode,
+  QueueBuildConfig,
+  QueueBuildResult,
+  ScanExclusion,
+} from '../processes/protocol';
 import { outputRelativePath } from './destination';
 
 export interface ScanQueueCallbacks {
@@ -14,7 +19,8 @@ interface Candidate {
   preset: string;
   destination: string;
   destinationFinal: string | null;
-  skip: boolean;
+  /** Why the scanner will not convert this file; null when it will. */
+  exclusion: ScanExclusion | null;
 }
 
 const PROGRESS_INTERVAL = 100;
@@ -38,6 +44,7 @@ export async function scanQueue(
   );
   const titleWords = parseTokenList(config.titleWordFilter);
   const replacedFiles = await readReplacedFiles(config);
+  const untrustedOutputs = new Set(config.untrustedOutputs);
 
   let total = 0;
   let notExists = 0;
@@ -92,12 +99,9 @@ export async function scanQueue(
           }
         }
 
-        if (
+        const alreadyReplaced =
           replacedFiles.has(filePath) ||
-          (filePath !== absolute && replacedFiles.has(absolute))
-        ) {
-          continue;
-        }
+          (filePath !== absolute && replacedFiles.has(absolute));
 
         total += 1;
         progress('discovered', total);
@@ -119,29 +123,33 @@ export async function scanQueue(
           : null;
 
         const target = destinationFinal ?? destination;
-        if (!(await exists(target))) notExists += 1;
+        const converted =
+          !untrustedOutputs.has(target) &&
+          !untrustedOutputs.has(destination) &&
+          (await isConverted(target));
+        if (!converted) notExists += 1;
 
         await ensureDirectory(path.dirname(destination));
         if (destinationFinal) {
           await ensureDirectory(path.dirname(destinationFinal));
         }
 
-        if (await exists(target)) continue;
-
-        const baseName = path.basename(
-          relative,
-          path.extname(relative),
+        const baseName = path.basename(relative, path.extname(relative));
+        const matchedTitleWord = titleWords.find((word) =>
+          baseName.includes(word),
         );
-        const skip =
-          extension === 'srt' ||
-          titleWords.some((word) => baseName.includes(word));
 
         queue.push({
           source: filePath,
           preset,
           destination,
           destinationFinal,
-          skip,
+          exclusion: exclusionReason({
+            alreadyReplaced,
+            converted,
+            matchedTitleWord,
+            extension,
+          }),
         });
         progress('queued', queue.length);
       }
@@ -158,11 +166,42 @@ export async function scanQueue(
     total,
     sources: queue.map((candidate) => candidate.source),
     presets: queue.map((candidate) => candidate.preset),
-    skipOrCopy: queue.map((candidate) => (candidate.skip ? 1 : 0)),
+    skipOrCopy: queue.map((candidate) => (candidate.exclusion ? 1 : 0)),
+    excluded: queue.map((candidate) => candidate.exclusion),
     destinations: queue.map((candidate) => candidate.destination),
     destinationsFinal: queue.map((candidate) => candidate.destinationFinal),
     notExists,
   };
+}
+
+interface ExclusionInput {
+  alreadyReplaced: boolean;
+  converted: boolean;
+  matchedTitleWord: string | undefined;
+  extension: string;
+}
+
+const EXCLUSION_REASONS: Record<ExclusionCode, string> = {
+  alreadyReplaced: 'Already replaced (see replaced-files log)',
+  alreadyConverted: 'Already converted',
+  titleMatch: 'Title matches the title word filter',
+  subtitle: 'Subtitle file (copied, not converted)',
+};
+
+/** First matching exclusion wins; null means the file will be converted. */
+function exclusionReason(input: ExclusionInput): ScanExclusion | null {
+  const withReason = (code: ExclusionCode, extra?: string): ScanExclusion => ({
+    code,
+    reason: extra ? `${EXCLUSION_REASONS[code]}: "${extra}"` : EXCLUSION_REASONS[code],
+  });
+
+  if (input.alreadyReplaced) return withReason('alreadyReplaced');
+  if (input.converted) return withReason('alreadyConverted');
+  if (input.matchedTitleWord !== undefined) {
+    return withReason('titleMatch', input.matchedTitleWord);
+  }
+  if (input.extension === 'srt') return withReason('subtitle');
+  return null;
 }
 
 async function readReplacedFiles(
@@ -183,10 +222,15 @@ async function readReplacedFiles(
   }
 }
 
-async function exists(filePath: string): Promise<boolean> {
+/**
+ * A destination only counts as converted when it has content. Encoders create
+ * an empty file as soon as they start, so a crashed/cancelled run must be
+ * picked up again on the next scan.
+ */
+async function isConverted(filePath: string): Promise<boolean> {
   try {
-    await fs.access(filePath);
-    return true;
+    const stats = await fs.stat(filePath);
+    return stats.isFile() && stats.size > 0;
   } catch {
     return false;
   }

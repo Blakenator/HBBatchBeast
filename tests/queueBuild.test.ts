@@ -133,7 +133,7 @@ describe('queueBuild contract', () => {
     expect(result.skipOrCopy.filter((flag) => flag === 1)).toEqual([]);
   });
 
-  it('excludes files already present in the destination', async () => {
+  it('lists files already present in the destination as excluded', async () => {
     writeFile('a.mp4');
     writeFile('b.mp4');
     fs.writeFileSync(path.join(destinationDir, 'a.mp4'), 'already converted');
@@ -141,10 +141,15 @@ describe('queueBuild contract', () => {
     const result = await runScan(baseBatch());
 
     expect(result.total).toBe(2);
-    expect(result.sources).toEqual([path.join(sourceDir, 'b.mp4')]);
+    expect(result.sources).toHaveLength(2);
+    const convertedIndex = result.sources.indexOf(path.join(sourceDir, 'a.mp4'));
+    expect(result.excluded[convertedIndex]).toMatchObject({
+      code: 'alreadyConverted',
+    });
+    expect(result.notExists).toBe(1);
   });
 
-  it('flags files matched by the title word filter instead of queueing them', async () => {
+  it('flags files matched by the title word filter with a reason', async () => {
     writeFile('keep.mp4');
     writeFile('sample-clip.mp4');
 
@@ -158,6 +163,8 @@ describe('queueBuild contract', () => {
     );
     expect(sampleIndex).toBeGreaterThanOrEqual(0);
     expect(result.skipOrCopy[sampleIndex]).toBe(1);
+    expect(result.excluded[sampleIndex]).toMatchObject({ code: 'titleMatch' });
+    expect(result.excluded[sampleIndex]?.reason).toContain('sample');
   });
 
   it('ignores file types outside the included list', async () => {
@@ -245,6 +252,7 @@ describe('queueBuild contract', () => {
     const srtIndex = result.sources.indexOf(path.join(sourceDir, 'a.srt'));
     expect(srtIndex).toBeGreaterThanOrEqual(0);
     expect(result.skipOrCopy[srtIndex]).toBe(1);
+    expect(result.excluded[srtIndex]).toMatchObject({ code: 'subtitle' });
     expect(result.destinations[srtIndex]).toBe(
       path.join(destinationDir, 'a.srt'),
     );
@@ -265,7 +273,7 @@ describe('queueBuild contract', () => {
     expect(fs.existsSync(path.join(sourceDir, "it's here.mp4"))).toBe(false);
   });
 
-  it('skips files already recorded in the replaced-originals log', async () => {
+  it('lists files recorded in the replaced-originals log as excluded', async () => {
     writeFile('a.mp4');
     writeFile('b.mp4');
     const replacedPath = path.join(sourceDir, 'a.mp4');
@@ -282,7 +290,13 @@ describe('queueBuild contract', () => {
       },
     });
 
-    expect(result.sources).toEqual([path.join(sourceDir, 'b.mp4')]);
+    const replacedIndex = result.sources.indexOf(replacedPath);
+    expect(replacedIndex).toBeGreaterThanOrEqual(0);
+    expect(result.excluded[replacedIndex]).toMatchObject({
+      code: 'alreadyReplaced',
+    });
+    const otherIndex = result.sources.indexOf(path.join(sourceDir, 'b.mp4'));
+    expect(result.excluded[otherIndex]).toBeNull();
   });
 
   it('uses the configured container extension for outputs', async () => {

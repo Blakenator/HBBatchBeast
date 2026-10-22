@@ -58,6 +58,29 @@ export function formatPercent(value?: number | null, digits = 0): string {
   return `${value.toFixed(digits)}%`;
 }
 
+/** Byte change with an explicit sign; negative values mean the output shrank. */
+export function formatSignedBytes(value?: number | null, precision = 1): string {
+  if (value === undefined || value === null || !Number.isFinite(value)) {
+    return '—';
+  }
+  if (value === 0) return formatBytes(0);
+  const sign = value > 0 ? '+' : '−';
+  return `${sign}${formatBytes(Math.abs(value), precision)}`;
+}
+
+/** Percentage change with an explicit sign; negative values mean a reduction. */
+export function formatSignedPercent(
+  value?: number | null,
+  digits = 0,
+): string {
+  if (value === undefined || value === null || !Number.isFinite(value)) {
+    return '—';
+  }
+  if (value === 0) return formatPercent(0, digits);
+  const sign = value > 0 ? '+' : '−';
+  return `${sign}${Math.abs(value).toFixed(digits)}%`;
+}
+
 /** First non-empty line of a multi-line error block. */
 export function firstLine(text?: string): string | undefined {
   return text

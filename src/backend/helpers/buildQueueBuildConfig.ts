@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { AppError } from '@superflag/super-ipc-core';
@@ -51,12 +52,40 @@ export function defaultLogDirectory(homePath: string = os.homedir()): string {
 export interface BuildQueueBuildConfigOptions extends RunBatchOperationProps {
   /** Overrides the logs directory (tests pass a temp home). */
   logDirectory?: string;
+  /** Run journal used to find outputs from interrupted/failed items. */
+  journalPath?: string;
+}
+
+interface JournalItem {
+  state?: string;
+  destinationPath?: string;
+  destinationFinalPath?: string;
+}
+
+/** Output paths the last run did not complete successfully. */
+function unfinishedOutputs(journalPath: string): string[] {
+  try {
+    const journal = JSON.parse(
+      fs.readFileSync(journalPath, 'utf8'),
+    ) as { items?: JournalItem[] };
+    const unfinished = new Set(['running', 'cancelled', 'error']);
+    const paths = (journal.items ?? [])
+      .filter((item) => unfinished.has(item.state ?? ''))
+      .flatMap((item) => [item.destinationPath, item.destinationFinalPath]);
+    return [...new Set(paths.filter((value): value is string => Boolean(value)))];
+  } catch {
+    return [];
+  }
 }
 
 export function buildQueueBuildConfig({
   config,
   operationMode,
   logDirectory = defaultLogDirectory(),
+  journalPath = path.join(
+    os.homedir(),
+    'Documents/HBBatchBeast/Config/run-journal.json',
+  ),
 }: BuildQueueBuildConfigOptions): QueueBuildConfig {
   if (!operationMode || !SUPPORTED_MODES.includes(operationMode)) {
     throw new AppError('Unsupported batch operation mode', {
@@ -148,5 +177,6 @@ export function buildQueueBuildConfig({
     replaceAlways: advanced.replace_original_file_always_toggle === 1,
     reverseQueue: advanced.reverse_file_queue === 1,
     logDirectory,
+    untrustedOutputs: unfinishedOutputs(journalPath),
   };
 }

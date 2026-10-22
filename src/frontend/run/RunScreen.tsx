@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { TokenChips } from '../ui/Tokens';
 import { QueueTable, QueueRow } from './QueueTable';
 import { FailuresPanel } from './FailuresPanel';
+import { FolderPairs } from './FolderPairs';
 import { ItemLogModal } from './ItemLogModal';
 import { RunCharts } from './RunCharts';
 import { useRunTelemetry } from './useRunTelemetry';
@@ -59,6 +60,10 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   });
 
   const scanItems = batchResult?.fileList ?? [];
+  // Excluded rows are visible in the queue but never need a worker.
+  const runnableItems = scanItems.filter(
+    (item) => (item.action ?? 'encode') !== 'skip',
+  );
 
   // A queue only describes the folders/presets it was scanned with; drop it when
   // the active profile or those settings change so the table cannot show stale
@@ -89,6 +94,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         destinationPath: item.destinationPath,
         destinationFinalPath: item.destinationFinalPath,
         action: item.action,
+        excludedReason: item.excludedReason,
       })),
     },
     skip: true,
@@ -154,7 +160,11 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             index,
             path: item.path,
             preset: item.preset,
-            state: 'pending' as const,
+            state:
+              item.action === 'skip'
+                ? ('excluded' as const)
+                : ('pending' as const),
+            reason: item.excludedReason,
           })),
     [runState, scanItems],
   );
@@ -216,6 +226,10 @@ export const RunScreen: React.FC<RunScreenProps> = ({
           <strong>{sourceCount}</strong> source →{' '}
           <strong>{destinationCount}</strong> destination
           {batch.path?.temp_toggle === 1 ? ' · temp staging' : ''}
+          <FolderPairs
+            sourcePath={batch.path?.source_path}
+            destinationPath={batch.path?.destination_path}
+          />
         </Panel>
         <Panel title={formatMessage(runMessages.encoding)}>
           {batch.FFmpeg_toggle === 1 ? 'FFmpeg' : 'HandBrake'} ·{' '}
@@ -262,7 +276,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             run.loading ||
             running ||
             paused ||
-            scanItems.length === 0 ||
+            runnableItems.length === 0 ||
             problems.length > 0
           }
         >
@@ -303,6 +317,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             total: runState.counts.total,
             failed: runState.counts.error,
             cancelled: runState.counts.cancelled,
+            excluded: runState.counts.excluded,
           })}
         </div>
       )}
@@ -362,8 +377,9 @@ export const RunScreen: React.FC<RunScreenProps> = ({
               ? formatMessage(runMessages.scanFirst)
               : batchResult.totalCount === 0
                 ? formatMessage(runMessages.noMatchingFiles)
-                : formatMessage(runMessages.allConverted, {
+                : formatMessage(runMessages.nothingRunnable, {
                     total: batchResult.totalCount,
+                    excluded: scanItems.length - runnableItems.length,
                   })}
           </div>
         ) : (

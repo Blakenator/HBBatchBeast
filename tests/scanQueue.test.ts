@@ -40,6 +40,7 @@ function config(overrides: Partial<QueueBuildConfig> = {}): QueueBuildConfig {
     replaceAlways: false,
     reverseQueue: false,
     logDirectory: path.join(root, 'logs'),
+    untrustedOutputs: [],
     ...overrides,
   };
 }
@@ -68,7 +69,7 @@ describe('destination math', () => {
 });
 
 describe('scanQueue', () => {
-  it('mirrors the source tree and queues only unconverted files', async () => {
+  it('lists already-converted files as excluded instead of dropping them', async () => {
     write('a.mp4');
     write('nested/b.mkv');
     const base = config();
@@ -79,11 +80,27 @@ describe('scanQueue', () => {
     expect(result.total).toBe(2);
     expect(result.notExists).toBe(1);
     expect(result.sources).toEqual([
+      path.join(root, 'source', 'a.mp4'),
       path.join(root, 'source', 'nested/b.mkv'),
     ]);
     expect(result.destinations).toEqual([
+      path.join(root, 'destination', 'a.mp4'),
       path.join(root, 'destination', 'nested/b.mp4'),
     ]);
+    expect(result.excluded[0]).toMatchObject({ code: 'alreadyConverted' });
+    expect(result.excluded[1]).toBeNull();
+  });
+
+  it('re-queues a file whose destination is an empty placeholder', async () => {
+    write('a.mp4');
+    const base = config();
+    fs.writeFileSync(path.join(root, 'destination', 'a.mp4'), '');
+
+    const result = await scanQueue(base);
+
+    expect(result.notExists).toBe(1);
+    expect(result.sources).toEqual([path.join(root, 'source', 'a.mp4')]);
+    expect(result.excluded[0]).toBeNull();
   });
 
   it('handles source paths containing commas', async () => {
@@ -122,6 +139,9 @@ describe('scanQueue', () => {
       skip: 0,
     });
     expect(byName.get('sample.mp4')?.skip).toBe(1);
+    expect(
+      result.excluded[result.sources.indexOf(path.join(root, 'source', 'sample.mp4'))],
+    ).toMatchObject({ code: 'titleMatch' });
     expect(byName.get('subs.srt')).toEqual({
       destination: path.join(root, 'destination', 'subs.srt'),
       skip: 1,
@@ -165,9 +185,13 @@ describe('scanQueue', () => {
       config({ removeApostrophes: true, replaceIfSmaller: true }),
     );
 
-    expect(result.sources).toEqual([path.join(root, 'source', 'it s.mp4')]);
     expect(fs.existsSync(apostrophe)).toBe(false);
-    expect(result.sources).not.toContain(replaced);
+    expect(result.sources).toContain(path.join(root, 'source', 'it s.mp4'));
+    const replacedIndex = result.sources.indexOf(replaced);
+    expect(replacedIndex).toBeGreaterThanOrEqual(0);
+    expect(result.excluded[replacedIndex]).toMatchObject({
+      code: 'alreadyReplaced',
+    });
   });
 
   it('emits progress counters', async () => {

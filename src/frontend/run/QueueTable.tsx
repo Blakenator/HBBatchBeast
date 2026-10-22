@@ -47,6 +47,7 @@ export type QueueRowState =
   | 'success'
   | 'error'
   | 'cancelled'
+  | 'excluded'
   | 'skipped';
 
 export interface QueueRow {
@@ -86,6 +87,7 @@ const FILTERS: (QueueRowState | 'all')[] = [
   'success',
   'error',
   'cancelled',
+  'excluded',
   'skipped',
 ];
 
@@ -352,6 +354,7 @@ const stateColor: Record<QueueRowState, string> = {
   success: 'var(--hb-success)',
   error: 'var(--hb-danger)',
   cancelled: 'var(--hb-warning)',
+  excluded: 'var(--hb-textMuted)',
   skipped: 'var(--hb-textMuted)',
 };
 

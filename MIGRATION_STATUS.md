@@ -48,12 +48,12 @@ benchmarking, Docker, Travis.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Lint | `pnpm lint` | ✅ 0 errors, 27 pre-existing warnings |
+| Lint | `pnpm lint` | ✅ 0 errors, 26 pre-existing warnings |
 | Typecheck | `pnpm typecheck` (`tsc --noEmit`) | ✅ clean (TypeScript 5.9 + `moduleResolution: "bundler"`, `paths` for the super-ipc ESM packages) |
 | Build/package | `pnpm package` | ✅ Vite bundles + app packages for linux-x64 |
 | Scan pipeline | forked `.vite/build/queueBuild.cjs` driven by a zod-validated `QueueBuildConfig` | ✅ finds files, builds queue, emits `complete` |
 | Packaged runtime deps | inspect `out/.../resources/app.asar` | ✅ `fs-extra`, `zod`, `ffprobe-static` present; child bundles keep `zod` external |
-| Tests | `pnpm test` (Vitest) | ✅ 207 tests + 1 opt-in integration test: worker/scanner codecs, argv, filters, telemetry, runtime, fork contracts, queueBuild, config, run manager, supervisor failure modes |
+| Tests | `pnpm test` (Vitest) | ✅ 224 tests + 1 opt-in integration test: worker/scanner codecs, argv, filters, telemetry, runtime, fork contracts, queueBuild, config, run manager, supervisor failure modes |
 | CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
 | Packaged app (phase 7) | `out/HBBatchBeast-linux-x64/hbbatchbeast --remote-debugging-port=9222`: renders, loads config, probes media through the unpacked ffprobe, tray icon loads from `resources/icons` | ✅ |
 | Debian package (phase 7) | `pnpm make --targets @electron-forge/maker-deb` → `out/make/deb/x64/hbbatchbeast_2.1.5_amd64.deb` (125 MB); its `.desktop` entry is `Exec=hbbatchbeast --ozone-platform=x11 %U` | ✅ |
@@ -210,7 +210,7 @@ wrong primitive or stale version is a loud error instead of plausible-but-wrong 
 | `ready` | — (sent **after** the message listener is attached, which closes the old race, D19) |
 | `log` | `level`, `message` |
 | `progress` | `phase` (`discovered` \| `queued`), `count` — counters only, never the growing file list |
-| `complete` | `QueueBuildResult` — total, sources, presets, skipOrCopy, destinations, destinationsFinal, notExists |
+| `complete` | `QueueBuildResult` — total, sources, presets, skipOrCopy, excluded, destinations, destinationsFinal, notExists |
 | `error` | `message`, optional `stack` |
 
 **worker1 parent → child**
@@ -231,7 +231,7 @@ wrong primitive or stale version is a loud error instead of plausible-but-wrong 
 | `started` | `{ queueNumber }` |
 | `progress` | `{ queueNumber, telemetry, raw }` — percent/fps/frame/speed/ETA/bytes |
 | `file-sizes` | `{ queueNumber, sourceBytes, outputBytes }` |
-| `result` | `{ queueNumber, state: success \| error \| skipped \| cancelled, detail, preset }` |
+| `result` | `{ queueNumber, state: success \| error \| skipped \| excluded \| cancelled, detail, preset, reason? }` |
 | `console` | `{ level, message }` |
 
 Child entry points are resolved through `childEntries.ts` (name → emitted `.cjs` filename) and validated at
@@ -240,6 +240,18 @@ startup, so a stale build fails immediately with an actionable message instead o
 There is no positional array left. `worker1` owns its encoder process (`spawn` with argv), ffprobe call, log
 writes and file moves; `worker2`, `mediaAnalyser` and `priorityModule` were deleted. Pause/resume is decided by
 `RunManager` (idle workers park until resume), and the worker always requests the next item when idle.
+
+### Scan exclusions and destination ownership
+
+A scan lists **every** matching file, including ones it will not convert, with an `excluded` entry
+(`{ code, reason }`, `code` = `alreadyConverted` | `alreadyReplaced` | `titleMatch` | `subtitle`) — the queue
+shows them as `Excluded` with the reason instead of dropping them. `alreadyConverted`/`alreadyReplaced` are
+always skipped; `titleMatch` is copied when `copy_filtered_files` is on; `subtitle` is copied.
+
+A destination only counts as converted when it exists **and is non-empty**, and the scanner distrusts outputs
+that the run journal records as `running`/`cancelled`/`error` (`QueueBuildConfig.untrustedOutputs`). Encoders
+create the output file as soon as they start, so this is what makes a crashed or cancelled run re-queue its
+files instead of treating the stub as finished. The worker also deletes its partial output on cancel/failure.
 
 ### Fork / child-process architecture — restructured in S33
 

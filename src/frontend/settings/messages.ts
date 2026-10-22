@@ -48,6 +48,10 @@ export const settingsMessages = createMessages({
   pickDestinationFolder: { defaultMessage: 'Choose a destination folder' },
   pickTempFolder: { defaultMessage: 'Choose a temp folder' },
   pickSourceFolders: { defaultMessage: 'Choose source folders' },
+  open: { defaultMessage: 'Open' },
+  openSourceFolder: { defaultMessage: 'Open source folder' },
+  openDestinationFolder: { defaultMessage: 'Open destination folder' },
+  openFolderFailed: { defaultMessage: 'Could not open folder' },
   addRow: { defaultMessage: 'Add row' },
   addFolders: { defaultMessage: 'Add folders…' },
   folderRowsHelp: {

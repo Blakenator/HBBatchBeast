@@ -1,19 +1,23 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { useIntl } from 'react-intl';
 import type { EChartsCoreOption } from 'echarts/core';
+import { summarizeSizeChanges } from '../../common/runTelemetry';
 import { RunItemState, RunStatePayload } from './types';
 import { RunTelemetry } from './useRunTelemetry';
 import { runMessages } from './messages';
 import { EChart } from './EChart';
 import { useThemeMode } from '../ui/useThemeMode';
 import { tokens } from '../ui/theme';
+import { SegmentedControl } from '../settings/SegmentedControl';
 import {
   formatBytes,
   formatClock,
   formatDuration,
   formatNumber,
   formatPercent,
+  formatSignedBytes,
+  formatSignedPercent,
 } from './format';
 
 const Grid = styled.div`
@@ -41,6 +45,28 @@ const CardTitle = styled.h3`
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--hb-textMuted);
+`;
+
+const CardHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hb-space-sm);
+  flex-wrap: wrap;
+`;
+
+const SizeLegend = styled.div`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-sm);
+  font-size: var(--hb-font-xs);
+  color: var(--hb-textMuted);
+`;
+
+const LegendItem = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
 `;
 
 const Metric = styled.div`
@@ -138,6 +164,8 @@ interface RunChartsProps {
   telemetry: RunTelemetry;
 }
 
+const SIZE_CHART_LIMIT = 60;
+
 export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
   const { formatMessage } = useIntl();
   const mode = useThemeMode();
@@ -150,6 +178,7 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
       success: theme.success,
       error: theme.danger,
       cancelled: theme.warning,
+      excluded: theme.textMuted,
       skipped: theme.textMuted,
     }),
     [theme],
@@ -165,11 +194,27 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
   );
 
   const counts = state.counts;
-  const done = counts.success + counts.error + counts.cancelled + counts.skipped;
+  const done =
+    counts.success +
+    counts.error +
+    counts.cancelled +
+    counts.excluded +
+    counts.skipped;
+  const [sizeView, setSizeView] = useState<'absolute' | 'percent'>('absolute');
 
   const statusSegments = useMemo<Segment[]>(
     () =>
-      (['running', 'pending', 'success', 'error', 'cancelled', 'skipped'] as const).map(
+      (
+        [
+          'running',
+          'pending',
+          'success',
+          'error',
+          'cancelled',
+          'excluded',
+          'skipped',
+        ] as const
+      ).map(
         (key) => ({
           key,
           label: formatMessage(runMessages[key]),
@@ -183,6 +228,7 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
       counts.success,
       counts.error,
       counts.cancelled,
+      counts.excluded,
       counts.skipped,
       stateColors,
       formatMessage,
@@ -206,7 +252,7 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
       {
         key: 'other',
         label: formatMessage(runMessages.otherFinished),
-        value: counts.cancelled + counts.skipped,
+        value: counts.cancelled + counts.excluded + counts.skipped,
         color: theme.warning,
       },
       {
@@ -220,6 +266,7 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
       counts.success,
       counts.error,
       counts.cancelled,
+      counts.excluded,
       counts.skipped,
       counts.pending,
       counts.running,
@@ -359,6 +406,175 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
     [telemetry.points, theme, formatMessage],
   );
 
+  const sizeSummary = useMemo(
+    () => summarizeSizeChanges(state.items),
+    [state.items],
+  );
+  const sizePoints = useMemo(
+    () => sizeSummary.points.slice(-SIZE_CHART_LIMIT),
+    [sizeSummary],
+  );
+
+  const sizeAbsoluteOption = useMemo(() => {
+    const pointAt = (params: unknown) => {
+      const list = Array.isArray(params) ? params : [params];
+      const index = Number(
+        (list[0] as { dataIndex?: number } | undefined)?.dataIndex,
+      );
+      return Number.isInteger(index) ? sizePoints[index] : undefined;
+    };
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 150,
+      grid: { left: 0, right: 0, top: 4, bottom: 2 },
+      xAxis: {
+        type: 'category',
+        show: false,
+        data: sizePoints.map((point) => point.path),
+      },
+      yAxis: { type: 'value', show: false, min: 0 },
+      tooltip: {
+        ...tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        extraCssText: 'white-space: pre-line;',
+        formatter: (params: unknown) => {
+          const point = pointAt(params);
+          if (!point) return '';
+          const name = point.path.split(/[\\/]/).pop() ?? point.path;
+          const change = formatSignedBytes(point.deltaBytes);
+          const percent = formatSignedPercent(point.percent, 1);
+          return point.expected
+            ? formatMessage(runMessages.sizeExpectedTooltip, {
+                name,
+                written: formatBytes(point.writtenBytes),
+                expected: formatBytes(point.afterBytes),
+                change,
+                percent,
+              })
+            : formatMessage(runMessages.sizeTooltip, {
+                name,
+                before: formatBytes(point.beforeBytes),
+                after: formatBytes(point.afterBytes),
+                change,
+                percent,
+              });
+        },
+      },
+      series: [
+        {
+          name: formatMessage(runMessages.sizeBefore),
+          type: 'bar',
+          stack: 'before',
+          data: sizePoints.map((point) => point.beforeBytes),
+          barMaxWidth: 6,
+          itemStyle: { color: theme.textMuted, borderRadius: [2, 2, 0, 0] },
+        },
+        {
+          name: formatMessage(runMessages.sizeAfter),
+          type: 'bar',
+          stack: 'after',
+          data: sizePoints.map((point) => ({
+            value: point.expected ? point.writtenBytes : point.afterBytes,
+            itemStyle: {
+              color: theme.accent,
+              borderRadius: point.expected ? [0, 0, 0, 0] : [2, 2, 0, 0],
+            },
+          })),
+          barMaxWidth: 6,
+        },
+        {
+          name: formatMessage(runMessages.sizeExpected),
+          type: 'bar',
+          stack: 'after',
+          data: sizePoints.map((point) => ({
+            value: point.expected
+              ? Math.max(0, point.afterBytes - point.writtenBytes)
+              : 0,
+            itemStyle: {
+              color: theme.accent,
+              opacity: 0.35,
+              borderRadius: [2, 2, 0, 0],
+            },
+          })),
+          barMaxWidth: 6,
+        },
+      ],
+    } as EChartsCoreOption;
+  }, [sizePoints, tooltip, theme, formatMessage]);
+
+  const sizePercentOption = useMemo(() => {
+    const pointAt = (params: unknown) => {
+      const list = Array.isArray(params) ? params : [params];
+      const index = Number(
+        (list[0] as { dataIndex?: number } | undefined)?.dataIndex,
+      );
+      return Number.isInteger(index) ? sizePoints[index] : undefined;
+    };
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 150,
+      grid: { left: 0, right: 0, top: 8, bottom: 8 },
+      xAxis: {
+        type: 'category',
+        show: false,
+        data: sizePoints.map((point) => point.path),
+      },
+      yAxis: { type: 'value', show: false },
+      tooltip: {
+        ...tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        extraCssText: 'white-space: pre-line;',
+        formatter: (params: unknown) => {
+          const point = pointAt(params);
+          if (!point) return '';
+          const name = point.path.split(/[\\/]/).pop() ?? point.path;
+          const percent = formatSignedPercent(point.percent, 1);
+          return point.expected
+            ? formatMessage(runMessages.sizePercentExpectedTooltip, {
+                name,
+                percent,
+                before: formatBytes(point.beforeBytes),
+                after: formatBytes(point.afterBytes),
+              })
+            : formatMessage(runMessages.sizePercentTooltip, {
+                name,
+                percent,
+                before: formatBytes(point.beforeBytes),
+                after: formatBytes(point.afterBytes),
+              });
+        },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: sizePoints.map((point) => ({
+            value: point.percent,
+            itemStyle: {
+              color:
+                point.deltaBytes < 0
+                  ? theme.success
+                  : point.deltaBytes > 0
+                    ? theme.danger
+                    : theme.textMuted,
+              opacity: point.expected ? 0.5 : 1,
+              borderRadius:
+                point.percent < 0 ? [0, 0, 2, 2] : [2, 2, 0, 0],
+            },
+          })),
+          barMaxWidth: 8,
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            lineStyle: { color: theme.border, width: 1 },
+            data: [{ yAxis: 0 }],
+          },
+        },
+      ],
+    } as EChartsCoreOption;
+  }, [sizePoints, tooltip, theme, formatMessage]);
+
   const statusOption = useMemo(
     () =>
       donutOption(
@@ -426,6 +642,56 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
       time: formatClock(telemetry.finishAt),
     });
   }
+
+  const sizePercentLabel =
+    sizeSummary.percent === null
+      ? '—'
+      : formatSignedPercent(sizeSummary.percent);
+  const sizeChangeLabel =
+    sizeSummary.deltaBytes < 0
+      ? formatMessage(runMessages.sizeSaved, {
+          size: formatBytes(Math.abs(sizeSummary.deltaBytes)),
+        })
+      : sizeSummary.deltaBytes > 0
+        ? formatMessage(runMessages.sizeLarger, {
+            size: formatBytes(sizeSummary.deltaBytes),
+          })
+        : formatMessage(runMessages.sizeUnchanged);
+  const sizeTotalsLabel = formatMessage(runMessages.sizeTotals, {
+    before: formatBytes(sizeSummary.beforeBytes),
+    after: formatBytes(sizeSummary.afterBytes),
+    change: sizeChangeLabel,
+    percent: sizePercentLabel,
+  });
+  const expectedPercentLabel =
+    sizeSummary.expectedPercent === null
+      ? '—'
+      : formatSignedPercent(sizeSummary.expectedPercent);
+  const expectedChangeLabel =
+    sizeSummary.expectedDeltaBytes < 0
+      ? formatMessage(runMessages.sizeSaved, {
+          size: formatBytes(Math.abs(sizeSummary.expectedDeltaBytes)),
+        })
+      : sizeSummary.expectedDeltaBytes > 0
+        ? formatMessage(runMessages.sizeLarger, {
+            size: formatBytes(sizeSummary.expectedDeltaBytes),
+          })
+        : formatMessage(runMessages.sizeUnchanged);
+  const expectedTotalsLabel = formatMessage(runMessages.sizeExpectedTotals, {
+    count: formatNumber(sizeSummary.expectedFiles),
+    before: formatBytes(sizeSummary.expectedBeforeBytes),
+    after: formatBytes(sizeSummary.expectedAfterBytes),
+    change: expectedChangeLabel,
+    percent: expectedPercentLabel,
+  });
+  const sizeOmittedCount = sizeSummary.points.length - sizePoints.length;
+  const hasActualSizes = sizeSummary.files > 0;
+  const metricDelta = hasActualSizes
+    ? sizeSummary.deltaBytes
+    : sizeSummary.expectedDeltaBytes;
+  const metricPercent = hasActualSizes
+    ? sizePercentLabel
+    : expectedPercentLabel;
 
   return (
     <Grid>
@@ -498,6 +764,101 @@ export const RunCharts: React.FC<RunChartsProps> = ({ state, telemetry }) => {
             size: formatBytes(telemetry.processedBytes),
           })}
         </Hint>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{formatMessage(runMessages.sizeChange)}</CardTitle>
+          <SegmentedControl
+            label={formatMessage(runMessages.sizeChange)}
+            value={sizeView}
+            onChange={(value) => setSizeView(value as 'absolute' | 'percent')}
+            disabled={sizeSummary.files === 0}
+            options={[
+              {
+                value: 'absolute',
+                label: formatMessage(runMessages.sizeAbsolute),
+              },
+              {
+                value: 'percent',
+                label: formatMessage(runMessages.sizePercent),
+              },
+            ]}
+          />
+        </CardHeader>
+        {sizeSummary.points.length === 0 ? (
+          <Hint>{formatMessage(runMessages.sizeNoData)}</Hint>
+        ) : (
+          <>
+            <Metric>
+              {formatSignedBytes(metricDelta)}
+              <Unit>{metricPercent}</Unit>
+            </Metric>
+            {sizeView === 'absolute' ? (
+              <SizeLegend>
+                <LegendItem>
+                  <Swatch $color={theme.textMuted} aria-hidden="true" />
+                  {formatMessage(runMessages.sizeBefore)}
+                </LegendItem>
+                <LegendItem>
+                  <Swatch $color={theme.accent} aria-hidden="true" />
+                  {formatMessage(runMessages.sizeAfter)}
+                </LegendItem>
+                {sizeSummary.expectedFiles > 0 && (
+                  <LegendItem>
+                    <Swatch
+                      $color={theme.accent}
+                      style={{ opacity: 0.35 }}
+                      aria-hidden="true"
+                    />
+                    {formatMessage(runMessages.sizeExpected)}
+                  </LegendItem>
+                )}
+              </SizeLegend>
+            ) : (
+              sizeSummary.expectedFiles > 0 && (
+                <SizeLegend>
+                  <LegendItem>
+                    <Swatch
+                      $color={theme.textMuted}
+                      style={{ opacity: 0.5 }}
+                      aria-hidden="true"
+                    />
+                    {formatMessage(runMessages.sizeExpected)}
+                  </LegendItem>
+                </SizeLegend>
+              )
+            )}
+            <EChart
+              option={
+                sizeView === 'absolute'
+                  ? sizeAbsoluteOption
+                  : sizePercentOption
+              }
+              height={96}
+              label={formatMessage(runMessages.sizeChange)}
+            />
+            {hasActualSizes && <Hint>{sizeTotalsLabel}</Hint>}
+            {sizeSummary.expectedFiles > 0 && (
+              <Hint>{expectedTotalsLabel}</Hint>
+            )}
+            <Hint>
+              {hasActualSizes &&
+                formatMessage(runMessages.sizeAcrossFiles, {
+                  count: formatNumber(sizeSummary.files),
+                })}
+              {hasActualSizes && sizeSummary.expectedFiles > 0 && ' · '}
+              {sizeSummary.expectedFiles > 0 &&
+                formatMessage(runMessages.sizeExpectedAcross, {
+                  count: formatNumber(sizeSummary.expectedFiles),
+                })}
+              {sizeOmittedCount > 0 &&
+                ` · ${formatMessage(runMessages.sizeOmitted, {
+                  count: formatNumber(sizeOmittedCount),
+                })}`}
+            </Hint>
+          </>
+        )}
       </Card>
 
       <Card>

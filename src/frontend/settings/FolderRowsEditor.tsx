@@ -4,6 +4,7 @@ import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { parseMappedRows, serializeMappedRows } from '../../common';
 import { Button } from '../ui/Button';
+import { OpenFolderButton } from '../ui/OpenFolderButton';
 import { isInside } from '../run/validation';
 import { BrowseButton } from './PathInput';
 import { Help, InlineNote } from './FieldLayout';
@@ -71,6 +72,11 @@ const FieldLine = styled.div`
 const FieldName = styled.label`
   font-size: var(--hb-font-xs);
   color: var(--hb-textMuted);
+`;
+
+const FieldActions = styled.div`
+  display: flex;
+  gap: var(--hb-space-xs);
 `;
 
 const Actions = styled.div`
@@ -254,19 +260,29 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                   }
                   onPaste={(event) => handlePaste(event, index, 'source')}
                 />
-                <BrowseButton
-                  kind="folder"
-                  title={formatMessage(settingsMessages.pickSourceFolder)}
-                  defaultPath={row.source}
-                  label="…"
-                  onPick={(selected) => {
-                    if (selected.length === 1) {
-                      updateRow(index, 'source', selected[0]);
-                    } else {
-                      addFolders(selected);
-                    }
-                  }}
-                />
+                <FieldActions>
+                  <BrowseButton
+                    kind="folder"
+                    title={formatMessage(settingsMessages.pickSourceFolder)}
+                    defaultPath={row.source}
+                    label="…"
+                    onPick={(selected) => {
+                      if (selected.length === 1) {
+                        updateRow(index, 'source', selected[0]);
+                      } else {
+                        addFolders(selected);
+                      }
+                    }}
+                  />
+                  <OpenFolderButton
+                    path={row.source}
+                    label={formatMessage(settingsMessages.open)}
+                    title={formatMessage(settingsMessages.openSourceFolder)}
+                    failureMessage={formatMessage(
+                      settingsMessages.openFolderFailed,
+                    )}
+                  />
+                </FieldActions>
               </FieldLine>
 
               <FieldLine>
@@ -282,15 +298,25 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                   }
                   onPaste={(event) => handlePaste(event, index, 'destination')}
                 />
-                <BrowseButton
-                  kind="folder"
-                  title={formatMessage(settingsMessages.pickDestinationFolder)}
-                  defaultPath={row.destination}
-                  label="…"
-                  onPick={(selected) =>
-                    updateRow(index, 'destination', selected[0] ?? '')
-                  }
-                />
+                <FieldActions>
+                  <BrowseButton
+                    kind="folder"
+                    title={formatMessage(settingsMessages.pickDestinationFolder)}
+                    defaultPath={row.destination}
+                    label="…"
+                    onPick={(selected) =>
+                      updateRow(index, 'destination', selected[0] ?? '')
+                    }
+                  />
+                  <OpenFolderButton
+                    path={row.destination}
+                    label={formatMessage(settingsMessages.open)}
+                    title={formatMessage(settingsMessages.openDestinationFolder)}
+                    failureMessage={formatMessage(
+                      settingsMessages.openFolderFailed,
+                    )}
+                  />
+                </FieldActions>
               </FieldLine>
 
               {tempEnabled && (

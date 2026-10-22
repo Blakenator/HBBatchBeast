@@ -111,7 +111,9 @@ export function buildWorkerItemConfig(
     outputPath,
     finalPath,
     action,
-    ...(action === 'skip' ? { skipReason: 'Skipped by the file filter' } : {}),
+    ...(action === 'skip'
+      ? { skipReason: item.excludedReason ?? 'Excluded by the file filter' }
+      : {}),
     copyFilteredFiles: truthy(advanced.copy_filtered_files_toggle),
     encoder,
     deleteSource: truthy(advanced.delete_source_files_toggle),

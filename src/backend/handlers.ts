@@ -3,6 +3,7 @@ import {
   createLogFolders,
   findUnavailableHandBrakePresets,
   listHandBrakePresets,
+  openFolder,
   pickPath,
   saveAppConfig,
 } from './helpers';
@@ -59,27 +60,28 @@ export function mapQueueBuildResult(
     discoveredQueueCount: payload.total,
     unconvertedFilesCount: payload.notExists,
     fileList: payload.sources.map((filepath, index) => {
-      const extraActionPerformed = payload.skipOrCopy[index] === 1;
+      const exclusion = payload.excluded[index] ?? null;
       const fileIsSrt = filepath.toLowerCase().endsWith('.srt');
-      const copiedFromFilter = copyFilteredFiles && extraActionPerformed;
-      const copiedSrt = !copyFilteredFiles && fileIsSrt && extraActionPerformed;
-      const skippedFromFilter =
-        !copyFilteredFiles && extraActionPerformed && !fileIsSrt;
+      const copiedSrt = exclusion?.code === 'subtitle';
+      const copiedFromFilter =
+        exclusion?.code === 'titleMatch' && copyFilteredFiles;
+      const skippedFromFilter = exclusion !== null && !copiedSrt && !copiedFromFilter;
 
       return {
         path: filepath,
         preset: payload.presets[index],
         destinationPath: payload.destinations[index] ?? undefined,
         destinationFinalPath: payload.destinationsFinal[index] ?? undefined,
-        action: copiedFromFilter || copiedSrt
+        action: copiedSrt || copiedFromFilter
           ? ('copy' as const)
           : skippedFromFilter
             ? ('skip' as const)
             : ('encode' as const),
+        excludedReason: exclusion?.reason,
         extraActions: {
           copiedFromFilter,
           skippedFromFilter,
-          copiedSrt,
+          copiedSrt: copiedSrt && fileIsSrt,
         },
       };
     }),
@@ -126,7 +128,7 @@ export const BackendHandlers: BackendSyncHandlersType<
         return migrateGlobalSettings(
           JSON.parse(fs.readFileSync(configPath, 'utf8')) as GlobalAppConfig,
         );
-      } catch (err) {
+      } catch {
         console.log('Unable to load configuration file, archiving old version');
         fs.renameSync(configPath, configPath + '.old');
       }
@@ -167,6 +169,7 @@ export const BackendHandlers: BackendSyncHandlersType<
     const target = assertOpenablePath(app.getPath('home'), args.path);
     void shell.openPath(target);
   },
+  [PROMISE_CHANNEL.OpenFolder]: ({ args }) => openFolder(args.path),
   [PROMISE_CHANNEL.ClearCaches]: ({ app }) => {
     ensureLogFolders(app);
     return { cleared: clearCaches(app.getPath('home')) };

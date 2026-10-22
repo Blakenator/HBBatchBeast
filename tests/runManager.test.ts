@@ -193,6 +193,59 @@ describe('RunManager', () => {
     expect(workers[0].sent).toHaveLength(2);
   });
 
+  it('shows scanner exclusions as terminal rows and never dispatches them', async () => {
+    const manager = makeManager('success', 1);
+    await manager.start([
+      { path: '/src/a.mp4', preset: '-Z "x"' },
+      {
+        path: '/src/b.mp4',
+        preset: '-Z "x"',
+        destinationPath: '/dst/b.mp4',
+        action: 'skip',
+        excludedReason: 'Already converted',
+      },
+    ]);
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+
+    const state = manager.getState();
+    expect(state.items[1]).toMatchObject({
+      state: 'excluded',
+      reason: 'Already converted',
+    });
+    expect(state.counts).toMatchObject({ excluded: 1, success: 1, total: 2 });
+    // The excluded row never reached a worker.
+    expect(workers[0].sent).toHaveLength(1);
+  });
+
+  it('records worker filter rejections as excluded with a reason', async () => {
+    const manager = new RunManager({
+      workerCount: 1,
+      buildItemConfig: buildConfig,
+      createWorker: (_number, handlers) => ({
+        start: async () => handlers.onQueueRequest(),
+        cancelItem: () => undefined,
+        stop: async () => undefined,
+        sendItem: (config) => {
+          handlers.onStarted(config.queueNumber);
+          handlers.onResult(
+            config.queueNumber,
+            'excluded',
+            "Excluded, does not meet 'Include' conditions",
+            "Excluded, does not meet 'Include' conditions",
+          );
+        },
+      }),
+    });
+
+    await manager.start([items[0]]);
+    await vi.waitFor(() => expect(manager.getState().status).toBe('completed'));
+
+    expect(manager.getState().items[0]).toMatchObject({
+      state: 'excluded',
+      reason: "Excluded, does not meet 'Include' conditions",
+    });
+  });
+
   it('stops the run and cancels outstanding items', async () => {
     const manager = makeManager('success', 1);
     await manager.start(items);
@@ -308,6 +361,33 @@ describe('RunManager', () => {
     });
     expect(item.reason).toBe('trace line');
     expect(item.logTail).toEqual(['sub worker error: boom']);
+  });
+
+  it('tracks bytes written while an item is encoding', async () => {
+    const manager = new RunManager({
+      workerCount: 1,
+      buildItemConfig: buildConfig,
+      createWorker: (_number, handlers) => ({
+        start: async () => handlers.onQueueRequest(),
+        cancelItem: () => undefined,
+        stop: async () => undefined,
+        sendItem: (config) => {
+          handlers.onStarted(config.queueNumber);
+          handlers.onProgress(
+            config.queueNumber,
+            { percent: 20, bytes: 1234 },
+            'Encoding: 20%',
+          );
+        },
+      }),
+    });
+
+    await manager.start([
+      { path: '/src/live.mp4', preset: '-Z "x"', destinationPath: '/dst/live.mp4' },
+    ]);
+
+    expect(manager.getState().items[0].writtenBytes).toBe(1234);
+    await manager.stop();
   });
 
   it('fails the active and pending items when the only worker crashes', async () => {

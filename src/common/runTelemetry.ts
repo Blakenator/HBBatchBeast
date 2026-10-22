@@ -248,3 +248,136 @@ export function averageItemSeconds(
   }
   return count === 0 ? null : total / count;
 }
+
+export interface SizeChangeItem extends TelemetryItem {
+  path: string;
+  /** Bytes written to the output file so far while the item is running. */
+  writtenBytes?: number;
+}
+
+export interface SizeChangePoint {
+  path: string;
+  beforeBytes: number;
+  /** Actual output size when complete, or the extrapolated final size. */
+  afterBytes: number;
+  /** Bytes already written; equals `afterBytes` once the item completes. */
+  writtenBytes: number;
+  /** Positive when the output grew, negative when it shrank. */
+  deltaBytes: number;
+  /** Change relative to the source size; negative means smaller. */
+  percent: number;
+  /** True when `afterBytes` was extrapolated from an in-progress item. */
+  expected: boolean;
+}
+
+export interface SizeChangeSummary {
+  /** Number of successful files with both sizes known. */
+  files: number;
+  /** Number of running files whose final size was extrapolated. */
+  expectedFiles: number;
+  /** Completed totals. */
+  beforeBytes: number;
+  afterBytes: number;
+  deltaBytes: number;
+  percent: number | null;
+  /** Completed totals plus every in-progress estimate. */
+  expectedBeforeBytes: number;
+  expectedAfterBytes: number;
+  expectedDeltaBytes: number;
+  expectedPercent: number | null;
+  points: SizeChangePoint[];
+}
+
+function changePercent(beforeBytes: number, afterBytes: number): number | null {
+  if (beforeBytes <= 0) return null;
+  return ((afterBytes - beforeBytes) / beforeBytes) * 100;
+}
+
+/**
+ * Best-effort final size for a running item. The encoder's percentage is used
+ * as the completion fraction, so the estimate improves as the file progresses.
+ */
+export function estimateFinalBytes(
+  writtenBytes?: number,
+  percent?: number,
+): number | null {
+  if (writtenBytes === undefined || writtenBytes <= 0) return null;
+  if (percent === undefined || percent <= 0 || percent > 100) return null;
+  return Math.max(writtenBytes, Math.round(writtenBytes / (percent / 100)));
+}
+
+/**
+ * Before/after sizes for completed conversions plus expected sizes for items
+ * still running. Failed, cancelled and skipped items are ignored so they cannot
+ * skew the totals.
+ */
+export function summarizeSizeChanges(
+  items: readonly SizeChangeItem[],
+): SizeChangeSummary {
+  const points: SizeChangePoint[] = [];
+  let beforeBytes = 0;
+  let afterBytes = 0;
+  let expectedFiles = 0;
+  let expectedBeforeBytes = 0;
+  let expectedAfterBytes = 0;
+
+  for (const item of items) {
+    const before = item.sourceBytes;
+    if (before === undefined || before <= 0) continue;
+
+    if (item.state === 'success') {
+      const after = item.outputBytes;
+      if (after === undefined || after <= 0) continue;
+      const percent = changePercent(before, after) ?? 0;
+      beforeBytes += before;
+      afterBytes += after;
+      expectedBeforeBytes += before;
+      expectedAfterBytes += after;
+      points.push({
+        path: item.path,
+        beforeBytes: before,
+        afterBytes: after,
+        writtenBytes: after,
+        deltaBytes: after - before,
+        percent,
+        expected: false,
+      });
+      continue;
+    }
+
+    if (item.state !== 'running') continue;
+    const written = item.writtenBytes ?? item.progress?.bytes;
+    const percent = item.progress?.percent;
+    const expectedAfter = estimateFinalBytes(written, percent);
+    if (expectedAfter === null || written === undefined) continue;
+
+    expectedFiles += 1;
+    expectedBeforeBytes += before;
+    expectedAfterBytes += expectedAfter;
+    points.push({
+      path: item.path,
+      beforeBytes: before,
+      afterBytes: expectedAfter,
+      writtenBytes: written,
+      deltaBytes: expectedAfter - before,
+      percent: changePercent(before, expectedAfter) ?? 0,
+      expected: true,
+    });
+  }
+
+  const deltaBytes = afterBytes - beforeBytes;
+  const expectedDeltaBytes = expectedAfterBytes - expectedBeforeBytes;
+  return {
+    files: points.length - expectedFiles,
+    expectedFiles,
+    beforeBytes,
+    afterBytes,
+    deltaBytes,
+    percent: changePercent(beforeBytes, afterBytes),
+    expectedBeforeBytes,
+    expectedAfterBytes,
+    expectedDeltaBytes,
+    expectedPercent: changePercent(expectedBeforeBytes, expectedAfterBytes),
+    points,
+  };
+}

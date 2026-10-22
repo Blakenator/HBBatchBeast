@@ -4,6 +4,7 @@ import { BarChart, LineChart, PieChart } from 'echarts/charts';
 import {
   AriaComponent,
   GridComponent,
+  MarkLineComponent,
   TitleComponent,
   TooltipComponent,
 } from 'echarts/components';
@@ -17,6 +18,7 @@ echarts.use([
   GridComponent,
   TitleComponent,
   TooltipComponent,
+  MarkLineComponent,
   AriaComponent,
   SVGRenderer,
 ]);

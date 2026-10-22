@@ -48,16 +48,16 @@ class FakeRunner implements ProcessRunner {
       'Encoding: task 1 of 1, 50.00 % (45.0 fps, avg 50.0 fps, ETA 00h00m05s)',
     );
 
-    if (this.mode === 'manual') {
-      return new Promise((resolve) => {
-        this.settleManual = resolve;
-      });
-    }
-
     if (this.outputMode === 'write') {
       const output = outputPathFromArgs(options.args);
       fs.mkdirSync(path.dirname(output), { recursive: true });
       fs.writeFileSync(output, this.outputContent);
+    }
+
+    if (this.mode === 'manual') {
+      return new Promise((resolve) => {
+        this.settleManual = resolve;
+      });
     }
 
     if (this.mode === 'fail') {
@@ -149,6 +149,25 @@ async function runItem(config: WorkerItemConfig): Promise<void> {
   await waitForResult(config.queueNumber);
 }
 
+async function waitFor(predicate: () => boolean | undefined): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for condition');
+}
+
+async function waitForEvent(
+  predicate: (event: WorkerEvent) => boolean,
+): Promise<WorkerEvent> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const event = events.find(predicate);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`No matching event: ${JSON.stringify(events)}`);
+}
+
 async function waitForResult(queueNumber: number): Promise<WorkerEvent> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const result = events.find(
@@ -207,8 +226,9 @@ describe('WorkerRuntime', () => {
       }),
     );
     expect(resultEvent(0)).toMatchObject({
-      state: 'skipped',
+      state: 'excluded',
       detail: 'Not selected',
+      reason: 'Not selected',
     });
     expect(runner.callCount).toBe(0);
 
@@ -265,7 +285,10 @@ describe('WorkerRuntime', () => {
         },
       }),
     );
-    expect(resultEvent(0)?.state).toBe('skipped');
+    expect(resultEvent(0)).toMatchObject({
+      state: 'excluded',
+      reason: "Excluded, does not meet 'Include' conditions",
+    });
     expect(runner.callCount).toBe(0);
 
     await runItem(
@@ -279,7 +302,7 @@ describe('WorkerRuntime', () => {
         },
       }),
     );
-    expect(resultEvent(1)?.state).toBe('skipped');
+    expect(resultEvent(1)?.state).toBe('excluded');
 
     await runItem(
       item({
@@ -292,7 +315,7 @@ describe('WorkerRuntime', () => {
         },
       }),
     );
-    expect(resultEvent(2)?.state).toBe('skipped');
+    expect(resultEvent(2)?.state).toBe('excluded');
     expect(runner.callCount).toBe(0);
   });
 
@@ -346,9 +369,22 @@ describe('WorkerRuntime', () => {
 
     expect(resultEvent(0)?.state).toBe('error');
     expect(resultEvent(0)?.detail).toContain('Encoder exited with code 1');
+    expect(fs.existsSync(path.join(root, 'out', 'a.mp4'))).toBe(false);
     expect(
       fs.readFileSync(path.join(logDirectory, 'ErrorLog.txt'), 'utf8'),
     ).toContain('encoder exploded');
+  });
+
+  it('rejects an empty output file and removes it', async () => {
+    runner.outputContent = '';
+    const source = writeSource();
+    await configure();
+
+    await runItem(item({ sourcePath: source }));
+
+    expect(resultEvent(0)?.state).toBe('error');
+    expect(resultEvent(0)?.detail).toContain('NO OUTPUT FILE PRODUCED');
+    expect(fs.existsSync(path.join(root, 'out', 'a.mp4'))).toBe(false);
   });
 
   it('reports a missing output file', async () => {
@@ -362,18 +398,38 @@ describe('WorkerRuntime', () => {
     expect(resultEvent(0)?.detail).toContain('NO OUTPUT FILE PRODUCED');
   });
 
-  it('cancels a running encoder', async () => {
+  it('cancels before the encoder starts and never spawns it', async () => {
     runner.mode = 'manual';
     const source = writeSource();
     await configure();
 
     await runtime.handleCommand(itemCommand(item({ sourcePath: source })));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForEvent(
+      (event) => event.type === 'started' && event.queueNumber === 0,
+    );
+    await runtime.handleCommand(cancelItemCommand(0));
+
+    await waitForResult(0);
+    expect(resultEvent(0)?.state).toBe('cancelled');
+    // Cancelling during the probe means the encoder is never launched.
+    expect(runner.callCount).toBe(0);
+    expect(fs.existsSync(path.join(root, 'out', 'a.mp4'))).toBe(false);
+  });
+
+  it('cancels a running encoder and removes its partial output', async () => {
+    runner.mode = 'manual';
+    const source = writeSource();
+    await configure();
+
+    await runtime.handleCommand(itemCommand(item({ sourcePath: source })));
+    await waitFor(() => (runner.callCount > 0 ? true : undefined));
+
     await runtime.handleCommand(cancelItemCommand(0));
 
     await waitForResult(0);
     expect(resultEvent(0)?.state).toBe('cancelled');
     expect(runner.isCancelled).toBe(true);
+    expect(fs.existsSync(path.join(root, 'out', 'a.mp4'))).toBe(false);
   });
 
   it('moves a staged output into the final destination', async () => {
@@ -452,7 +508,9 @@ describe('WorkerRuntime', () => {
     runner.mode = 'manual';
     const source = writeSource();
     await runtime.handleCommand(itemCommand(item({ sourcePath: source })));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await waitForEvent(
+      (event) => event.type === 'started' && event.queueNumber === 0,
+    );
     await runtime.handleCommand(
       itemCommand(item({ queueNumber: 1, sourcePath: source })),
     );

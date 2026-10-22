@@ -7,6 +7,7 @@ import {
   parsePercent,
   parseProgressText,
   processedBytes,
+  summarizeSizeChanges,
   windowRate,
 } from '../src/common/runTelemetry';
 
@@ -153,5 +154,126 @@ describe('windowRate', () => {
   it('returns null when there is not enough signal', () => {
     expect(windowRate(samples.slice(0, 1), 30_000, (sample) => sample.work)).toBeNull();
     expect(windowRate(samples, 30_000, (sample) => sample.fps)).toBe(0);
+  });
+});
+
+describe('summarizeSizeChanges', () => {
+  it('totals before/after sizes and signed deltas for successful items', () => {
+    const summary = summarizeSizeChanges([
+      { path: '/media/a.mkv', state: 'success', sourceBytes: 1000, outputBytes: 600 },
+      { path: '/media/b.mkv', state: 'success', sourceBytes: 500, outputBytes: 750 },
+      { path: '/media/c.mkv', state: 'skipped', sourceBytes: 100, outputBytes: 100 },
+      { path: '/media/d.mkv', state: 'error', sourceBytes: 100, outputBytes: 50 },
+      { path: '/media/e.mkv', state: 'success', sourceBytes: 100 },
+    ]);
+
+    expect(summary.files).toBe(2);
+    expect(summary.expectedFiles).toBe(0);
+    expect(summary.beforeBytes).toBe(1500);
+    expect(summary.afterBytes).toBe(1350);
+    expect(summary.deltaBytes).toBe(-150);
+    expect(summary.percent).toBeCloseTo(-10);
+    expect(summary.points).toEqual([
+      {
+        path: '/media/a.mkv',
+        beforeBytes: 1000,
+        afterBytes: 600,
+        writtenBytes: 600,
+        deltaBytes: -400,
+        percent: -40,
+        expected: false,
+      },
+      {
+        path: '/media/b.mkv',
+        beforeBytes: 500,
+        afterBytes: 750,
+        writtenBytes: 750,
+        deltaBytes: 250,
+        percent: 50,
+        expected: false,
+      },
+    ]);
+  });
+
+  it('reports an increase when outputs are larger', () => {
+    const summary = summarizeSizeChanges([
+      { path: '/media/a.mkv', state: 'success', sourceBytes: 200, outputBytes: 500 },
+    ]);
+
+    expect(summary.deltaBytes).toBe(300);
+    expect(summary.percent).toBe(150);
+  });
+
+  it('extrapolates final size for running items from bytes and percent', () => {
+    const summary = summarizeSizeChanges([
+      { path: '/media/done.mkv', state: 'success', sourceBytes: 1000, outputBytes: 500 },
+      {
+        path: '/media/live.mkv',
+        state: 'running',
+        sourceBytes: 2000,
+        writtenBytes: 400,
+        progress: { percent: 25 },
+      },
+      {
+        path: '/media/early.mkv',
+        state: 'running',
+        sourceBytes: 1000,
+        writtenBytes: 100,
+      },
+    ]);
+
+    expect(summary.files).toBe(1);
+    expect(summary.expectedFiles).toBe(1);
+    expect(summary.beforeBytes).toBe(1000);
+    expect(summary.afterBytes).toBe(500);
+    expect(summary.expectedBeforeBytes).toBe(3000);
+    expect(summary.expectedAfterBytes).toBe(2100);
+    expect(summary.expectedPercent).toBeCloseTo(-30);
+    expect(summary.points[1]).toEqual({
+      path: '/media/live.mkv',
+      beforeBytes: 2000,
+      afterBytes: 1600,
+      writtenBytes: 400,
+      deltaBytes: -400,
+      percent: -20,
+      expected: true,
+    });
+  });
+
+  it('ignores running items without a usable percentage', () => {
+    const summary = summarizeSizeChanges([
+      {
+        path: '/media/live.mkv',
+        state: 'running',
+        sourceBytes: 1000,
+        writtenBytes: 500,
+        progress: { percent: 200 },
+      },
+    ]);
+
+    expect(summary.expectedFiles).toBe(0);
+    expect(summary.points).toEqual([]);
+  });
+
+  it('returns an empty summary when no item has both sizes', () => {
+    const summary = summarizeSizeChanges([
+      { path: '/media/a.mkv', state: 'success', sourceBytes: 0, outputBytes: 100 },
+      { path: '/media/b.mkv', state: 'running', sourceBytes: 100, outputBytes: 100 },
+      { path: '/media/c.mkv', state: 'success' },
+    ]);
+
+    expect(summary).toEqual({
+      files: 0,
+      expectedFiles: 0,
+      beforeBytes: 0,
+      afterBytes: 0,
+      deltaBytes: 0,
+      percent: null,
+      expectedBeforeBytes: 0,
+      expectedAfterBytes: 0,
+      expectedDeltaBytes: 0,
+      expectedPercent: null,
+      points: [],
+    });
   });
 });

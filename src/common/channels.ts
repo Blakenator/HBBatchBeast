@@ -28,6 +28,7 @@ export enum PROMISE_CHANNEL {
   SetTrayStatus = 'SET_TRAY_STATUS',
   GetDiagnostics = 'GET_DIAGNOSTICS',
   OpenAppPath = 'OPEN_APP_PATH',
+  OpenFolder = 'OPEN_FOLDER',
   ClearCaches = 'CLEAR_CACHES',
   ClearRunJournal = 'CLEAR_RUN_JOURNAL',
   ProbeMedia = 'PROBE_MEDIA',
@@ -78,6 +79,10 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
     result: DiagnosticsInfo;
   };
   [PROMISE_CHANNEL.OpenAppPath]: {
+    props: { path: string };
+    result: void;
+  };
+  [PROMISE_CHANNEL.OpenFolder]: {
     props: { path: string };
     result: void;
   };

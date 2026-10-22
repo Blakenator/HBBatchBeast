@@ -12,6 +12,22 @@ export const PROTOCOL_VERSION = 1;
 
 export const BATCH_OPERATION_MODES = ['scanOnly', 'scanAndConvert'] as const;
 
+/** Why the scanner skipped a file. */
+export const EXCLUSION_CODES = [
+  'alreadyConverted',
+  'alreadyReplaced',
+  'titleMatch',
+  'subtitle',
+] as const;
+
+export type ExclusionCode = (typeof EXCLUSION_CODES)[number];
+
+export interface ScanExclusion {
+  code: ExclusionCode;
+  /** Human-readable reason shown in the queue. */
+  reason: string;
+}
+
 export type ChildLogLevel = 'info' | 'error';
 
 const v = z.literal(PROTOCOL_VERSION);
@@ -34,6 +50,8 @@ const queueBuildConfigSchema = z
     reverseQueue: z.boolean(),
     /** Logs directory; used for the replaced-originals cache. */
     logDirectory: z.string().min(1),
+    /** Outputs the last run did not finish; never treat them as converted. */
+    untrustedOutputs: z.array(z.string()),
   })
   .strict()
   .superRefine((config, context) => {
@@ -67,6 +85,13 @@ const queueBuildResultSchema = z
     presets: z.array(z.string()),
     // Sparse legacy arrays serialize holes as null; treat null as "not flagged".
     skipOrCopy: z.array(z.union([z.literal(0), z.literal(1), z.null()])),
+    /** Why the scanner will not convert this file; null when it will. */
+    excluded: z.array(
+      z
+        .object({ code: z.enum(EXCLUSION_CODES), reason: z.string() })
+        .strict()
+        .nullable(),
+    ),
     destinations: z.array(z.string().nullable()),
     destinationsFinal: z.array(z.string().nullable()),
     notExists: z.number().int().nonnegative(),

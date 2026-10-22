@@ -92,7 +92,12 @@ function createWorkerHandle(
             );
             break;
           case 'result':
-            handlers.onResult(event.queueNumber, event.state, event.detail);
+            handlers.onResult(
+              event.queueNumber,
+              event.state,
+              event.detail,
+              event.reason,
+            );
             break;
         }
       },

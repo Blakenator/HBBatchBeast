@@ -13,7 +13,10 @@ export const WORKER_PROTOCOL_VERSION = 1;
 export const WORKER_RESULT_STATES = [
   'success',
   'error',
+  /** Completed without converting (copy/passthrough). */
   'skipped',
+  /** Deliberately not converted, with a reason. */
+  'excluded',
   'cancelled',
 ] as const;
 
@@ -154,6 +157,8 @@ export type WorkerEvent =
       state: WorkerResultState;
       detail: string;
       preset: string;
+      /** Set for `excluded` results so the queue can show why. */
+      reason?: string;
     }
   | {
       v: typeof WORKER_PROTOCOL_VERSION;
@@ -217,6 +222,7 @@ const workerEventSchema = z.discriminatedUnion('type', [
       state: z.enum(WORKER_RESULT_STATES),
       detail: z.string(),
       preset: z.string(),
+      reason: z.string().optional(),
     })
     .strict(),
   z

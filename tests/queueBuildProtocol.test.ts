@@ -22,6 +22,7 @@ const config = {
   replaceAlways: false,
   reverseQueue: false,
   logDirectory: '/home/user/Documents/HBBatchBeast/Logs',
+  untrustedOutputs: [],
 };
 
 describe('queueBuild config codec', () => {
@@ -80,6 +81,7 @@ describe('queueBuild message codecs', () => {
       sources: ['/src/a.mp4'],
       presets: ['-Z "x"'],
       skipOrCopy: [0],
+      excluded: [null],
       destinations: ['/dst/a.mp4'],
       destinationsFinal: [null],
       notExists: 1,
@@ -96,6 +98,16 @@ describe('queueBuild message codecs', () => {
         v: PROTOCOL_VERSION,
         type: 'complete',
         payload: { ...result, total: -1 },
+      }).ok,
+    ).toBe(false);
+    expect(
+      decodeChildMessage({
+        v: PROTOCOL_VERSION,
+        type: 'complete',
+        payload: {
+          ...result,
+          excluded: [{ code: 'notARealCode', reason: 'x' }],
+        },
       }).ok,
     ).toBe(false);
   });

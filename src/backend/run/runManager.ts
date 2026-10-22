@@ -21,6 +21,9 @@ export type RunItemState =
   | 'success'
   | 'error'
   | 'cancelled'
+  /** Not converted, with a reason (already converted, filter match, subtitle). */
+  | 'excluded'
+  /** Completed without converting (copy/passthrough). */
   | 'skipped';
 
 export interface RunItem {
@@ -29,6 +32,8 @@ export interface RunItem {
   destinationPath?: string;
   destinationFinalPath?: string;
   action?: 'encode' | 'copy' | 'skip';
+  /** Why the scanner excluded this file. */
+  excludedReason?: string;
   state: RunItemState;
   worker?: number;
   percent?: string;
@@ -39,6 +44,8 @@ export interface RunItem {
   sourceBytes?: number;
   /** Size of the converted file, reported by the worker after success. */
   outputBytes?: number;
+  /** Bytes written to the output file so far while the item is running. */
+  writtenBytes?: number;
   progress?: RunItemProgress;
   /**
    * Console lines the worker emitted while this item was in flight. Only kept
@@ -54,6 +61,7 @@ export interface RunCounts {
   success: number;
   error: number;
   cancelled: number;
+  excluded: number;
   skipped: number;
 }
 
@@ -75,6 +83,8 @@ export interface RunState {
 
 const MAX_LOG_LINES = 500;
 const MAX_ITEM_LOG_LINES = 80;
+/** Output size is sampled at most this often while an item is encoding. */
+const WRITTEN_SAMPLE_MS = 500;
 
 export interface WorkerHandlers {
   onQueueRequest: () => void;
@@ -93,6 +103,7 @@ export interface WorkerHandlers {
     queueNumber: number,
     state: WorkerResultState,
     detail: string,
+    reason?: string,
   ) => void;
   onConsole: (message: string) => void;
   onExit: () => void;
@@ -120,6 +131,7 @@ const TERMINAL_STATES: RunItemState[] = [
   'success',
   'error',
   'cancelled',
+  'excluded',
   'skipped',
 ];
 
@@ -141,6 +153,7 @@ export class RunManager {
       success: 0,
       error: 0,
       cancelled: 0,
+      excluded: 0,
       skipped: 0,
     },
   };
@@ -154,6 +167,8 @@ export class RunManager {
   private exitedWorkers = new Set<number>();
   private stopped = false;
   private lastJournalWrite = 0;
+  /** Throttles output-size samples so progress bursts do not stat files constantly. */
+  private writtenSampledAt = new Map<number, number>();
 
   constructor(private readonly deps: RunManagerDeps) {}
 
@@ -168,6 +183,7 @@ export class RunManager {
       destinationPath?: string;
       destinationFinalPath?: string;
       action?: 'encode' | 'copy' | 'skip';
+      excludedReason?: string;
     }[],
   ): Promise<void> {
     if (this.state.status === 'running' || this.state.status === 'paused') {
@@ -178,10 +194,24 @@ export class RunManager {
     this.activeByWorker.clear();
     this.pendingRequests.clear();
     this.exitedWorkers.clear();
+    this.writtenSampledAt.clear();
     const workerCount = Math.max(1, this.deps.workerCount ?? 1);
+    const startedAt = Date.now();
     this.state = {
       status: 'running',
-      items: items.map((item) => ({ ...item, state: 'pending' as const })),
+      items: items.map((item) => ({
+        ...item,
+        // Scanner exclusions are terminal before the run starts: they never
+        // need a worker, so show them with their reason instead of dropping them.
+        state:
+          item.action === 'skip' ? ('excluded' as const) : ('pending' as const),
+        ...(item.action === 'skip'
+          ? {
+              reason: item.excludedReason ?? 'Excluded by the file filter',
+              finishedAt: startedAt,
+            }
+          : {}),
+      })),
       counts: {
         total: items.length,
         pending: items.length,
@@ -189,12 +219,14 @@ export class RunManager {
         success: 0,
         error: 0,
         cancelled: 0,
+        excluded: 0,
         skipped: 0,
       },
       logs: [],
       workerCount,
-      startedAt: Date.now(),
+      startedAt,
     };
+    this.recount();
     this.emit(true);
 
     for (let index = 0; index < workerCount; index += 1) {
@@ -278,7 +310,6 @@ export class RunManager {
   }
 
   private createWorker(workerNumber: number): WorkerHandle {
-    let index = -1;
     const worker = this.deps.createWorker(workerNumber, {
       onQueueRequest: () => {
         if (this.stopped || this.state.status === 'stopping') return;
@@ -286,9 +317,7 @@ export class RunManager {
           this.pendingRequests.add(workerNumber);
           return;
         }
-        this.dispatchToWorker(workerNumber, worker, (next) => {
-          index = next;
-        });
+        this.dispatchToWorker(workerNumber, worker);
       },
       onStarted: (queueNumber) => {
         const item = this.state.items[queueNumber];
@@ -296,6 +325,8 @@ export class RunManager {
         if (item.state === 'pending') item.state = 'running';
         if (item.startedAt === undefined) item.startedAt = Date.now();
         item.progress = undefined;
+        item.writtenBytes = undefined;
+        this.writtenSampledAt.delete(queueNumber);
         this.activeByWorker.set(workerNumber, queueNumber);
         this.recount();
         this.emit();
@@ -308,27 +339,42 @@ export class RunManager {
           item.percent = `${telemetry.percent}%`;
         }
         item.progress = { ...(item.progress ?? {}), ...telemetry };
+
+        const now = Date.now();
+        if (now - (this.writtenSampledAt.get(queueNumber) ?? 0) >= WRITTEN_SAMPLE_MS) {
+          this.writtenSampledAt.set(queueNumber, now);
+          const fromDisk = item.destinationPath
+            ? this.readFileSize(item.destinationPath)
+            : undefined;
+          const fromTelemetry = item.progress.bytes;
+          const written = Math.max(fromDisk ?? 0, fromTelemetry ?? 0);
+          if (written > 0) item.writtenBytes = written;
+        }
+
         this.emit();
       },
       onFileSizes: (queueNumber, sourceBytes, outputBytes) => {
         const item = this.state.items[queueNumber];
         if (!item || item.state !== 'running') return;
         if (sourceBytes > 0) item.sourceBytes = sourceBytes;
-        if (outputBytes > 0) item.outputBytes = outputBytes;
+        if (outputBytes > 0) {
+          item.outputBytes = outputBytes;
+          item.writtenBytes = outputBytes;
+        }
         this.emit();
       },
-      onResult: (queueNumber, state, detail) => {
+      onResult: (queueNumber, state, detail, reason) => {
         const item = this.state.items[queueNumber];
         if (item && !TERMINAL_STATES.includes(item.state)) {
           item.state =
             state === 'success'
               ? 'success'
-              : state === 'skipped'
-                ? 'skipped'
+              : state === 'skipped' || state === 'excluded'
+                ? state
                 : state === 'cancelled'
                   ? 'cancelled'
                   : 'error';
-          item.reason = detail || undefined;
+          item.reason = reason || detail || undefined;
           item.percent = undefined;
           if (item.state === 'success') {
             item.progress = { ...item.progress, percent: 100 };
@@ -427,7 +473,6 @@ export class RunManager {
   private dispatchToWorker(
     workerNumber: number,
     worker: WorkerHandle,
-    onDispatched?: (index: number) => void,
   ): void {
     if (this.stopped || this.state.status !== 'running') {
       if (this.state.status === 'paused') {
@@ -446,7 +491,6 @@ export class RunManager {
     }
 
     try {
-      onDispatched?.(next);
       worker.sendItem(this.deps.buildItemConfig(this.state.items[next], next));
     } catch (error) {
       const item = this.state.items[next];
@@ -508,6 +552,7 @@ export class RunManager {
       success: 0,
       error: 0,
       cancelled: 0,
+      excluded: 0,
       skipped: 0,
     };
     for (const item of this.state.items) {
@@ -516,6 +561,7 @@ export class RunManager {
       else if (item.state === 'success') counts.success += 1;
       else if (item.state === 'error') counts.error += 1;
       else if (item.state === 'cancelled') counts.cancelled += 1;
+      else if (item.state === 'excluded') counts.excluded += 1;
       else counts.skipped += 1;
     }
     this.state.counts = counts;

@@ -175,6 +175,8 @@ export interface ConversionItem {
   destinationFinalPath?: string;
   /** Derived from the scanner's filter flags; defaults to `encode`. */
   action?: RunItemAction;
+  /** Why the scanner excluded this file; set for `skip` items. */
+  excludedReason?: string;
 }
 
 export interface RunBatchOperationProps {
@@ -195,6 +197,8 @@ export interface RunBatchOperationResult {
     destinationFinalPath?: string;
     /** Copy or skip files the scanner already flagged. */
     action?: RunItemAction;
+    /** Why the scanner will not convert this file. */
+    excludedReason?: string;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;
