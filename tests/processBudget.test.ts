@@ -22,8 +22,8 @@ bash
 
 const psArgs = `HandBrakeCLI --preset-list
 HandBrakeCLI -i /media/a.mkv -o /out/a.mkv -Z Fast 1080p30
-node /app/src/backend/modules/worker1.js
-node /app/src/backend/modules/worker2.js
+node /app/.vite/build/worker1.cjs
+node /app/.vite/build/queueBuild.cjs
 /usr/bin/ffmpeg -i /media/b.mkv -c:v libx264 /out/b.mkv
 ffprobe -v error -print_format json /media/c.mkv
 /usr/lib/code/code --type=renderer

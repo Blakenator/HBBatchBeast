@@ -87,6 +87,8 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         path: item.path,
         preset: item.preset ?? '',
         destinationPath: item.destinationPath,
+        destinationFinalPath: item.destinationFinalPath,
+        action: item.action,
       })),
     },
     skip: true,

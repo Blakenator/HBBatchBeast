@@ -9,8 +9,6 @@ export default tseslint.config(
       '.vite/**',
       'out/**',
       'node_modules/**',
-      // legacy CommonJS child-process modules, ported verbatim (see MIGRATION_STATUS.md S33)
-      'src/backend/modules/**',
     ],
   },
   {

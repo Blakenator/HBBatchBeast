@@ -17,10 +17,10 @@ export interface ProcessCounts {
 
 /** Processes the app spawns directly or through its child modules. */
 const APP_WORKER_MODULES = [
-  'backend/modules/worker1.js',
-  'backend/modules/worker2.js',
-  'backend/modules/queueBuild.js',
-  'backend/modules/mediaAnalyser.js',
+  'backend/workers/worker1',
+  'backend/scanner/queuebuild',
+  'worker1.cjs',
+  'queuebuild.cjs',
 ];
 
 const ENCODER_NAMES = [

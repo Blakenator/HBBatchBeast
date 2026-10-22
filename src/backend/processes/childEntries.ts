@@ -42,5 +42,6 @@ export function validateChildEntries(baseDir?: string): void {
 
 /** Source paths used by tests, where modules are run from `src/`. */
 export const CHILD_ENTRY_SOURCES = {
-  queueBuild: 'queueBuild.js',
+  queueBuild: 'src/backend/scanner/queueBuild.ts',
+  worker1: 'src/backend/workers/worker1.ts',
 } as const;

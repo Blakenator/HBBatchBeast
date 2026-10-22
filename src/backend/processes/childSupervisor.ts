@@ -14,6 +14,11 @@ export interface ChildSupervisorEvents {
   /** Every IPC payload, before protocol parsing (used by legacy worker arrays). */
   onRawMessage?: (raw: unknown) => void;
   onError?: (error: Error) => void;
+  /** Called whenever the child exits, including during an unexpected crash. */
+  onExit?: (info: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }) => void;
 }
 
 export interface ChildSupervisorOptions {
@@ -23,6 +28,8 @@ export interface ChildSupervisorOptions {
   entry: string;
   /** Extra argv entries (worker1 reads its worker number from argv[2]). */
   args?: string[];
+  /** Node flags such as a TypeScript loader for tests. */
+  execArgv?: string[];
   readyTimeoutMs?: number;
   /** 0 disables the watchdog. */
   runTimeoutMs?: number;
@@ -142,6 +149,7 @@ export class ChildSupervisor {
 
     const child = fork(this.options.entry, this.options.args ?? [], {
       env: { ...process.env, ...this.options.env },
+      execArgv: this.options.execArgv,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     this.child = child;
@@ -254,6 +262,7 @@ export class ChildSupervisor {
     this.exited = true;
     this.exitInfo = { code, signal };
     this.clearTimers();
+    this.options.events?.onExit?.({ code, signal });
 
     if (this.stopping) return;
 

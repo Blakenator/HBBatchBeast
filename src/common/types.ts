@@ -164,10 +164,17 @@ export interface HandBrakePresetScan {
   error?: string;
 }
 
+/** What the worker should do with one scanned file. */
+export type RunItemAction = 'encode' | 'copy' | 'skip';
+
 export interface ConversionItem {
   path: string;
   preset: string;
   destinationPath?: string;
+  /** Final destination when a temp folder is configured. */
+  destinationFinalPath?: string;
+  /** Derived from the scanner's filter flags; defaults to `encode`. */
+  action?: RunItemAction;
 }
 
 export interface RunBatchOperationProps {
@@ -184,6 +191,10 @@ export interface RunBatchOperationResult {
     preset?: string;
     /** Converted output path computed by the scanner, when known. */
     destinationPath?: string;
+    /** Final destination when temp staging is enabled. */
+    destinationFinalPath?: string;
+    /** Copy or skip files the scanner already flagged. */
+    action?: RunItemAction;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;

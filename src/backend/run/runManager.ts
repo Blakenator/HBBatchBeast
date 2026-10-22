@@ -1,11 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { WorkerItemConfig } from './workerProtocol';
 import {
-  parsePercent,
-  parseProgressText,
-  RunItemProgress,
-} from '../../common/runTelemetry';
+  WorkerItemConfig,
+  WorkerResultState,
+  WorkerTelemetry,
+} from '../workers/protocol';
+import { RunItemProgress } from '../../common/runTelemetry';
 
 export type RunStatus =
   | 'idle'
@@ -27,6 +27,8 @@ export interface RunItem {
   path: string;
   preset: string;
   destinationPath?: string;
+  destinationFinalPath?: string;
+  action?: 'encode' | 'copy' | 'skip';
   state: RunItemState;
   worker?: number;
   percent?: string;
@@ -77,7 +79,11 @@ const MAX_ITEM_LOG_LINES = 80;
 export interface WorkerHandlers {
   onQueueRequest: () => void;
   onStarted: (queueNumber: number) => void;
-  onProgress: (queueNumber: number, percent: string, raw?: string) => void;
+  onProgress: (
+    queueNumber: number,
+    telemetry: WorkerTelemetry,
+    raw: string,
+  ) => void;
   onFileSizes: (
     queueNumber: number,
     sourceBytes: number,
@@ -85,7 +91,7 @@ export interface WorkerHandlers {
   ) => void;
   onResult: (
     queueNumber: number,
-    state: 'OK' | 'Fail' | 'Skip' | 'Copy' | 'cancelled' | 'error',
+    state: WorkerResultState,
     detail: string,
   ) => void;
   onConsole: (message: string) => void;
@@ -96,8 +102,7 @@ export interface WorkerHandle {
   start: () => Promise<void>;
   sendItem: (config: WorkerItemConfig) => void;
   /** Stops the item this worker is processing without killing the worker. */
-  cancelItem: () => void;
-  resume: () => void;
+  cancelItem: (queueNumber: number) => void;
   stop: () => Promise<void>;
 }
 
@@ -143,6 +148,10 @@ export class RunManager {
   private workers: WorkerHandle[] = [];
   /** Which queue item each worker is converting right now. */
   private activeByWorker = new Map<number, number>();
+  /** Idle workers that asked for work while the run was paused. */
+  private pendingRequests = new Set<number>();
+  /** Worker numbers whose process exited; they must not be dispatched again. */
+  private exitedWorkers = new Set<number>();
   private stopped = false;
   private lastJournalWrite = 0;
 
@@ -152,13 +161,23 @@ export class RunManager {
     return this.state;
   }
 
-  async start(items: { path: string; preset: string; destinationPath?: string }[]): Promise<void> {
+  async start(
+    items: {
+      path: string;
+      preset: string;
+      destinationPath?: string;
+      destinationFinalPath?: string;
+      action?: 'encode' | 'copy' | 'skip';
+    }[],
+  ): Promise<void> {
     if (this.state.status === 'running' || this.state.status === 'paused') {
       throw new Error('A run is already in progress');
     }
 
     this.stopped = false;
     this.activeByWorker.clear();
+    this.pendingRequests.clear();
+    this.exitedWorkers.clear();
     const workerCount = Math.max(1, this.deps.workerCount ?? 1);
     this.state = {
       status: 'running',
@@ -193,9 +212,8 @@ export class RunManager {
   resume(): void {
     if (this.state.status !== 'paused') return;
     this.state.status = 'running';
-    this.workers.forEach((worker) => worker.resume());
     this.emit(true);
-    this.dispatch();
+    this.drainPendingRequests();
   }
 
   async stop(): Promise<void> {
@@ -214,6 +232,8 @@ export class RunManager {
 
     await Promise.all(this.workers.map((worker) => worker.stop()));
     this.activeByWorker.clear();
+    this.pendingRequests.clear();
+    this.exitedWorkers.clear();
     this.workers = [];
     this.finish('completed');
   }
@@ -240,7 +260,7 @@ export class RunManager {
 
     // A pending item has no process yet; a running one must have its encoder
     // killed so the worker can request the next item.
-    runningWorker?.cancelItem();
+    runningWorker?.cancelItem(index);
     this.checkForCompletion();
   }
 
@@ -261,14 +281,14 @@ export class RunManager {
     let index = -1;
     const worker = this.deps.createWorker(workerNumber, {
       onQueueRequest: () => {
-        const next = this.takeNextItem(workerNumber);
-        if (next === undefined) {
-          void worker.stop().catch((): void => undefined);
-          this.checkForCompletion();
+        if (this.stopped || this.state.status === 'stopping') return;
+        if (this.state.status === 'paused') {
+          this.pendingRequests.add(workerNumber);
           return;
         }
-        index = next;
-        worker.sendItem(this.deps.buildItemConfig(this.state.items[index], index));
+        this.dispatchToWorker(workerNumber, worker, (next) => {
+          index = next;
+        });
       },
       onStarted: (queueNumber) => {
         const item = this.state.items[queueNumber];
@@ -280,24 +300,14 @@ export class RunManager {
         this.recount();
         this.emit();
       },
-      onProgress: (queueNumber, percent, raw) => {
+      onProgress: (queueNumber, telemetry) => {
         const item = this.state.items[queueNumber];
         // Cancelled items must ignore late encoder telemetry.
         if (!item || item.state !== 'running') return;
-        item.percent = percent;
-
-        const parsed = parseProgressText(raw);
-        const numeric = parsePercent(percent) ?? parsed.percent;
-        const previous = item.progress ?? {};
-        item.progress = {
-          ...previous,
-          ...(numeric !== undefined ? { percent: numeric } : {}),
-          ...(parsed.fps !== undefined ? { fps: parsed.fps } : {}),
-          ...(parsed.speed !== undefined ? { speed: parsed.speed } : {}),
-          ...(parsed.etaSeconds !== undefined ? { etaSeconds: parsed.etaSeconds } : {}),
-          ...(parsed.frame !== undefined ? { frame: parsed.frame } : {}),
-          ...(parsed.bytes !== undefined ? { bytes: parsed.bytes } : {}),
-        };
+        if (telemetry.percent !== undefined) {
+          item.percent = `${telemetry.percent}%`;
+        }
+        item.progress = { ...(item.progress ?? {}), ...telemetry };
         this.emit();
       },
       onFileSizes: (queueNumber, sourceBytes, outputBytes) => {
@@ -307,15 +317,15 @@ export class RunManager {
         if (outputBytes > 0) item.outputBytes = outputBytes;
         this.emit();
       },
-      onResult: (queueNumber, result, detail) => {
+      onResult: (queueNumber, state, detail) => {
         const item = this.state.items[queueNumber];
         if (item && !TERMINAL_STATES.includes(item.state)) {
           item.state =
-            result === 'OK'
+            state === 'success'
               ? 'success'
-              : result === 'Skip' || result === 'Copy'
+              : state === 'skipped'
                 ? 'skipped'
-                : result === 'cancelled'
+                : state === 'cancelled'
                   ? 'cancelled'
                   : 'error';
           item.reason = detail || undefined;
@@ -348,7 +358,42 @@ export class RunManager {
         }
         this.emit();
       },
-      onExit: () => this.checkForCompletion(),
+      onExit: () => {
+        if (this.stopped || this.state.status === 'stopping') return;
+        const hasWork = this.state.items.some((item) =>
+          ['pending', 'running'].includes(item.state),
+        );
+        if (!hasWork) return;
+        this.exitedWorkers.add(workerNumber);
+
+        const active = this.activeByWorker.get(workerNumber);
+        if (active !== undefined) {
+          const item = this.state.items[active];
+          if (item && !TERMINAL_STATES.includes(item.state)) {
+            item.state = 'error';
+            item.reason = 'Worker exited unexpectedly';
+            if (item.startedAt !== undefined) item.finishedAt = Date.now();
+          }
+          this.activeByWorker.delete(workerNumber);
+        }
+
+        const anyAlive = this.workers.some(
+          (_worker, index) => !this.exitedWorkers.has(index + 1),
+        );
+        if (!anyAlive) {
+          this.state.items.forEach((item) => {
+            if (item.state === 'pending') {
+              item.state = 'error';
+              item.reason = 'Worker exited unexpectedly';
+              item.finishedAt = Date.now();
+            }
+          });
+        }
+
+        this.recount();
+        this.emit(true);
+        this.checkForCompletion();
+      },
     });
     return worker;
   }
@@ -379,11 +424,57 @@ export class RunManager {
     }
   }
 
-  private dispatch(): void {
-    if (this.stopped) return;
-    const hasPending = this.state.items.some((item) => item.state === 'pending');
-    if (!hasPending) {
+  private dispatchToWorker(
+    workerNumber: number,
+    worker: WorkerHandle,
+    onDispatched?: (index: number) => void,
+  ): void {
+    if (this.stopped || this.state.status !== 'running') {
+      if (this.state.status === 'paused') {
+        this.pendingRequests.add(workerNumber);
+      }
+      return;
+    }
+    if (this.exitedWorkers.has(workerNumber)) return;
+
+    this.pendingRequests.delete(workerNumber);
+    const next = this.takeNextItem(workerNumber);
+    if (next === undefined) {
+      void worker.stop().catch((): void => undefined);
       this.checkForCompletion();
+      return;
+    }
+
+    try {
+      onDispatched?.(next);
+      worker.sendItem(this.deps.buildItemConfig(this.state.items[next], next));
+    } catch (error) {
+      const item = this.state.items[next];
+      item.state = 'error';
+      item.reason =
+        error instanceof Error ? error.message : 'Could not dispatch the item';
+      item.finishedAt = Date.now();
+      this.activeByWorker.delete(workerNumber);
+      this.recount();
+      this.emit(true);
+      // The worker is still idle; let it pick up the next item without
+      // recursing through a long invalid queue.
+      setTimeout(() => {
+        if (!this.stopped && this.state.status === 'running') {
+          this.dispatchToWorker(workerNumber, worker);
+        }
+      }, 0);
+      this.checkForCompletion();
+    }
+  }
+
+  private drainPendingRequests(): void {
+    if (this.stopped || this.state.status !== 'running') return;
+    const pending = [...this.pendingRequests];
+    this.pendingRequests.clear();
+    for (const workerNumber of pending) {
+      const worker = this.workers[workerNumber - 1];
+      if (worker) this.dispatchToWorker(workerNumber, worker);
     }
   }
 

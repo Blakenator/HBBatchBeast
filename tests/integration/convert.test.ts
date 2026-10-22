@@ -30,10 +30,6 @@ integration('conversion integration', () => {
     fs.mkdirSync(destinationDir, { recursive: true });
 
     createLogFolders(home);
-    fs.writeFileSync(
-      path.join(home, 'Documents/HBBatchBeast/Config/queueStartStop.txt'),
-      '1',
-    );
 
     const sourcePath = path.join(sourceDir, 'sample.mp4');
     fs.copyFileSync(sample, sourcePath);

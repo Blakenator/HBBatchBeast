@@ -1,36 +1,7 @@
-import { execFile } from 'child_process';
 import fs from 'fs';
-import ffprobeStatic from 'ffprobe-static';
 import { AppError } from '@superflag/super-ipc-core';
 import { MediaInfo, MediaStreamInfo } from '../../common';
-
-/** Inside an asar the binary has to be read from the unpacked copy. */
-function ffprobePath(): string {
-  return ffprobeStatic.path.replace('app.asar', 'app.asar.unpacked');
-}
-
-interface RawProbe {
-  streams?: {
-    index?: number;
-    codec_type?: string;
-    codec_name?: string;
-    width?: number;
-    height?: number;
-    channels?: number;
-    channel_layout?: string;
-    sample_rate?: string;
-    bit_rate?: string;
-    avg_frame_rate?: string;
-    duration?: string;
-    tags?: { language?: string; title?: string };
-  }[];
-  format?: {
-    format_name?: string;
-    duration?: string;
-    size?: string;
-    bit_rate?: string;
-  };
-}
+import { RawProbe, runFfprobe } from './ffprobe';
 
 export function parseProbe(filePath: string, raw: RawProbe): MediaInfo {
   const streams: MediaStreamInfo[] = (raw.streams ?? []).map((stream, index) => ({
@@ -60,44 +31,20 @@ export function parseProbe(filePath: string, raw: RawProbe): MediaInfo {
 }
 
 /** Reads stream metadata for one media file through the bundled ffprobe. */
-export function probeMedia(filePath: string): Promise<MediaInfo> {
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(filePath)) {
-      reject(new AppError('File not found', { context: { filePath } }));
-      return;
-    }
+export async function probeMedia(filePath: string): Promise<MediaInfo> {
+  if (!fs.existsSync(filePath)) {
+    throw new AppError('File not found', { context: { filePath } });
+  }
 
-    execFile(
-      ffprobePath(),
-      [
-        '-hide_banner',
-        '-show_format',
-        '-show_streams',
-        '-print_format',
-        'json',
+  try {
+    return parseProbe(filePath, await runFfprobe(filePath));
+  } catch (error) {
+    throw new AppError('ffprobe failed', {
+      inner: error,
+      context: {
         filePath,
-      ],
-      { maxBuffer: 4 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          reject(
-            new AppError('ffprobe failed', {
-              context: { filePath, message: error.message },
-            }),
-          );
-          return;
-        }
-        try {
-          resolve(parseProbe(filePath, JSON.parse(stdout) as RawProbe));
-        } catch (parseError) {
-          reject(
-            new AppError('Could not parse ffprobe output', {
-              inner: parseError,
-              context: { filePath },
-            }),
-          );
-        }
+        message: error instanceof Error ? error.message : String(error),
       },
-    );
-  });
+    });
+  }
 }

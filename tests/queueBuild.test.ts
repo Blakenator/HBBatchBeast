@@ -10,7 +10,7 @@ import { QueueBuildResult } from '../src/backend/processes/protocol';
 import { BatchOperationMode, GlobalAppConfig } from '../src/common';
 
 const queueBuildPath = fileURLToPath(
-  new URL('../src/backend/modules/queueBuild.js', import.meta.url),
+  new URL('../src/backend/scanner/queueBuild.ts', import.meta.url),
 );
 
 let root: string;
@@ -36,7 +36,11 @@ afterEach(async () => {
 });
 
 function writeFile(relativePath: string, contents = 'x') {
-  const absolute = path.join(sourceDir, relativePath);
+  writeFileIn(sourceDir, relativePath, contents);
+}
+
+function writeFileIn(rootDir: string, relativePath: string, contents = 'x') {
+  const absolute = path.join(rootDir, relativePath);
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
   fs.writeFileSync(absolute, contents);
 }
@@ -58,6 +62,7 @@ async function runScan(
   const payload = buildQueueBuildConfig({
     config: makeConfig(batch),
     operationMode: BatchOperationMode.ScanOnly,
+    logDirectory: path.join(home, 'Documents/HBBatchBeast/Logs'),
   });
 
   let complete: (result: QueueBuildResult) => void;
@@ -70,8 +75,15 @@ async function runScan(
   supervisor = new ChildSupervisor({
     name: 'queueBuild-test',
     entry: queueBuildPath,
-    env: { HOME: home },
-    readyTimeoutMs: 10000,
+    env: {
+      HOME: home,
+      TS_NODE_COMPILER_OPTIONS: JSON.stringify({
+        module: 'commonjs',
+        moduleResolution: 'node',
+      }),
+    },
+    execArgv: ['-r', 'ts-node/register/transpile-only'],
+    readyTimeoutMs: 20000,
     events: {
       onChildMessage: (message) => {
         if (message.type === 'complete') complete(message.payload);
@@ -158,5 +170,129 @@ describe('queueBuild contract', () => {
     });
 
     expect(result.sources).toEqual([path.join(sourceDir, 'a.mp4')]);
+  });
+
+  it('keeps one suffix aligned with each source folder', async () => {
+    const secondSource = path.join(root, 'source-b');
+    fs.mkdirSync(secondSource, { recursive: true });
+    writeFile('a.mp4');
+    writeFileIn(secondSource, 'b.mp4');
+
+    const result = await runScan({
+      ...baseBatch(),
+      path: {
+        source_path: `${sourceDir}\n${secondSource}`,
+        destination_path: `${destinationDir}\n${destinationDir}`,
+      },
+      advanced: {
+        included_file_types: 'mp4',
+        file_name_suffix_toggle: 1,
+        file_name_suffix: '-first\n-second',
+      },
+    });
+
+    expect([...result.destinations].sort()).toEqual([
+      path.join(destinationDir, 'a-first.mp4'),
+      path.join(destinationDir, 'b-second.mp4'),
+    ]);
+  });
+
+  it('computes a separate final destination when staging is enabled', async () => {
+    const tempDir = path.join(root, 'temp');
+    const finalDir = path.join(root, 'final');
+    writeFile('a.mp4');
+
+    const result = await runScan({
+      ...baseBatch(),
+      path: {
+        source_path: sourceDir,
+        destination_path: tempDir,
+        temp_toggle: 1,
+        temp_destination_path: finalDir,
+      },
+    });
+
+    expect(result.destinations).toEqual([path.join(tempDir, 'a.mp4')]);
+    expect(result.destinationsFinal).toEqual([path.join(finalDir, 'a.mp4')]);
+  });
+
+  it('reverses the queue when configured', async () => {
+    writeFile('a.mp4');
+    writeFile('b.mp4');
+    writeFile('c.mp4');
+
+    const result = await runScan({
+      ...baseBatch(),
+      advanced: { included_file_types: 'mp4', reverse_file_queue: 1 },
+    });
+
+    expect(result.sources).toEqual([
+      path.join(sourceDir, 'c.mp4'),
+      path.join(sourceDir, 'b.mp4'),
+      path.join(sourceDir, 'a.mp4'),
+    ]);
+  });
+
+  it('includes subtitle files and flags them for copying', async () => {
+    writeFile('a.mp4');
+    writeFile('a.srt');
+
+    const result = await runScan({
+      ...baseBatch(),
+      advanced: { included_file_types: 'mp4', copy_srt_files_toggle: 1 },
+    });
+
+    const srtIndex = result.sources.indexOf(path.join(sourceDir, 'a.srt'));
+    expect(srtIndex).toBeGreaterThanOrEqual(0);
+    expect(result.skipOrCopy[srtIndex]).toBe(1);
+    expect(result.destinations[srtIndex]).toBe(
+      path.join(destinationDir, 'a.srt'),
+    );
+  });
+
+  it('renames apostrophes in source names before queueing them', async () => {
+    writeFile("it's here.mp4");
+
+    const result = await runScan({
+      ...baseBatch(),
+      advanced: {
+        included_file_types: 'mp4',
+        remove_filename_apostrophes: 1,
+      },
+    });
+
+    expect(result.sources).toEqual([path.join(sourceDir, 'it s here.mp4')]);
+    expect(fs.existsSync(path.join(sourceDir, "it's here.mp4"))).toBe(false);
+  });
+
+  it('skips files already recorded in the replaced-originals log', async () => {
+    writeFile('a.mp4');
+    writeFile('b.mp4');
+    const replacedPath = path.join(sourceDir, 'a.mp4');
+    fs.appendFileSync(
+      path.join(home, 'Documents/HBBatchBeast/Logs/originalFileReplacedList.txt'),
+      `${replacedPath}\n`,
+    );
+
+    const result = await runScan({
+      ...baseBatch(),
+      advanced: {
+        included_file_types: 'mp4',
+        replace_original_file_if_converted_is_smaller_toggle: 1,
+      },
+    });
+
+    expect(result.sources).toEqual([path.join(sourceDir, 'b.mp4')]);
+  });
+
+  it('uses the configured container extension for outputs', async () => {
+    writeFile('a.mp4');
+
+    const result = await runScan({
+      ...baseBatch(),
+      container: '.mkv',
+    });
+
+    expect(result.destinations).toEqual([path.join(destinationDir, 'a.mkv')]);
   });
 });

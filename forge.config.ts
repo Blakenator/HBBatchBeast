@@ -104,28 +104,13 @@ const config: ForgeConfig = {
           config: 'vite.main.config.mts',
         },
         {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/mediaAnalyser.js',
+          // Child-process entries keep their basenames: Forge emits
+          // `[name].cjs`, which `childEntries.ts` resolves by name.
+          entry: 'src/backend/scanner/queueBuild.ts',
           config: 'vite.main.config.mts',
         },
         {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/priorityModule.js',
-          config: 'vite.main.config.mts',
-        },
-        {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/queueBuild.js',
-          config: 'vite.main.config.mts',
-        },
-        {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/worker1.js',
-          config: 'vite.main.config.mts',
-        },
-        {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/backend/modules/worker2.js',
+          entry: 'src/backend/workers/worker1.ts',
           config: 'vite.main.config.mts',
         },
         {

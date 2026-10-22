@@ -1,3 +1,5 @@
+import os from 'os';
+import path from 'path';
 import { AppError } from '@superflag/super-ipc-core';
 import {
   BatchOperationMode,
@@ -42,10 +44,20 @@ const SUPPORTED_MODES: BatchOperationMode[] = [
   BatchOperationMode.ScanAndConvert,
 ];
 
+export function defaultLogDirectory(homePath: string = os.homedir()): string {
+  return path.join(homePath, 'Documents/HBBatchBeast/Logs');
+}
+
+export interface BuildQueueBuildConfigOptions extends RunBatchOperationProps {
+  /** Overrides the logs directory (tests pass a temp home). */
+  logDirectory?: string;
+}
+
 export function buildQueueBuildConfig({
   config,
   operationMode,
-}: RunBatchOperationProps): QueueBuildConfig {
+  logDirectory = defaultLogDirectory(),
+}: BuildQueueBuildConfigOptions): QueueBuildConfig {
   if (!operationMode || !SUPPORTED_MODES.includes(operationMode)) {
     throw new AppError('Unsupported batch operation mode', {
       context: { operationMode },
@@ -69,6 +81,25 @@ export function buildQueueBuildConfig({
   const tempDestinations = useTempFolder
     ? splitLines(paths.temp_destination_path)
     : [];
+
+  if (sources.length === 0) {
+    throw new AppError('At least one source folder is required', {
+      context: { operationMode },
+    });
+  }
+  if (destinations.length !== sources.length) {
+    throw new AppError('Each source folder needs a destination folder', {
+      context: { sources: sources.length, destinations: destinations.length },
+    });
+  }
+  if (useTempFolder && tempDestinations.length !== sources.length) {
+    throw new AppError('Each source folder needs a temporary folder', {
+      context: {
+        sources: sources.length,
+        tempDestinations: tempDestinations.length,
+      },
+    });
+  }
 
   // One suffix per source folder: queueBuild indexes this per source, so a short
   // array is what produced `<name>undefined.mp4` destinations (D1). Blank rows
@@ -116,5 +147,6 @@ export function buildQueueBuildConfig({
     removeApostrophes: advanced.remove_filename_apostrophes === 1,
     replaceAlways: advanced.replace_original_file_always_toggle === 1,
     reverseQueue: advanced.reverse_file_queue === 1,
+    logDirectory,
   };
 }

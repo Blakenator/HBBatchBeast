@@ -22,18 +22,25 @@ const item = {
 };
 
 describe('buildWorkerItemConfig', () => {
-  it('maps a queue item onto the worker payload', () => {
-    const config = buildWorkerItemConfig(makeConfig(), item, 3, 'linux');
+  it('maps a queue item onto the structured worker payload', () => {
+    const config = buildWorkerItemConfig(makeConfig(), item, 3, 'linux', []);
 
-    expect(config.queueNumber).toBe(3);
-    expect(config.sourcePath).toBe('/src/a.mkv');
-    expect(config.destinationPath).toBe('/dst/a.mp4');
-    expect(config.preset).toBe('-Z "Very Fast 1080p30"');
-    expect(config.handBrakeMode).toBe(true);
-    expect(config.ffmpegMode).toBe(false);
+    expect(config).toMatchObject({
+      queueNumber: 3,
+      sourcePath: '/src/a.mkv',
+      outputPath: '/dst/a.mp4',
+      finalPath: '/dst/a.mp4',
+      action: 'encode',
+      encoder: {
+        kind: 'handbrake',
+        executable: 'HandBrakeCLI',
+        preset: '-Z "Very Fast 1080p30"',
+        presetImportFiles: [],
+      },
+    });
   });
 
-  it('carries file-handling toggles from the batch config', () => {
+  it('carries file-handling toggles, filters and sizes', () => {
     const config = buildWorkerItemConfig(
       makeConfig({
         path: { source_path: '/s', destination_path: '/d', temp_toggle: 1 },
@@ -43,33 +50,39 @@ describe('buildWorkerItemConfig', () => {
           replace_original_file_always_toggle: 1,
           delete_source_files_toggle: 1,
           custom_bat_path: '/run.sh',
+          low_process_priority_toggle: 1,
           min_file_size_filter_toggle: 1,
           min_file_size_filter: '10',
           max_file_size_filter_toggle: 1,
           max_file_size_filter: '900',
-          included_property_filter: 'codec_name=h264',
-          excluded_property_filter: 'codec_name=hevc',
+          included_property_filter: "codec_name: 'h264'",
+          excluded_property_filter: "codec_name: 'hevc'",
           included_property_filter_any_toggle: 1,
           excluded_property_filter_all_toggle: 1,
         },
       }),
-      item,
+      { ...item, destinationFinalPath: '/final/a.mp4', action: 'copy' },
       0,
       'linux',
+      [],
     );
 
-    expect(config.copyOnOff).toBe(true);
-    expect(config.replaceOriginalFile).toBe(true);
-    expect(config.replaceOriginalFileAlways).toBe(true);
-    expect(config.deleteSourceFiles).toBe(true);
-    expect(config.customBatOn).toBe(true);
-    expect(config.tempFolderSelected).toBe(true);
-    expect(config.minFileSizeOnOff).toBe(true);
-    expect(config.maxFileSize).toBe('900');
-    expect(config.fileFiltersInclude).toBe('codec_name=h264');
-    expect(config.fileFiltersExclude).toBe('codec_name=hevc');
-    expect(config.includeAnyProperties).toBe(true);
-    expect(config.excludeAllProperties).toBe(true);
+    expect(config.action).toBe('copy');
+    expect(config.finalPath).toBe('/final/a.mp4');
+    expect(config.copyFilteredFiles).toBe(true);
+    expect(config.replaceOriginal).toBe('always');
+    expect(config.deleteSource).toBe(true);
+    expect(config.customBatPath).toBe('/run.sh');
+    expect(config.lowPriority).toBe(true);
+    expect(config.filters.include).toEqual({
+      mode: 'any',
+      rows: [{ key: 'codec_name', value: 'h264' }],
+    });
+    expect(config.filters.exclude).toEqual({
+      mode: 'all',
+      rows: [{ key: 'codec_name', value: 'hevc' }],
+    });
+    expect(config.filters.size).toEqual({ minMb: 10, maxMb: 900 });
   });
 
   it('switches to FFmpeg mode and honours verbose logging', () => {
@@ -78,37 +91,23 @@ describe('buildWorkerItemConfig', () => {
       item,
       0,
       'win32',
+      ['/presets.json'],
     );
 
-    expect(config.ffmpegMode).toBe(true);
-    expect(config.handBrakeMode).toBe(false);
+    expect(config.encoder.kind).toBe('ffmpeg');
+    expect(config.encoder.executable).toBe('ffmpeg');
+    // HandBrake preset imports do not apply to FFmpeg.
+    expect(config.encoder.presetImportFiles).toEqual([]);
     expect(config.saveWorkerLogs).toBe(true);
-    expect(config.handBrakeCliPath).toBe('HandBrakeCLI.exe');
-    // health check is out of scope and must stay disabled
-    expect(config.thoroughHealthCheck).toBe(false);
-    expect(config.repairFile).toBe(false);
   });
 
   it('carries GUI preset files so custom preset names resolve at runtime', () => {
-    const withPresets = buildWorkerItemConfig(
-      makeConfig(),
-      { ...item, preset: '-Z "H.265 MKV 1080p30 HouseHunters"' },
-      0,
-      'linux',
-      ['/home/user/.config/ghb/presets.json'],
-    );
-    const withoutPresets = buildWorkerItemConfig(
-      makeConfig(),
-      item,
-      0,
-      'linux',
-      [],
-    );
-
-    expect(withPresets.handBrakePresetImportFiles).toEqual([
+    const config = buildWorkerItemConfig(makeConfig(), item, 0, 'linux', [
       '/home/user/.config/ghb/presets.json',
     ]);
-    expect(withoutPresets.handBrakePresetImportFiles).toEqual([]);
+    expect(config.encoder.presetImportFiles).toEqual([
+      '/home/user/.config/ghb/presets.json',
+    ]);
   });
 
   it('reads legacy per-profile log settings when no global value exists', () => {
@@ -129,5 +128,45 @@ describe('buildWorkerItemConfig', () => {
     );
 
     expect(config.saveWorkerLogs).toBe(true);
+  });
+
+  it('fails loudly when required paths or sizes are invalid', () => {
+    expect(() =>
+      buildWorkerItemConfig(makeConfig(), { ...item, destinationPath: '' }, 0),
+    ).toThrow(/no output path/);
+
+    expect(() =>
+      buildWorkerItemConfig(
+        makeConfig({
+          path: { source_path: '/s', destination_path: '/d', temp_toggle: 1 },
+        }),
+        item,
+        0,
+      ),
+    ).toThrow(/no final destination/);
+
+    expect(() =>
+      buildWorkerItemConfig(
+        makeConfig({
+          advanced: {
+            min_file_size_filter_toggle: 1,
+            min_file_size_filter: 'nope',
+          },
+        }),
+        item,
+        0,
+      ),
+    ).toThrow(/Invalid minimum file size/);
+  });
+
+  it('uses the item path as a placeholder destination for skipped items', () => {
+    const config = buildWorkerItemConfig(
+      makeConfig(),
+      { path: '/src/a.mkv', preset: 'x', action: 'skip' },
+      1,
+    );
+    expect(config.outputPath).toBe('/src/a.mkv');
+    expect(config.finalPath).toBe('/src/a.mkv');
+    expect(config.skipReason).toBeTruthy();
   });
 });

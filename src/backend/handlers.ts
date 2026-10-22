@@ -46,7 +46,7 @@ import {
 import { probeMedia } from './helpers/probeMedia';
 
 
-function mapQueueBuildResult(
+export function mapQueueBuildResult(
   payload: QueueBuildResult,
   currentConfig: GlobalAppConfig['configs'][number],
 ): RunBatchOperationResult {
@@ -61,16 +61,25 @@ function mapQueueBuildResult(
     fileList: payload.sources.map((filepath, index) => {
       const extraActionPerformed = payload.skipOrCopy[index] === 1;
       const fileIsSrt = filepath.toLowerCase().endsWith('.srt');
+      const copiedFromFilter = copyFilteredFiles && extraActionPerformed;
+      const copiedSrt = !copyFilteredFiles && fileIsSrt && extraActionPerformed;
+      const skippedFromFilter =
+        !copyFilteredFiles && extraActionPerformed && !fileIsSrt;
 
       return {
         path: filepath,
         preset: payload.presets[index],
         destinationPath: payload.destinations[index] ?? undefined,
+        destinationFinalPath: payload.destinationsFinal[index] ?? undefined,
+        action: copiedFromFilter || copiedSrt
+          ? ('copy' as const)
+          : skippedFromFilter
+            ? ('skip' as const)
+            : ('encode' as const),
         extraActions: {
-          copiedFromFilter: copyFilteredFiles && extraActionPerformed,
-          skippedFromFilter:
-            !copyFilteredFiles && extraActionPerformed && !fileIsSrt,
-          copiedSrt: !copyFilteredFiles && fileIsSrt && extraActionPerformed,
+          copiedFromFilter,
+          skippedFromFilter,
+          copiedSrt,
         },
       };
     }),

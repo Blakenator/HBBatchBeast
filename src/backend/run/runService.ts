@@ -2,6 +2,15 @@ import path from 'path';
 import { AppError } from '@superflag/super-ipc-core';
 import { ChildSupervisor } from '../processes/childSupervisor';
 import { resolveChildEntry } from '../processes/childEntries';
+import { defaultLogDirectory } from '../helpers/buildQueueBuildConfig';
+import {
+  cancelItemCommand,
+  configureCommand,
+  decodeErrorMessage,
+  decodeWorkerEvent,
+  itemCommand,
+  WorkerItemConfig,
+} from '../workers/protocol';
 import {
   RunItem,
   RunManager,
@@ -9,11 +18,6 @@ import {
   WorkerHandlers,
   WorkerHandle,
 } from './runManager';
-import {
-  encodeWorkerItem,
-  parseWorkerEvent,
-  WorkerItemConfig,
-} from './workerProtocol';
 
 export interface RunServiceOptions {
   workerCount: number;
@@ -24,6 +28,8 @@ export interface RunServiceOptions {
   journalPath?: string;
   /** Overrides where child entry points are resolved from (tests/dev). */
   entryBaseDir?: string;
+  /** Where the worker writes its command/conversion/error logs. */
+  logDirectory?: string;
 }
 
 export function defaultJournalPath(homePath: string): string {
@@ -36,27 +42,33 @@ export function defaultJournalPath(homePath: string): string {
 function createWorkerHandle(
   workerNumber: number,
   handlers: WorkerHandlers,
+  logDirectory: string,
   entryBaseDir?: string,
 ): WorkerHandle {
   const supervisor = new ChildSupervisor({
     name: `worker-${workerNumber}`,
     entry: resolveChildEntry('worker1', entryBaseDir),
     args: [String(workerNumber)],
-    // worker1 still emits its own array format; translate it in the callback.
     parseMessage: () => null,
-    // worker1's first message is its queue request, which doubles as readiness.
-    isReadyMessage: (raw) =>
-      Array.isArray(raw) && raw[1] === 'queueRequest',
-    // worker1 predates the typed protocol; `suicide` makes it kill its
-    // encoder/analyser children before exiting.
-    shutdownMessage: ['suicide'],
+    isReadyMessage: (raw) => {
+      const decoded = decodeWorkerEvent(raw);
+      return decoded.ok && decoded.value.type === 'ready';
+    },
     events: {
       onRawMessage: (raw) => {
-        const event = parseWorkerEvent(raw);
-        if (!event) return;
+        const decoded = decodeWorkerEvent(raw);
+        if (!decoded.ok) {
+          handlers.onConsole(
+            `Invalid worker message: ${decodeErrorMessage(decoded)}`,
+          );
+          return;
+        }
 
+        const event = decoded.value;
         switch (event.type) {
-          case 'queueRequest':
+          case 'ready':
+            break;
+          case 'request-item':
             handlers.onQueueRequest();
             break;
           case 'console':
@@ -66,9 +78,13 @@ function createWorkerHandle(
             handlers.onStarted(event.queueNumber);
             break;
           case 'progress':
-            handlers.onProgress(event.queueNumber, event.percent, event.raw);
+            handlers.onProgress(
+              event.queueNumber,
+              event.telemetry,
+              event.raw,
+            );
             break;
-          case 'fileSizes':
+          case 'file-sizes':
             handlers.onFileSizes(
               event.queueNumber,
               event.sourceBytes,
@@ -78,36 +94,27 @@ function createWorkerHandle(
           case 'result':
             handlers.onResult(event.queueNumber, event.state, event.detail);
             break;
-          case 'logAppend':
-            // worker1 used to ask the main process to write its logs, which
-            // blocked the event loop. It owns its log writes now.
-            break;
-          case 'probe':
-          case 'exitRequest':
-            break;
         }
       },
       onError: (error) => handlers.onConsole(error.message),
+      onExit: () => handlers.onExit(),
     },
   });
 
   return {
-    start: () => supervisor.start(),
-    sendItem: (config) => supervisor.sendRaw(encodeWorkerItem(config)),
-    cancelItem: () => {
+    start: async () => {
+      await supervisor.start();
+      supervisor.sendRaw(configureCommand({ logDirectory }));
+    },
+    sendItem: (config) => supervisor.sendRaw(itemCommand(config)),
+    cancelItem: (queueNumber) => {
       try {
-        supervisor.sendRaw(['exitThread']);
+        supervisor.sendRaw(cancelItemCommand(queueNumber));
       } catch {
         // The worker may already be exiting; the item stays cancelled.
       }
     },
-    resume: () => supervisor.sendRaw(['continueWork']),
     stop: async () => {
-      try {
-        supervisor.sendRaw(['suicide']);
-      } catch {
-        // already gone
-      }
       await supervisor.stop('worker-finished');
     },
   };
@@ -125,6 +132,8 @@ export function createRunManager(
     throw new AppError('Worker count must be at least 1');
   }
 
+  const logDirectory = options.logDirectory ?? defaultLogDirectory(homePath);
+
   return new RunManager({
     workerCount: options.workerCount,
     onState: options.onState,
@@ -132,6 +141,6 @@ export function createRunManager(
     journalPath: options.journalPath ?? defaultJournalPath(homePath),
     buildItemConfig: options.buildItemConfig,
     createWorker: (workerNumber, handlers) =>
-      createWorkerHandle(workerNumber, handlers, options.entryBaseDir),
+      createWorkerHandle(workerNumber, handlers, logDirectory, options.entryBaseDir),
   });
 }

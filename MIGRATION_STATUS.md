@@ -21,15 +21,14 @@ profile/language switching, both themes, media info, diagnostics.
 **What is not done** (§5):
 - Locale backfill — new UI strings exist only as in-code `defaultMessage`s, so non-English users still see
   English for everything new.
-- `low_process_priority_toggle` is persisted but unused (D29).
 - Windows/macOS packages have never been built here; `HandBrakeCLI.exe` is resolved from `PATH` rather than
   bundled.
 - TypeScript 7 and ESLint 10 stay blocked upstream (`typescript-eslint` peers).
 
 **Where things are**: `src/main.ts` + `src/main/` (window, tray, menu, asset paths), `src/common/` (channel
-contract, config types, defaults), `src/backend/` (`handlers.ts`, `processes/`, `run/`, `helpers/`, vendored
-`modules/`), `src/frontend/` (`ui/`, `run/`, `settings/`, `diagnostics/`, `home/`, `core/`), `docs/` (UX
-inputs), `packaging/` (desktop entry).
+contract, config types, defaults), `src/backend/` (`handlers.ts`, `processes/`, `run/`, `workers/`,
+`scanner/`, `helpers/`), `src/frontend/` (`ui/`, `run/`, `settings/`, `diagnostics/`, `home/`, `core/`),
+`docs/` (UX inputs), `packaging/` (desktop entry).
 
 **Design intent wins over this inventory on UI questions**: [`docs/user-stories-and-flows.md`](./docs/user-stories-and-flows.md)
 (personas, intents I1–I8, stories, flows) and [`docs/ui-design-intent.md`](./docs/ui-design-intent.md)
@@ -49,12 +48,12 @@ benchmarking, Docker, Travis.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Lint | `pnpm lint` | ✅ 0 errors, 20 pre-existing warnings |
+| Lint | `pnpm lint` | ✅ 0 errors, 27 pre-existing warnings |
 | Typecheck | `pnpm typecheck` (`tsc --noEmit`) | ✅ clean (TypeScript 5.9 + `moduleResolution: "bundler"`, `paths` for the super-ipc ESM packages) |
 | Build/package | `pnpm package` | ✅ Vite bundles + app packages for linux-x64 |
-| Scan pipeline | forked `.vite/build/queueBuild.js` with a synthetic `queueInfoBomb` | ✅ finds files, builds queue, emits `complete` |
-| Packaged runtime deps | inspect `out/.../resources/app/node_modules` | ✅ `fs-extra`, `ffprobe`, `ffprobe-static` present after phase 2 |
-| Tests | `pnpm test` (Vitest) | ✅ 50 tests + 1 opt-in integration test: config/log-folder helpers, `queueBuild` fork contract, queue-build config, worker protocol, run manager, supervisor failure modes |
+| Scan pipeline | forked `.vite/build/queueBuild.cjs` driven by a zod-validated `QueueBuildConfig` | ✅ finds files, builds queue, emits `complete` |
+| Packaged runtime deps | inspect `out/.../resources/app.asar` | ✅ `fs-extra`, `zod`, `ffprobe-static` present; child bundles keep `zod` external |
+| Tests | `pnpm test` (Vitest) | ✅ 207 tests + 1 opt-in integration test: worker/scanner codecs, argv, filters, telemetry, runtime, fork contracts, queueBuild, config, run manager, supervisor failure modes |
 | CI | `.github/workflows/ci.yml` | ✅ typecheck → lint → test → package on push/PR |
 | Packaged app (phase 7) | `out/HBBatchBeast-linux-x64/hbbatchbeast --remote-debugging-port=9222`: renders, loads config, probes media through the unpacked ffprobe, tray icon loads from `resources/icons` | ✅ |
 | Debian package (phase 7) | `pnpm make --targets @electron-forge/maker-deb` → `out/make/deb/x64/hbbatchbeast_2.1.5_amd64.deb` (125 MB); its `.desktop` entry is `Exec=hbbatchbeast --ozone-platform=x11 %U` | ✅ |
@@ -93,9 +92,9 @@ Upgrade notes:
   land with the S32 redesign rather than after it.
 - **Electron 45 before the fork restructure.** S33's supervisor design should target the final runtime
   (`utilityProcess`, ESM-capable main process), not one that is 19 majors old.
-- **The child-process modules are the upgrade risk.** They are CommonJS, use `__dirname`, check
-  `__dirname.includes('.asar')`, and assume the legacy file layout — exercise a real scan/convert before and
-  after each bump.
+- **Child-process modules remain the upgrade risk.** They are now TypeScript with validated protocols, but
+  they still run under a forked Electron process and assume the Forge flat-entry layout — exercise a real
+  scan/convert before and after each bump.
 - **No upgrade has any safety net.** With no tests, every dependency bump has to be verified by hand; see S35.
 
 ---
@@ -120,11 +119,12 @@ HBBatchBeast/                      # repo root = the app
     │   ├── handlers.ts            # all promise channels + run control, activeRun singleton
     │   ├── helpers/               # buildQueueBuildConfig, createLogFolders, saveAppConfig,
     │   │                          # diagnostics, probeMedia (ffprobe)
-    │   ├── processes/             # protocol.ts (typed envelopes), childSupervisor.ts, childEntries.ts
-    │   ├── run/                   # workerProtocol, runManager (state machine + journal), runService,
+    │   ├── processes/             # protocol.ts (zod envelopes), childSupervisor.ts, childEntries.ts
+    │   ├── run/                   # runManager (state machine + journal), runService,
     │   │                          # buildWorkerItemConfig
-    │   └── modules/               # vendored CommonJS children: queueBuild, worker1, worker2,
-    │                              # priorityModule, mediaAnalyser
+    │   ├── workers/               # worker1.ts entry, protocol.ts (zod), runtime, command,
+    │   │                          # media (probe/filters/telemetry), runner, files
+    │   └── scanner/               # queueBuild.ts entry, scanQueue.ts, destination.ts
     ├── frontend/
     │   ├── App.tsx                # theme attributes + IntlMessagesProvider → HomePage
     │   ├── core/                  # zustand stores, intl provider, message helper
@@ -174,7 +174,9 @@ HBBatchBeast/                      # repo root = the app
 
 - Forge 8 + Vite 8 emit **`.cjs`**: `package.json` `main`, the preload path and every forked entry name.
 - Vite 8 (Rolldown) does not externalise Node built-ins or deps for the main build — `vite.main.config.mts`
-  lists them; a new child-module dependency must be added there.
+  lists Node built-ins plus every `dependencies` entry (so adding a runtime dependency there is automatic).
+- Forge emits main-process entries as `[name].cjs`; child entries keep the basenames `worker1` and
+  `queueBuild`, and `vite.main.config.mts` must not set `build.lib` or that injection is lost.
 - `.npmrc` sets `node-linker=hoisted` and `packagerConfig.ignore` keeps `package.json` + `node_modules` while
   skipping `**/.bin/**`; without both, the packaged app has no runtime dependencies.
 - `pnpm.overrides.electron` pins the copy that `super-ipc` pulls in as a direct dependency (~260 MB).
@@ -187,17 +189,21 @@ HBBatchBeast/                      # repo root = the app
 
 ### Child-process protocol (S33)
 
-Children speak a versioned, typed protocol (`src/backend/processes/protocol.ts`); the positional
-arrays it replaced are gone.
+Children speak versioned, zod-validated protocols. Both ends decode every message, so an unknown field,
+wrong primitive or stale version is a loud error instead of plausible-but-wrong data.
 
-**Parent → child**
+`queueBuild` uses `src/backend/processes/protocol.ts`; `worker1` uses
+`src/backend/workers/protocol.ts` (structured `configure` / `item` / `cancel-item` / `shutdown` commands and
+`ready` / `request-item` / `started` / `progress` / `file-sizes` / `result` / `console` events).
+
+**queueBuild parent → child**
 
 | Message | Payload |
 | --- | --- |
-| `configure` | `QueueBuildConfig` — sources, destinations, tempDestinations, useTempFolder, includedFileTypes, container, mode, presets, titleWordFilter, replaceIfSmaller, fileSuffixes, removeApostrophes, replaceAlways, reverseQueue |
+| `configure` | `QueueBuildConfig` — sources, destinations, tempDestinations, useTempFolder, includedFileTypes, container, mode, presets, titleWordFilter, replaceIfSmaller, fileSuffixes, removeApostrophes, replaceAlways, reverseQueue, logDirectory |
 | `shutdown` | — (child exits 0) |
 
-**Child → parent**
+**queueBuild child → parent**
 
 | Message | Payload |
 | --- | --- |
@@ -207,12 +213,33 @@ arrays it replaced are gone.
 | `complete` | `QueueBuildResult` — total, sources, presets, skipOrCopy, destinations, destinationsFinal, notExists |
 | `error` | `message`, optional `stack` |
 
+**worker1 parent → child**
+
+| Message | Payload |
+| --- | --- |
+| `configure` | `{ logDirectory }` |
+| `item` | `WorkerItemConfig` — action, source/output/final paths, encoder (kind, executable, preset, preset imports), copy/delete/replace flags, custom batch path, priority, filters |
+| `cancel-item` | `{ queueNumber }` — kills the running encoder and reports `cancelled` |
+| `shutdown` | — (child exits 0) |
+
+**worker1 child → parent**
+
+| Message | Payload |
+| --- | --- |
+| `ready` | — (listener is attached first) |
+| `request-item` | — (sent whenever idle, including after pause resumes) |
+| `started` | `{ queueNumber }` |
+| `progress` | `{ queueNumber, telemetry, raw }` — percent/fps/frame/speed/ETA/bytes |
+| `file-sizes` | `{ queueNumber, sourceBytes, outputBytes }` |
+| `result` | `{ queueNumber, state: success \| error \| skipped \| cancelled, detail, preset }` |
+| `console` | `{ level, message }` |
+
 Child entry points are resolved through `childEntries.ts` (name → emitted `.cjs` filename) and validated at
 startup, so a stale build fails immediately with an actionable message instead of `MODULE_NOT_FOUND`.
 
-The renderer → worker path is migrated: the 36-field legacy array that `worker1.js` consumes is translated
-at the boundary in `src/backend/run/workerProtocol.ts` (`encodeWorkerItem`/`parseWorkerEvent`), so the rest of
-the backend deals in typed `WorkerItemConfig` values and typed events only.
+There is no positional array left. `worker1` owns its encoder process (`spawn` with argv), ffprobe call, log
+writes and file moves; `worker2`, `mediaAnalyser` and `priorityModule` were deleted. Pause/resume is decided by
+`RunManager` (idle workers park until resume), and the worker always requests the next item when idle.
 
 ### Fork / child-process architecture — restructured in S33
 
@@ -309,9 +336,9 @@ future child process added to the app.
 | S11 | Packaging: real metadata/icons, per-platform icon selection, `packageAfterCopy` pruning of foreign `ffprobe-static` binaries (680 MB → 444 MB), ffprobe unpacked out of the asar so it can execute, makers configured (deb/rpm with a `--ozone-platform=x11` desktop entry, zip, squirrel) |
 | S12 | Legacy app removed: `HBBatchBeast/` (including `HandBrakeCLI.exe` and test media) and `.travis.yml` are gone; a 184 KB sample for the integration test now lives in `tests/fixtures/sample.mp4`, and the README is rewritten for the rewrite |
 
-Also carried over as-is: the six legacy child-process modules are now under
-[`src/backend/modules/`](./src/backend/modules) (only `queueBuild.js` was reformatted and
-lightly adapted; the other five are byte-identical to the legacy copies).
+The vendored CommonJS children were replaced by typed modules: [`src/backend/workers/`](./src/backend/workers)
+(`worker1` runtime, command, media, runner, files) and [`src/backend/scanner/`](./src/backend/scanner)
+(`queueBuild` entry, `scanQueue`, `destination`). `worker2`, `mediaAnalyser` and `priorityModule` were deleted.
 
 ---
 
@@ -325,8 +352,8 @@ lightly adapted; the other five are byte-identical to the legacy copies).
 | — | Settings are split into Global and Profiles tabs. Language, worker count, verbose worker logs, and log/diagnostic locations are global; conversion folders, encoder, presets and file handling remain profile-scoped. Legacy `tab_system` settings migrate from the active profile on load. |
 | S21 | Queue table covers scan + run rows, status chips and path search. Row actions (cancel item, open log, reveal, media info, retry) and bulk selection are still to come. |
 | S32 | Row-level inputs now have explicit accessible labels. Remaining design work: keyboard-first navigation beyond native `<details>`/modal/segmented-switch behaviour and a dark/light contrast audit on real hardware. The row-editor rework landed with the settings UX pass. |
-| — | Dropped-feature cleanup is done at the config/entry level (`scheduler.js` entry deleted, health/remote/email/`api_key` removed from the types). The health-check branches inside the vendored `queueBuild.js`/`worker1.js` are unreachable and `queueBuild` now rejects `healthCheck` mode explicitly; stripping them needs a rewrite of those modules. |
-| — | `low_process_priority_toggle` is still a no-op (D29), so it is no longer shown in the settings drawer; the stored value is preserved. |
+| — | Dropped-feature cleanup is complete: health-check/repair, corrupt-file moving, scheduler, remote, email and `api_key` are gone from the config and the rewritten worker/scanner. |
+| — | `low_process_priority_toggle` is wired through the worker payload to `os.setPriority` on the encoder process (D29). |
 | — | `--max-parallel <n>` (or `HBB_MAX_PARALLEL`) is a startup guard: the app counts existing HandBrakeCLI/FFmpeg/ffprobe and worker processes and refuses to start when the total exceeds the budget. The same limit caps the worker count, and preset scans are skipped while the budget is full. |
 | — | Only the icon directory is shipped now (`resources/icons`), so the legacy fonts and promo images no longer travel with the app. |
 | — | Windows `HandBrakeCLI.exe` is not bundled automatically: the packaged app resolves it from `PATH`, and `packaging/bin` is not wired into `extraResource`. Windows/macOS packages cannot be built or verified on this Linux host. |
@@ -485,7 +512,7 @@ These are all in the migrated code, not legacy-only issues.
 | D16 | 🟡 Low | `package.json` | `@types/react` is not declared; it resolves only via peer hoisting, and the tree currently contains two incompatible copies (18.3.23 and 19.1.9). Declare it explicitly and keep it aligned with `react`/`react-dom` during the S34 upgrade. |
 | D17 | 🟡 Low | whole repo | No automated verification of any kind: no test runner, no test files, no CI workflow. Every dependency bump and refactor is validated by hand. See S35. |
 | D18 | 🟡 Low | [createLogFolders.ts](./src/backend/helpers/createLogFolders.ts) | Assumed `~/Documents` already existed. **Fixed in phase 2**: all directory creation is recursive, covered by a fresh-home test. |
-| D19 | 🟠 Medium | [queueBuild.js](<./src/backend/modules/queueBuild.js>) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
+| D19 | 🟠 Medium | [queueBuild.ts](./src/backend/scanner/queueBuild.ts) | Startup race: the child announced readiness before attaching its message listener, so the parent's reply could be dropped and the run never settled. **Fixed in phase 3**: readiness is sent last, and the supervisor only configures after the handshake. |
 
 | D20 | 🔴 High | [stores.ts](./src/frontend/core/stores.ts) | The "mirror this prop into the store" store helper (`useSetValue`) ran its effect with no argument, so any component that only wanted the setter reset the value to `undefined`. The scan result was stored and immediately wiped, leaving the queue permanently empty. **Fixed in phase 5**: the helper is gone; callers set the store explicitly (`useSetter`). |
 | D21 | 🔴 High | [HomePage.tsx](./src/frontend/home/HomePage.tsx) | The loaded config was re-mirrored into the store on every render, so every settings/profile edit was silently undone by the next render. **Fixed in phase 5**: the store is seeded once per fetch result, and successful settings saves push the saved config back into the store. |
@@ -496,7 +523,7 @@ These are all in the migrated code, not legacy-only issues.
 | D26 | 🟡 Low | [ProfileBar.tsx](./src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
 | D27 | 🟡 Low | [Panel.tsx](./src/frontend/ui/Panel.tsx), [QueueTable.tsx](./src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
 | D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
-| D29 | 🟠 Medium | [schema.ts](./src/frontend/settings/schema.ts) | `low_process_priority_toggle` is persisted but nothing consumes it: `worker1.js` launches HandBrakeCLI without any priority handling and `priorityModule.js` is unreferenced. Needs either `nice`/`start /LOW` wiring in the encode command or removal from the UI. |
+| D29 | 🟠 Medium | [schema.ts](./src/frontend/settings/schema.ts) | `low_process_priority_toggle` was persisted but unused. **Fixed in the worker overhaul**: the setting reaches `WorkerItemConfig.lowPriority` and the runner calls `os.setPriority` on the spawned encoder (POSIX nice 10, Windows below-normal). |
 | D30 | 🟠 Medium | [VersionWarning.tsx](./src/frontend/versionWarning/VersionWarning.tsx) | The changelog notice read releases from the **upstream** repo (`HaveAGitGat/HBBatchBeast`) and never recorded that the user had seen it, so it reappeared every launch. **Fixed in phase 6**: it reads this fork's releases and persists the acknowledged version. |
 | D32 | 🔴 High | `forge.config.ts` | `ffprobe-static`'s binary was packed **inside** `app.asar`, and binaries cannot be executed from an asar archive, so media info and the `mediaAnalyser` child would fail in packaged builds. **Fixed in phase 7**: `asar.unpack` extracts `ffprobe-static/bin/**`, verified by probing a file from the packaged app. |
 | D33 | 🟠 Medium | `package.json` | `license: MIT` while `LICENSE` is GPL-3.0, and the metadata was still the Electron Forge placeholder (`productName: hbbatchbeast`, "My Electron application description'). **Fixed in phase 7**: GPL-3.0-only, real description/author/repo/keywords, `productName: HBBatchBeast`. |
@@ -512,7 +539,7 @@ These are all in the migrated code, not legacy-only issues.
    do `moduleResolution: "bundler"`), super-ipc 0.0.11 → 0.1.0, ESLint 10 + `typescript-eslint` 8, and
    Vite 8 + Forge 8 + Electron 45. Commit the `yarn → pnpm` switch and add `typecheck`/`test` scripts. Then
    get `tsc --noEmit` and `pnpm lint` green — do not patch `node_modules`. Verify each bump with a real
-   `pnpm package` plus a manual scan, since the child modules are CommonJS and assume the legacy layout.
+   `pnpm package` plus a manual scan, since the forked children assume Forge's flat `.cjs` entry layout.
 2. **Stand up tests (S35) before changing more behaviour.** Turn the ad-hoc `queueBuild` fork smoke test into
    a fixture, add handler/config tests, and wire a CI workflow for typecheck + lint + tests. Without this,
    every later step (especially the fork restructure and the remaining upgrade half) is unverified.
@@ -543,7 +570,8 @@ These are all in the migrated code, not legacy-only issues.
 
 - Config path and JSON shape (users have existing `Configuration.json` files).
 - `~/Documents/HBBatchBeast/{Config,Logs}` layout and log file names — child modules read them directly.
-- Child-process module names (`queueBuild.js`, `worker1.js`, ...) must keep their Vite build entries; the
+- Child-process entry basenames (`worker1.ts`, `queueBuild.ts`) must keep their Forge build entries so the
+  emitted `[name].cjs` still matches `childEntries.ts`; the
   backend forks them by path from `__dirname`.
 - `queueBuild` positional protocol (see §3). If you refactor it, change both sides in one commit.
 - `contextIsolation`/preload is the only renderer→main path; do not reintroduce `electron.remote`.
