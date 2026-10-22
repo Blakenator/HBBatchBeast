@@ -218,6 +218,12 @@ export const settingsSchema: GroupSchema[] = [
       'Choose which files enter the queue. Filters apply before anything is converted.',
     fields: [
       {
+        path: 'tab_batch.advanced.include_converted_files_toggle',
+        label: 'Include files that are already converted',
+        kind: 'toggle',
+        help: 'By default a file is skipped when its destination already exists and is not empty. Turn this on to convert and overwrite those outputs again.',
+      },
+      {
         path: 'tab_batch.advanced.included_file_types',
         label: 'Included file types',
         kind: 'token-list',

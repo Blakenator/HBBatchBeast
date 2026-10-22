@@ -131,6 +131,23 @@ describe('buildQueueBuildConfig', () => {
     ]);
   });
 
+  it('only includes already-converted files when the profile asks for it', () => {
+    const defaults = buildQueueBuildConfig({
+      config: makeConfig(twoSources),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+    expect(defaults.includeConverted).toBe(false);
+
+    const includeConverted = buildQueueBuildConfig({
+      config: makeConfig({
+        ...twoSources,
+        advanced: { include_converted_files_toggle: 1 },
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+    expect(includeConverted.includeConverted).toBe(true);
+  });
+
   it('emits one suffix entry per source even when suffixes are disabled (D1)', () => {
     const payload = buildQueueBuildConfig({
       config: makeConfig(twoSources),

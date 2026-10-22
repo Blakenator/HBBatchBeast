@@ -48,6 +48,8 @@ const queueBuildConfigSchema = z
     removeApostrophes: z.boolean(),
     replaceAlways: z.boolean(),
     reverseQueue: z.boolean(),
+    /** Queue files even when the destination already has content. */
+    includeConverted: z.boolean(),
     /** Logs directory; used for the replaced-originals cache. */
     logDirectory: z.string().min(1),
     /** Outputs the last run did not finish; never treat them as converted. */

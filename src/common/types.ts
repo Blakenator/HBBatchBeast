@@ -36,6 +36,8 @@ export interface BatchTabConfig {
     excluded_property_filter_any_toggle: 0 | 1;
     excluded_property_filter_all_toggle: 0 | 1;
     copy_filtered_files_toggle: 0 | 1;
+    /** Queue files even when a non-empty output already exists. */
+    include_converted_files_toggle: 0 | 1;
     delete_source_files_toggle: 0 | 1;
     replace_original_file_if_converted_is_smaller_toggle: 0 | 1;
     replace_original_file_always_toggle: 0 | 1;

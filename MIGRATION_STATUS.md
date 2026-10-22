@@ -253,6 +253,11 @@ that the run journal records as `running`/`cancelled`/`error` (`QueueBuildConfig
 create the output file as soon as they start, so this is what makes a crashed or cancelled run re-queue its
 files instead of treating the stub as finished. The worker also deletes its partial output on cancel/failure.
 
+Each profile has a **Filters → Include files that are already converted** switch
+(`advanced.include_converted_files_toggle`), which becomes `QueueBuildConfig.includeConverted`. When it is on
+the `alreadyConverted` exclusion is not applied, so those files are converted and overwrite their existing
+output.
+
 ### Fork / child-process architecture — restructured in S33
 
 The process model was inherited straight from the (now deleted) legacy app and was the weakest part of the

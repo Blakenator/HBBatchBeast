@@ -176,6 +176,7 @@ export function buildQueueBuildConfig({
     removeApostrophes: advanced.remove_filename_apostrophes === 1,
     replaceAlways: advanced.replace_original_file_always_toggle === 1,
     reverseQueue: advanced.reverse_file_queue === 1,
+    includeConverted: advanced.include_converted_files_toggle === 1,
     logDirectory,
     untrustedOutputs: unfinishedOutputs(journalPath),
   };

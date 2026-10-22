@@ -39,6 +39,7 @@ function config(overrides: Partial<QueueBuildConfig> = {}): QueueBuildConfig {
     removeApostrophes: false,
     replaceAlways: false,
     reverseQueue: false,
+    includeConverted: false,
     logDirectory: path.join(root, 'logs'),
     untrustedOutputs: [],
     ...overrides,
@@ -101,6 +102,23 @@ describe('scanQueue', () => {
     expect(result.notExists).toBe(1);
     expect(result.sources).toEqual([path.join(root, 'source', 'a.mp4')]);
     expect(result.excluded[0]).toBeNull();
+  });
+
+  it('queues already-converted files when the profile includes them', async () => {
+    write('a.mp4');
+    write('b.mp4');
+    const base = config();
+    fs.writeFileSync(path.join(root, 'destination', 'a.mp4'), 'already');
+
+    const result = await scanQueue({ ...base, includeConverted: true });
+
+    const index = result.sources.indexOf(path.join(root, 'source', 'a.mp4'));
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(result.excluded[index]).toBeNull();
+    expect(result.excluded[result.sources.indexOf(path.join(root, 'source', 'b.mp4'))])
+      .toBeNull();
+    // Both files will be processed, so both count as unconverted.
+    expect(result.notExists).toBe(2);
   });
 
   it('handles source paths containing commas', async () => {

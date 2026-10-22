@@ -123,10 +123,13 @@ export async function scanQueue(
           : null;
 
         const target = destinationFinal ?? destination;
-        const converted =
+        const hasOutput =
           !untrustedOutputs.has(target) &&
           !untrustedOutputs.has(destination) &&
           (await isConverted(target));
+        // "Include already converted" re-queues those files; report them as
+        // unconverted so the count matches what the run will process.
+        const converted = hasOutput && !config.includeConverted;
         if (!converted) notExists += 1;
 
         await ensureDirectory(path.dirname(destination));

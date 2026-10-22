@@ -21,6 +21,7 @@ const config = {
   removeApostrophes: false,
   replaceAlways: false,
   reverseQueue: false,
+  includeConverted: false,
   logDirectory: '/home/user/Documents/HBBatchBeast/Logs',
   untrustedOutputs: [],
 };
