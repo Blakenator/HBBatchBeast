@@ -30,7 +30,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { runMessages } from './messages';
 import { mediaMessages } from './mediaMessages';
 import { MediaInfoModal } from './MediaInfoModal';
-import { Button } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
+import { Icon } from '../ui/Icon';
 import { normalizePresetName } from '../../common';
 import type { RunItemAction } from '../../common';
 import type { FilterTrace } from '../../common/filterExpression';
@@ -334,28 +335,6 @@ const MenuRow = styled.div`
 
 const ColumnsPopover = styled(Popover)`
   min-width: 260px;
-`;
-
-const IconButton = styled.button`
-  border: 1px solid var(--hb-border);
-  background: var(--hb-surface);
-  color: var(--hb-text);
-  border-radius: var(--hb-radius-sm);
-  width: 22px;
-  height: 22px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--hb-focus);
-    outline-offset: 1px;
-  }
 `;
 
 const stateColor: Record<QueueRowState, string> = {
@@ -766,35 +745,26 @@ export const QueueTable: React.FC<QueueTableProps> = ({
           const meta = info.table.options.meta;
           return (
             <Actions>
-              <Button
-                compact
-                variant="ghost"
-                onClick={() => meta?.onOpenLog(row)}
+              <IconButton
+                icon="log"
+                label={`${formatMessage(runMessages.openLog)}: ${row.path}`}
                 title={formatMessage(runMessages.openLog)}
-                aria-label={`${formatMessage(runMessages.openLog)}: ${row.path}`}
-              >
-                {formatMessage(runMessages.log)}
-              </Button>
-              <Button
-                compact
-                variant="ghost"
-                onClick={() => meta?.onInspect(row.path)}
+                onClick={() => meta?.onOpenLog(row)}
+              />
+              <IconButton
+                icon="inspect"
+                label={`${formatMessage(mediaMessages.inspectTitle)}: ${row.path}`}
                 title={formatMessage(mediaMessages.inspectTitle)}
-                aria-label={`${formatMessage(mediaMessages.inspectTitle)}: ${row.path}`}
-              >
-                {formatMessage(mediaMessages.inspect)}
-              </Button>
+                onClick={() => meta?.onInspect(row.path)}
+              />
               {meta?.onCancel &&
                 (row.state === 'running' || row.state === 'pending') && (
-                  <Button
-                    compact
-                    variant="ghost"
-                    onClick={() => meta.onCancel?.(row)}
+                  <IconButton
+                    icon="cancel"
+                    label={`${formatMessage(runMessages.stopItemTitle)}: ${row.path}`}
                     title={formatMessage(runMessages.stopItemTitle)}
-                    aria-label={`${formatMessage(runMessages.stopItemTitle)}: ${row.path}`}
-                  >
-                    {formatMessage(runMessages.stopItem)}
-                  </Button>
+                    onClick={() => meta.onCancel?.(row)}
+                  />
                 )}
             </Actions>
           );
@@ -971,27 +941,21 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                             {label}
                           </label>
                           <IconButton
-                            type="button"
-                            aria-label={formatMessage(
-                              runMessages.moveColumnLeft,
-                              { column: label },
-                            )}
+                            icon="moveLeft"
+                            label={formatMessage(runMessages.moveColumnLeft, {
+                              column: label,
+                            })}
                             disabled={index === 0}
                             onClick={() => moveColumn(column.id, -1)}
-                          >
-                            ‹
-                          </IconButton>
+                          />
                           <IconButton
-                            type="button"
-                            aria-label={formatMessage(
-                              runMessages.moveColumnRight,
-                              { column: label },
-                            )}
+                            icon="moveRight"
+                            label={formatMessage(runMessages.moveColumnRight, {
+                              column: label,
+                            })}
                             disabled={index === all.length - 1}
                             onClick={() => moveColumn(column.id, 1)}
-                          >
-                            ›
-                          </IconButton>
+                          />
                         </MenuRow>
                       );
                     })}
@@ -1002,7 +966,12 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                       textAlign: 'right',
                     }}
                   >
-                    <Button compact variant="ghost" onClick={resetLayout}>
+                    <Button
+                      compact
+                      variant="ghost"
+                      icon="reset"
+                      onClick={resetLayout}
+                    >
                       {formatMessage(runMessages.resetColumns)}
                     </Button>
                   </div>
@@ -1014,6 +983,7 @@ export const QueueTable: React.FC<QueueTableProps> = ({
               <Button
                 compact
                 variant="ghost"
+                icon="columns"
                 aria-label={formatMessage(runMessages.columns)}
               >
                 {formatMessage(runMessages.columns)}
@@ -1135,14 +1105,17 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                     title={formatMessage(runMessages.dragColumn)}
                     onClick={(event) => event.stopPropagation()}
                   >
-                    ⠿
+                    <Icon name="drag" size="xs" />
                   </DragHandle>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {header.isPlaceholder ? null : <table.FlexRender header={header} />}
                   </span>
                   {sorted && (
                     <SortMarker aria-hidden="true">
-                      {sorted === 'asc' ? '▲' : '▼'}
+                      <Icon
+                        name={sorted === 'asc' ? 'sortAsc' : 'sortDesc'}
+                        size="xs"
+                      />
                     </SortMarker>
                   )}
                   {column.getCanResize() && (

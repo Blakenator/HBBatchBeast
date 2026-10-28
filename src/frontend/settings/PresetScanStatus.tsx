@@ -44,7 +44,13 @@ export const PresetScanStatus: React.FC<PresetScanStatusProps> = ({
       <InlineNote $tone={scan?.available || pending ? 'muted' : 'warning'}>
         {text}
       </InlineNote>
-      <Button compact variant="ghost" onClick={onRefresh} disabled={pending}>
+      <Button
+        compact
+        variant="ghost"
+        icon="refresh"
+        onClick={onRefresh}
+        disabled={pending}
+      >
         {formatMessage(settingsMessages.refreshPresets)}
       </Button>
     </Bar>

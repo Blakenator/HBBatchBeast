@@ -9,7 +9,8 @@ import {
   createEmptyFilterExpression,
   createRuleId,
 } from '../../../common';
-import { Button } from '../../ui/Button';
+import { Button, IconButton } from '../../ui/Button';
+import { Icon } from '../../ui/Icon';
 import { Combobox } from '../../ui/Combobox';
 import { FilterBuilder } from '../../ui/filterBuilder/FilterBuilder';
 import { FilterChips } from '../../ui/filterBuilder/FilterChips';
@@ -211,7 +212,7 @@ export const MappingRulesEditor: React.FC<MappingRulesEditorProps> = ({
           not match a rule.
         </Intro>
         <div>
-          <Button compact variant="secondary" onClick={add}>
+          <Button compact variant="secondary" icon="add" onClick={add}>
             Add rule
           </Button>
         </div>
@@ -235,37 +236,25 @@ export const MappingRulesEditor: React.FC<MappingRulesEditorProps> = ({
                     />
                   </Grow>
                   <Actions>
-                    <Button
-                      compact
-                      variant="ghost"
+                    <IconButton
+                      icon="moveUp"
+                      label="Move rule up"
                       onClick={() => move(index, -1)}
                       disabled={index === 0}
-                      title="Move rule up"
-                      aria-label="Move rule up"
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      compact
-                      variant="ghost"
+                    />
+                    <IconButton
+                      icon="moveDown"
+                      label="Move rule down"
                       onClick={() => move(index, 1)}
                       disabled={index === rules.length - 1}
-                      title="Move rule down"
-                      aria-label="Move rule down"
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      compact
-                      variant="ghost"
+                    />
+                    <IconButton
+                      icon="delete"
+                      label="Delete rule"
                       onClick={() =>
                         onChange(rules.filter((item) => item.id !== rule.id))
                       }
-                      title="Delete rule"
-                      aria-label="Delete rule"
-                    >
-                      ×
-                    </Button>
+                    />
                   </Actions>
                 </RuleHead>
 
@@ -282,6 +271,7 @@ export const MappingRulesEditor: React.FC<MappingRulesEditorProps> = ({
                     <Button
                       compact
                       variant="ghost"
+                      icon={isExpanded ? 'collapse' : 'expand'}
                       onClick={() => toggle(rule.id)}
                       aria-expanded={isExpanded}
                     >
@@ -319,7 +309,9 @@ export const MappingRulesEditor: React.FC<MappingRulesEditorProps> = ({
 
           <RuleCard $locked>
             <LockedHead>
-              <LockBadge aria-label="Locked">🔒</LockBadge>
+              <LockBadge aria-label="Locked">
+                <Icon name="lock" size="sm" />
+              </LockBadge>
               <LockedTitle>
                 <LockedName>Default preset</LockedName>
                 <LockedHint>

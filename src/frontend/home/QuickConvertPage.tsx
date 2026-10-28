@@ -45,7 +45,7 @@ export const QuickConvertPage: React.FC<QuickConvertPageProps> = ({
 
   return (
     <Wrap>
-      <Panel title="Quick conversion">
+      <Panel title="Quick conversion" icon="quick">
         <Muted>
           This run is temporary. It will not change your saved libraries, and
           you can save it as a library after reviewing the queue.
@@ -53,6 +53,7 @@ export const QuickConvertPage: React.FC<QuickConvertPageProps> = ({
         <Actions style={{ marginTop: 'var(--hb-space-md)' }}>
           <Button
             variant="success"
+            icon="arrowRight"
             onClick={() => onContinue(library)}
             disabled={problems.length > 0}
           >

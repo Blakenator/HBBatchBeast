@@ -3,7 +3,7 @@ import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { parseMappedRows, serializeMappedRows } from '../../common';
-import { Button } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
 import { OpenFolderButton } from '../ui/OpenFolderButton';
 import { isInside } from '../run/validation';
 import { BrowseButton } from './PathInput';
@@ -278,17 +278,14 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                 <RowTitle>
                   {formatMessage(settingsMessages.rowLabel, { number: index + 1 })}
                 </RowTitle>
-                <Button
-                  compact
-                  variant="ghost"
+                <IconButton
+                  icon="delete"
                   onClick={() => removeRow(index)}
                   disabled={rows.length === 1 && !row.source}
-                  aria-label={formatMessage(settingsMessages.removeRow, {
+                  label={formatMessage(settingsMessages.removeRow, {
                     number: index + 1,
                   })}
-                >
-                  {formatMessage(settingsMessages.remove)}
-                </Button>
+                />
               </RowHead>
 
               <FieldLine>
@@ -309,7 +306,6 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                     kind="folder"
                     title={formatMessage(settingsMessages.pickSourceFolder)}
                     defaultPath={row.source}
-                    label="…"
                     onPick={(selected) => {
                       if (selected.length === 1) {
                         updateRow(index, 'source', selected[0]);
@@ -347,7 +343,6 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                     kind="folder"
                     title={formatMessage(settingsMessages.pickDestinationFolder)}
                     defaultPath={row.destination}
-                    label="…"
                     onPick={(selected) =>
                       updateRow(index, 'destination', selected[0] ?? '')
                     }
@@ -381,7 +376,6 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                     kind="folder"
                     title={formatMessage(settingsMessages.pickTempFolder)}
                     defaultPath={row.temp}
-                    label="…"
                     onPick={(selected) =>
                       updateRow(index, 'temp', selected[0] ?? '')
                     }
@@ -417,12 +411,14 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
       </Rows>
 
       <Actions>
-        <Button compact variant="ghost" onClick={addRow}>
+        <Button compact variant="ghost" icon="add" onClick={addRow}>
           {formatMessage(settingsMessages.addRow)}
         </Button>
         <BrowseButton
           kind="folder"
           multiple
+          showLabel
+          icon="addFolders"
           label={formatMessage(settingsMessages.addFolders)}
           title={formatMessage(settingsMessages.pickSourceFolders)}
           onPick={addFolders}

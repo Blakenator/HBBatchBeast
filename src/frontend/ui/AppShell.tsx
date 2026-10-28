@@ -63,8 +63,8 @@ export const AppShell: React.FC<PropsWithChildren<AppShellProps>> = ({
     <>
       <Header>
         {onBack && (
-          <Button compact variant="ghost" onClick={onBack}>
-            ← {backLabel}
+          <Button compact variant="ghost" icon="back" onClick={onBack}>
+            {backLabel}
           </Button>
         )}
         <Title>HBBatchBeast</Title>
@@ -72,7 +72,12 @@ export const AppShell: React.FC<PropsWithChildren<AppShellProps>> = ({
         <Spacer />
         <StatusPill status={status} />
         {showSettings && (
-          <Button compact variant="ghost" onClick={onOpenSettings}>
+          <Button
+            compact
+            variant="ghost"
+            icon="settings"
+            onClick={onOpenSettings}
+          >
             {formatMessage(shellMessages.settings)}
           </Button>
         )}

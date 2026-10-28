@@ -4,6 +4,7 @@ import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { parseTokenList, serializeTokenList } from '../../common';
 import { Button } from './Button';
+import { Icon } from './Icon';
 import { TokenBox, TokenChip } from './Tokens';
 import { tokenListMessages } from './messages';
 
@@ -94,7 +95,7 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
               aria-label={formatMessage(tokenListMessages.removeToken, { token })}
               onClick={() => remove(index)}
             >
-              ×
+              <Icon name="close" size="xs" />
             </ChipRemove>
           </TokenChip>
         ))}

@@ -194,7 +194,12 @@ export const ItemLogModal: React.FC<{
             )}
           </span>
         )}
-        <Button variant="secondary" onClick={copy} disabled={!row}>
+        <Button
+          variant="secondary"
+          icon="copy"
+          onClick={copy}
+          disabled={!row}
+        >
           {formatMessage(runMessages.copy)}
         </Button>
         <Button variant="ghost" onClick={onClose}>

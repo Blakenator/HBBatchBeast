@@ -155,7 +155,16 @@ must act on. Errors are never toast-only.
 - **Density:** comfortable default; table rows are compact. No nesting of cards inside cards.
 - **Motion:** ≤150ms for state transitions; respect `prefers-reduced-motion`; no spinners where a determinate
   bar is possible.
-- **Iconography:** a small consistent set for states and row actions; text labels for destructive actions.
+- **Iconography:** one family — FontAwesome Free (solid), imported as individual SVG icons through
+  `@fortawesome/react-fontawesome` and exposed by the semantic registry in `src/frontend/ui/icons.ts`.
+  Icons are decorative by default (`aria-hidden`). Use **icon + text** for primary actions, navigation,
+  add/create actions and destructive actions; **icon-only** for dense, repeated utilities (table row
+  actions, filter-builder controls, browse/open/clear, column ordering) via the `IconButton` that
+  requires an accessible label and tooltip; **text only** for state filters, segmented choices, form
+  section titles, chart cards and modal titles. State is always paired with an icon and a text
+  label. Logical negation uses a compact **NOT** toggle rather than an icon, because no FontAwesome
+  glyph conveys inversion unambiguously. Keep typographic punctuation (`→`, `×` in values, `—`) as
+  text, not icons.
 
 ## 6. Accessibility & platform
 

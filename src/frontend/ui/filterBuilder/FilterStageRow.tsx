@@ -3,9 +3,10 @@ import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { FilterRule } from '../../../common/filterExpression';
-import { Button } from '../Button';
+import { IconButton } from '../Button';
 import { FilterValueEditor } from './FilterValueEditor';
 import { filterBuilderMessages } from './messages';
+import { NegateButton } from './NegateButton';
 import { FilterFieldDefinition } from './types';
 
 const Row = styled.div`
@@ -144,57 +145,35 @@ export const FilterStageRow: React.FC<FilterStageRowProps> = ({
       </Controls>
 
       <Actions>
-        <Button
-          compact
-          variant="ghost"
+        <NegateButton
+          active={Boolean(rule.negate)}
           disabled={disabled}
-          title={formatMessage(filterBuilderMessages.negate)}
-          aria-label={formatMessage(filterBuilderMessages.negate)}
-          aria-pressed={Boolean(rule.negate)}
-          onClick={() => onChange({ ...rule, negate: !rule.negate })}
-        >
-          {rule.negate ? '≠' : '='}
-        </Button>
-        <Button
-          compact
-          variant="ghost"
+          onToggle={() => onChange({ ...rule, negate: !rule.negate })}
+        />
+        <IconButton
+          icon="copy"
+          label={formatMessage(filterBuilderMessages.duplicate)}
           disabled={disabled}
-          title={formatMessage(filterBuilderMessages.duplicate)}
-          aria-label={formatMessage(filterBuilderMessages.duplicate)}
           onClick={onDuplicate}
-        >
-          ⧉
-        </Button>
-        <Button
-          compact
-          variant="ghost"
+        />
+        <IconButton
+          icon="moveUp"
+          label={formatMessage(filterBuilderMessages.moveUp)}
           disabled={disabled || !canMoveUp}
-          title={formatMessage(filterBuilderMessages.moveUp)}
-          aria-label={formatMessage(filterBuilderMessages.moveUp)}
           onClick={() => onMove(-1)}
-        >
-          ↑
-        </Button>
-        <Button
-          compact
-          variant="ghost"
+        />
+        <IconButton
+          icon="moveDown"
+          label={formatMessage(filterBuilderMessages.moveDown)}
           disabled={disabled || !canMoveDown}
-          title={formatMessage(filterBuilderMessages.moveDown)}
-          aria-label={formatMessage(filterBuilderMessages.moveDown)}
           onClick={() => onMove(1)}
-        >
-          ↓
-        </Button>
-        <Button
-          compact
-          variant="ghost"
+        />
+        <IconButton
+          icon="close"
+          label={formatMessage(filterBuilderMessages.remove)}
           disabled={disabled}
-          title={formatMessage(filterBuilderMessages.remove)}
-          aria-label={formatMessage(filterBuilderMessages.remove)}
           onClick={onRemove}
-        >
-          ×
-        </Button>
+        />
       </Actions>
     </Row>
   );

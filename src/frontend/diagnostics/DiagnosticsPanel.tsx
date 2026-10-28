@@ -5,7 +5,8 @@ import { useIntl } from 'react-intl';
 import { toast } from 'react-toastify';
 import { PROMISE_CHANNEL } from '../../common';
 import { useBackend } from '../helpers';
-import { Button } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
+import { Icon } from '../ui/Icon';
 import { diagnosticsMessages } from './messages';
 
 const Section = styled.section`
@@ -16,6 +17,9 @@ const Section = styled.section`
 `;
 
 const SectionTitle = styled.h3`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
   margin: 0 0 var(--hb-space-sm);
   font-size: var(--hb-font-sm);
   font-weight: 600;
@@ -116,7 +120,10 @@ export const DiagnosticsPanel: React.FC = () => {
 
   return (
     <Section>
-      <SectionTitle>{formatMessage(diagnosticsMessages.title)}</SectionTitle>
+      <SectionTitle>
+        <Icon name="diagnostics" size="sm" />
+        {formatMessage(diagnosticsMessages.title)}
+      </SectionTitle>
 
       {diagnostics.error && (
         <Hint>
@@ -137,13 +144,11 @@ export const DiagnosticsPanel: React.FC = () => {
               <ListItem key={log.path}>
                 <Name title={log.path}>{log.name}</Name>
                 <Size>{formatBytes(log.size)}</Size>
-                <Button
-                  compact
-                  variant="ghost"
+                <IconButton
+                  icon="openExternal"
+                  label={formatMessage(diagnosticsMessages.open)}
                   onClick={() => void openPath.refetch({ path: log.path })}
-                >
-                  {formatMessage(diagnosticsMessages.open)}
-                </Button>
+                />
               </ListItem>
             ))}
           </List>
@@ -152,6 +157,7 @@ export const DiagnosticsPanel: React.FC = () => {
             <Button
               compact
               variant="ghost"
+              icon="browse"
               onClick={() => void openPath.refetch({ path: info.logDir })}
             >
               {formatMessage(diagnosticsMessages.openLogFolder)}
@@ -159,6 +165,7 @@ export const DiagnosticsPanel: React.FC = () => {
             <Button
               compact
               variant="ghost"
+              icon="browse"
               onClick={() => void openPath.refetch({ path: info.configDir })}
             >
               {formatMessage(diagnosticsMessages.openConfigFolder)}
@@ -166,6 +173,7 @@ export const DiagnosticsPanel: React.FC = () => {
             <Button
               compact
               variant="dangerOutline"
+              icon="delete"
               onClick={() => setConfirming('caches')}
             >
               {formatMessage(diagnosticsMessages.clearCaches)}
@@ -186,6 +194,7 @@ export const DiagnosticsPanel: React.FC = () => {
               <Button
                 compact
                 variant="dangerOutline"
+                icon="delete"
                 onClick={() => setConfirming('journal')}
               >
                 {formatMessage(diagnosticsMessages.clearJournal)}
@@ -212,7 +221,7 @@ export const DiagnosticsPanel: React.FC = () => {
           <Button variant="secondary" onClick={() => setConfirming(null)}>
             {formatMessage(diagnosticsMessages.cancel)}
           </Button>
-          <Button variant="danger" onClick={confirm}>
+          <Button variant="danger" icon="delete" onClick={confirm}>
             {formatMessage(diagnosticsMessages.clear)}
           </Button>
         </Modal.Footer>

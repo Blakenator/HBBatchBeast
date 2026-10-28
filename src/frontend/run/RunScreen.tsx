@@ -261,11 +261,18 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 
   if (sourceCount === 0) {
     return (
-      <Panel title={formatMessage(runMessages.emptyTitle)}>
+      <Panel
+        title={formatMessage(runMessages.emptyTitle)}
+        icon="emptyFolders"
+      >
         <p style={{ margin: 0, color: 'var(--hb-textMuted)' }}>
           {formatMessage(runMessages.emptyBody)}
         </p>
-        <Button className="mt-3" onClick={onOpenSettings}>
+        <Button
+          className="mt-3"
+          icon="emptyFolders"
+          onClick={onOpenSettings}
+        >
           {formatMessage(runMessages.emptyCta)}
         </Button>
       </Panel>
@@ -275,7 +282,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   return (
     <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
       <PanelGrid>
-        <Panel title={formatMessage(runMessages.folders)}>
+        <Panel title={formatMessage(runMessages.folders)} icon="folders">
           <strong>{sourceCount}</strong> source →{' '}
           <strong>{destinationCount}</strong> destination
           {library.defaults.temp_toggle === 1 ? ' · temp staging' : ''}
@@ -284,7 +291,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             destinationPath={destinationPath}
           />
         </Panel>
-        <Panel title={formatMessage(runMessages.encoding)}>
+        <Panel title={formatMessage(runMessages.encoding)} icon="encoding">
           {library.encoder === 'ffmpeg' ? 'FFmpeg' : 'HandBrake'} ·{' '}
           {presetDisplayName(defaultPreset) || formatMessage(runMessages.noPreset)}{' '}
           · {library.container}
@@ -294,7 +301,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
               }`
             : ''}
         </Panel>
-        <Panel title={formatMessage(runMessages.filters)}>
+        <Panel title={formatMessage(runMessages.filters)} icon="filters">
           <FilterChips
             expression={library.filters}
             fields={scanFilterFields}
@@ -330,6 +337,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 
       <div style={{ display: 'flex', gap: 'var(--hb-space-sm)', flexWrap: 'wrap' }}>
         <Button
+          icon="scan"
           onClick={() => {
             if (scanItems.length > 0 || runState) setConfirmingRescan(true);
             else requestScan();
@@ -340,6 +348,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </Button>
         <Button
           variant="success"
+          icon="start"
           onClick={() => {
             if (hasDestructive) setConfirming(true);
             else startRun();
@@ -356,20 +365,15 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </Button>
         <Button
           variant="secondary"
-          onClick={() => pause.refetch()}
-          disabled={!running}
+          icon={paused ? 'resume' : 'pause'}
+          onClick={() => (paused ? void resume.refetch() : void pause.refetch())}
+          disabled={!running && !paused}
         >
-          {formatMessage(runMessages.pause)}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => resume.refetch()}
-          disabled={!paused}
-        >
-          {formatMessage(runMessages.resume)}
+          {formatMessage(paused ? runMessages.resume : runMessages.pause)}
         </Button>
         <Button
           variant="dangerOutline"
+          icon="stop"
           onClick={() => stop.refetch()}
           disabled={!(running || paused)}
         >
@@ -378,6 +382,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         {isQuick && onEditQuick && (
           <Button
             variant="ghost"
+            icon="edit"
             onClick={onEditQuick}
             disabled={running || paused}
           >
@@ -387,6 +392,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         {isQuick && onSaveLibrary && (
           <Button
             variant="ghost"
+            icon="saveLibrary"
             onClick={() => onSaveLibrary(library)}
             disabled={problems.length > 0 || running || paused}
           >
@@ -436,6 +442,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             {formatMessage(runMessages.cancel)}
           </Button>
           <Button
+            icon="rescan"
             onClick={() => {
               setConfirmingRescan(false);
               requestScan();
@@ -470,6 +477,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
           </Button>
           <Button
             variant="danger"
+            icon="start"
             onClick={() => {
               setConfirming(false);
               startRun();
@@ -484,6 +492,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 
       <Panel
         title={formatMessage(runMessages.queue)}
+        icon="queue"
         actions={
           <span style={{ color: 'var(--hb-textMuted)' }}>
             {formatMessage(runMessages.queueCount, { count: rows.length })}

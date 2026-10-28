@@ -5,6 +5,7 @@ import { useIntl } from 'react-intl';
 import { FilterTrace } from '../../common/filterExpression';
 import type { RunItemAction } from '../../common';
 import { Button } from '../ui/Button';
+import type { AppIconName } from '../ui/icons';
 import { FilterTraceList } from '../ui/filterBuilder/FilterTraceList';
 import { filterBuilderMessages } from '../ui/filterBuilder/messages';
 import { scanFilterFields } from '../settings/scanFilterFields';
@@ -61,6 +62,8 @@ export const FilterTracePopover: React.FC<FilterTracePopoverProps> = ({
   const copied = state === 'skipped' || action === 'copy';
   const tone =
     state === 'excluded' || copied ? 'var(--hb-textMuted)' : 'var(--hb-success)';
+  const icon: AppIconName =
+    state === 'excluded' ? 'excluded' : copied ? 'copy' : 'passed';
 
   if (!trace) {
     return <span style={{ color: 'var(--hb-textMuted)' }}>—</span>;
@@ -91,6 +94,7 @@ export const FilterTracePopover: React.FC<FilterTracePopoverProps> = ({
       <Button
         compact
         variant="ghost"
+        icon={icon}
         style={{ color: tone }}
         title={formatMessage(filterBuilderMessages.whyThisFile)}
         aria-label={`${formatMessage(filterBuilderMessages.whyThisFile)} ${path}`}

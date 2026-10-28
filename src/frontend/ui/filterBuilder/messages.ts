@@ -23,6 +23,7 @@ export const filterBuilderMessages = createMessages({
   moveDown: { defaultMessage: 'Move down' },
   negate: { defaultMessage: 'Invert this stage' },
   negateGroup: { defaultMessage: 'Invert this group' },
+  negateShort: { defaultMessage: 'NOT' },
   negated: { defaultMessage: 'not' },
   field: { defaultMessage: 'Filter' },
   operator: { defaultMessage: 'Condition' },

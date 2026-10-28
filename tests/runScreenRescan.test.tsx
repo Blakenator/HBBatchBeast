@@ -135,6 +135,15 @@ function renderScreen() {
   );
 }
 
+describe('RunScreen run controls', () => {
+  it('renders one pause/resume toggle, disabled until a run is active', () => {
+    renderScreen();
+    const pause = screen.getByRole('button', { name: 'Pause' });
+    expect((pause as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+});
+
 describe('RunScreen rescan confirmation', () => {
   it('warns before replacing populated scan data', async () => {
     renderScreen();

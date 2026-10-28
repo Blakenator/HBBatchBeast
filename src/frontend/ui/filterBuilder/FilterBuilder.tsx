@@ -15,10 +15,11 @@ import {
   removeFilterNode,
   updateFilterNode,
 } from '../../../common/filterExpression';
-import { Button } from '../Button';
+import { Button, IconButton } from '../Button';
 import { AddStageMenu } from './AddStageMenu';
 import { FilterStageRow } from './FilterStageRow';
 import { filterBuilderMessages } from './messages';
+import { NegateButton } from './NegateButton';
 import { FilterBuilderProps, FilterFieldDefinition } from './types';
 
 const Builder = styled.div`
@@ -190,34 +191,25 @@ const FilterGroupEditor: React.FC<GroupEditorProps> = ({
           })}
         </GroupHint>
         <div style={{ flex: 1 }} />
-        <Button
-          compact
-          variant="ghost"
+        <NegateButton
+          group
+          active={Boolean(group.negate)}
           disabled={disabled}
-          aria-pressed={Boolean(group.negate)}
-          title={formatMessage(filterBuilderMessages.negateGroup)}
-          aria-label={formatMessage(filterBuilderMessages.negateGroup)}
-          onClick={() =>
+          onToggle={() =>
             onChange(
               updateFilterNode(expression, group.id, (node) =>
                 isFilterGroup(node) ? { ...node, negate: !node.negate } : node,
               ),
             )
           }
-        >
-          {group.negate ? '≠' : '='}
-        </Button>
+        />
         {nested && (
-          <Button
-            compact
-            variant="ghost"
+          <IconButton
+            icon="close"
+            label={formatMessage(filterBuilderMessages.remove)}
             disabled={disabled}
-            title={formatMessage(filterBuilderMessages.remove)}
-            aria-label={formatMessage(filterBuilderMessages.remove)}
             onClick={() => onChange(removeFilterNode(expression, group.id))}
-          >
-            ×
-          </Button>
+          />
         )}
       </GroupHeader>
 
@@ -272,8 +264,14 @@ const FilterGroupEditor: React.FC<GroupEditorProps> = ({
 
       <Footer>
         <AddStageMenu fields={fields} disabled={disabled} onAdd={addField} />
-        <Button compact variant="ghost" disabled={disabled} onClick={addGroup}>
-          {`+ ${formatMessage(filterBuilderMessages.addGroup)}`}
+        <Button
+          compact
+          variant="ghost"
+          icon="addGroup"
+          disabled={disabled}
+          onClick={addGroup}
+        >
+          {formatMessage(filterBuilderMessages.addGroup)}
         </Button>
       </Footer>
     </GroupBox>

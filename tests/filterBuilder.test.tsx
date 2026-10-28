@@ -88,6 +88,16 @@ describe('FilterBuilder', () => {
     expect(flattenFilterRules(currentExpression())).toHaveLength(before - 1);
   });
 
+  it('toggles stage negation from the NOT control', () => {
+    render(<Harness />);
+    const buttons = screen.getAllByRole('button', { name: 'Invert this stage' });
+    fireEvent.click(buttons[0]);
+
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    const [first] = flattenFilterRules(currentExpression());
+    expect(first.rule.negate).toBe(true);
+  });
+
   it('adds a property pair and clears an invalid value when the key changes', () => {
     const field = scanFilterFields.find((item) => item.id === 'mediaProperty');
     if (!field) throw new Error('missing mediaProperty field');

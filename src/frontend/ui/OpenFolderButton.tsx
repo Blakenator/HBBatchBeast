@@ -2,7 +2,7 @@ import React from 'react';
 import { toast } from 'react-toastify';
 import { PROMISE_CHANNEL } from '../../common';
 import { useBackend } from '../helpers';
-import { Button } from './Button';
+import { IconButton } from './Button';
 
 interface OpenFolderButtonProps {
   path: string;
@@ -40,15 +40,11 @@ export const OpenFolderButton: React.FC<OpenFolderButtonProps> = ({
   };
 
   return (
-    <Button
-      compact
-      variant="ghost"
+    <IconButton
+      icon="openExternal"
+      label={title ?? label}
       onClick={() => void open()}
       disabled={path.trim().length === 0 || openFolder.loading}
-      aria-label={title ?? label}
-      title={title ?? label}
-    >
-      {label}
-    </Button>
+    />
   );
 };

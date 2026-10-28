@@ -3,7 +3,8 @@ import { Form } from 'react-bootstrap';
 import { toast } from 'react-toastify';
 import { PROMISE_CHANNEL, PathPickerKind } from '../../common';
 import { useBackend } from '../helpers';
-import { Button } from '../ui/Button';
+import { Button, IconButton } from '../ui/Button';
+import type { AppIconName } from '../ui/icons';
 
 interface BrowseButtonProps {
   kind: PathPickerKind;
@@ -13,6 +14,8 @@ interface BrowseButtonProps {
   filters?: { name: string; extensions: string[] }[];
   onPick: (paths: string[]) => void;
   label?: string;
+  showLabel?: boolean;
+  icon?: AppIconName;
 }
 
 /** Opens the OS picker and reports the selected paths. */
@@ -24,6 +27,8 @@ export const BrowseButton: React.FC<BrowseButtonProps> = ({
   filters,
   onPick,
   label = 'Browse…',
+  showLabel = false,
+  icon = 'browse',
 }) => {
   const picker = useBackend({
     channel: PROMISE_CHANNEL.PickPath,
@@ -46,17 +51,28 @@ export const BrowseButton: React.FC<BrowseButtonProps> = ({
     if (!result.data?.canceled && paths.length > 0) onPick(paths);
   };
 
+  if (showLabel) {
+    return (
+      <Button
+        compact
+        variant="ghost"
+        icon={icon}
+        title={title}
+        onClick={() => void browse()}
+        disabled={picker.loading}
+      >
+        {label}
+      </Button>
+    );
+  }
+
   return (
-    <Button
-      compact
-      variant="ghost"
+    <IconButton
+      icon={icon}
+      label={title ?? label}
       onClick={() => void browse()}
       disabled={picker.loading}
-      aria-label={title ?? label}
-      title={title ?? label}
-    >
-      {label}
-    </Button>
+    />
   );
 };
 
@@ -100,15 +116,11 @@ export const PathInput: React.FC<PathInputProps> = ({
       onPick={(paths) => onChange(paths[0] ?? '')}
     />
     {allowClear && value.length > 0 && (
-      <Button
-        compact
-        variant="ghost"
+      <IconButton
+        icon="close"
+        label="Clear path"
         onClick={() => onChange('')}
-        aria-label="Clear path"
-        title="Clear path"
-      >
-        ×
-      </Button>
+      />
     )}
   </div>
 );

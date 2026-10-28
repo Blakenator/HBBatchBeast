@@ -124,6 +124,7 @@ export const FailuresPanel: React.FC<FailuresPanelProps> = ({
   return (
     <Panel
       title={formatMessage(runMessages.failuresTitle)}
+      icon="failures"
       actions={
         <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--hb-space-sm)' }}>
           {copied !== 'idle' && (
@@ -144,7 +145,7 @@ export const FailuresPanel: React.FC<FailuresPanelProps> = ({
               )}
             </span>
           )}
-          <Button compact variant="ghost" onClick={copyAll}>
+          <Button compact variant="ghost" icon="copy" onClick={copyAll}>
             {formatMessage(runMessages.copyAllErrors)}
           </Button>
         </span>

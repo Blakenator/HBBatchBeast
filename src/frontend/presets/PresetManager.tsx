@@ -97,6 +97,7 @@ export const PresetManager: React.FC<PresetManagerProps> = ({
       <div>
         <Button
           variant="secondary"
+          icon="add"
           onClick={() =>
             onChange([
               ...config.presets,
@@ -108,6 +109,7 @@ export const PresetManager: React.FC<PresetManagerProps> = ({
         </Button>{' '}
         <Button
           variant="secondary"
+          icon="add"
           onClick={() =>
             onChange([
               ...config.presets,
@@ -139,6 +141,7 @@ export const PresetManager: React.FC<PresetManagerProps> = ({
               <Button
                 compact
                 variant="dangerOutline"
+                icon="delete"
                 disabled={inUse || config.presets.length <= 1}
                 title={
                   inUse

@@ -2,7 +2,7 @@ import React, { useId, useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
-import { Button } from '../Button';
+import { Button, IconButton } from '../Button';
 import { filterBuilderMessages } from './messages';
 import { FilterFieldDefinition } from './types';
 
@@ -113,6 +113,7 @@ export const AddStageMenu: React.FC<AddStageMenuProps> = ({
       <Button
         compact
         variant="ghost"
+        icon="add"
         disabled={disabled}
         aria-expanded={open}
         aria-controls={panelId}
@@ -121,22 +122,18 @@ export const AddStageMenu: React.FC<AddStageMenuProps> = ({
           setQuery('');
         }}
       >
-        {label ?? `+ ${formatMessage(filterBuilderMessages.addStage)}`}
+        {label ?? formatMessage(filterBuilderMessages.addStage)}
       </Button>
       {open && (
         <Menu id={panelId} role="region" aria-label={formatMessage(filterBuilderMessages.addStage)}>
           <MenuHeader>
             <MenuTitle>{formatMessage(filterBuilderMessages.addStage)}</MenuTitle>
             <div style={{ flex: 1 }} />
-            <Button
-              compact
-              variant="ghost"
-              aria-label={formatMessage(filterBuilderMessages.closeMenu)}
-              title={formatMessage(filterBuilderMessages.closeMenu)}
+            <IconButton
+              icon="close"
+              label={formatMessage(filterBuilderMessages.closeMenu)}
               onClick={() => setOpen(false)}
-            >
-              ×
-            </Button>
+            />
           </MenuHeader>
           <Form.Control
             autoFocus

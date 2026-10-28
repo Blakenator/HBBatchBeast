@@ -59,15 +59,21 @@ export const LibraryBar: React.FC<LibraryBarProps> = ({
       />
 
       <Actions>
-        <Button compact variant="ghost" onClick={onCreate}>
+        <Button compact variant="ghost" icon="add" onClick={onCreate}>
           {formatMessage(libraryMessages.add)}
         </Button>
-        <Button compact variant="ghost" onClick={onDuplicate}>
+        <Button
+          compact
+          variant="ghost"
+          icon="copy"
+          onClick={onDuplicate}
+        >
           {formatMessage(libraryMessages.duplicate)}
         </Button>
         <Button
           compact
           variant="ghost"
+          icon="edit"
           onClick={() => {
             setNameDraft(current?.name ?? '');
             setRenaming(true);
@@ -78,6 +84,7 @@ export const LibraryBar: React.FC<LibraryBarProps> = ({
         <Button
           compact
           variant="dangerOutline"
+          icon="delete"
           onClick={onDelete}
           disabled={config.libraries.length <= 1}
           title={

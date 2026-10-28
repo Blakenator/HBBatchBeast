@@ -5,6 +5,8 @@ import {
   FilterTrace,
   FilterTraceEntry,
 } from '../../../common/filterExpression';
+import { Icon } from '../Icon';
+import type { AppIconName } from '../icons';
 import { describeRule } from './describe';
 import { filterBuilderMessages } from './messages';
 import { FilterFieldDefinition } from './types';
@@ -74,11 +76,11 @@ function statusText(entry: FilterTraceEntry): {
   return { label: 'traceNotEvaluated', tone: 'textMuted' };
 }
 
-const statusIcon: Record<FilterTraceEntry['status'], string> = {
-  pass: '✓',
-  fail: '✕',
-  skipped: '–',
-  error: '⚠',
+const statusIcon: Record<FilterTraceEntry['status'], AppIconName> = {
+  pass: 'passed',
+  fail: 'failed',
+  skipped: 'neutral',
+  error: 'warning',
 };
 
 interface FilterTraceListProps {
@@ -115,7 +117,7 @@ export const FilterTraceList: React.FC<FilterTraceListProps> = ({
         return (
           <Item key={entry.ruleId} $indent={Math.max(0, entry.groupPath.length - 1)}>
             <Status $tone={tone} aria-hidden>
-              {statusIcon[entry.status]}
+              <Icon name={statusIcon[entry.status]} size="xs" />
             </Status>
             <Body>
               <Condition>

@@ -85,7 +85,7 @@ describe('SettingsForm mapping rules', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Add stage' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add stage' })[0]);
     expect(screen.getByRole('region', { name: 'Add stage' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /^Folder/ }));

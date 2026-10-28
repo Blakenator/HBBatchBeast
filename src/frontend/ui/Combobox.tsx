@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
+import { Icon } from './Icon';
 import { shellMessages } from './messages';
 
 export interface ComboboxOption {
@@ -37,11 +38,8 @@ const Caret = styled.span<{ $open: boolean }>`
   position: absolute;
   top: 50%;
   right: 0.85rem;
-  width: 0;
-  height: 0;
-  border-right: 4px solid transparent;
-  border-left: 4px solid transparent;
-  border-top: 5px solid var(--hb-textMuted);
+  display: inline-flex;
+  color: var(--hb-textMuted);
   transform: translateY(-50%) rotate(${({ $open }) => ($open ? 180 : 0)}deg);
   transition: transform 120ms ease;
   pointer-events: none;
@@ -260,7 +258,9 @@ export const Combobox: React.FC<ComboboxProps> = ({
         }}
         onKeyDown={handleKeyDown}
       />
-      <Caret $open={open} aria-hidden="true" />
+      <Caret $open={open} aria-hidden="true">
+        <Icon name="chevronDown" size="xs" />
+      </Caret>
       {open && (
         <Menu id={listId} role="listbox" aria-label={ariaLabel}>
           {filtered.length === 0 ? (

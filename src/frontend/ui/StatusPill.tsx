@@ -1,5 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
+import { Icon } from './Icon';
+import { AppIconName } from './icons';
 
 export type AppStatus =
   | 'idle'
@@ -20,6 +22,19 @@ const tone: Record<AppStatus, string> = {
   error: 'var(--hb-danger)',
 };
 
+const statusIcon: Record<
+  AppStatus,
+  { name: AppIconName; spin?: boolean }
+> = {
+  idle: { name: 'statusIdle' },
+  scanning: { name: 'statusScanning', spin: true },
+  running: { name: 'statusRunning', spin: true },
+  paused: { name: 'statusPaused' },
+  stopping: { name: 'statusStopping', spin: true },
+  completed: { name: 'statusCompleted' },
+  error: { name: 'statusError' },
+};
+
 const Pill = styled.span<{ $tone: string }>`
   display: inline-flex;
   align-items: center;
@@ -34,8 +49,12 @@ const Pill = styled.span<{ $tone: string }>`
   text-transform: capitalize;
 `;
 
-export const StatusPill: React.FC<{ status: AppStatus }> = ({ status }) => (
-  <Pill $tone={tone[status]} role="status" aria-live="polite">
-    {status}
-  </Pill>
-);
+export const StatusPill: React.FC<{ status: AppStatus }> = ({ status }) => {
+  const icon = statusIcon[status];
+  return (
+    <Pill $tone={tone[status]} role="status" aria-live="polite">
+      <Icon name={icon.name} size="xs" spin={icon.spin} />
+      {status}
+    </Pill>
+  );
+};

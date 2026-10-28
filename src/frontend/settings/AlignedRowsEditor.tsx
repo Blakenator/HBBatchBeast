@@ -9,7 +9,7 @@ import {
   serializeCommandPair,
   serializeMappedRows,
 } from '../../common';
-import { Button } from '../ui/Button';
+import { IconButton } from '../ui/Button';
 import { PresetSelect } from './PresetSelect';
 import { InlineNote } from './FieldLayout';
 import { settingsMessages } from './messages';
@@ -232,15 +232,12 @@ export const AlignedRowsEditor: React.FC<AlignedRowsEditorProps> = ({
             )}
 
             {orphan ? (
-              <Button
-                compact
-                variant="ghost"
-                onClick={() => removeOrphan(index)}
-                aria-label={formatMessage(settingsMessages.removeOrphanRow)}
+              <IconButton
+                icon="delete"
+                label={formatMessage(settingsMessages.removeOrphanRow)}
                 title={formatMessage(settingsMessages.noMatchingSource)}
-              >
-                ×
-              </Button>
+                onClick={() => removeOrphan(index)}
+              />
             ) : (
               <span />
             )}

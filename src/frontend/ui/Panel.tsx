@@ -1,5 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
+import { Icon } from './Icon';
+import { AppIconName } from './icons';
 
 const Section = styled.section`
   background: var(--hb-surface);
@@ -11,6 +13,9 @@ const Section = styled.section`
 `;
 
 const Title = styled.h2`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
   font-size: var(--hb-font-sm);
   font-weight: 600;
   text-transform: uppercase;
@@ -21,9 +26,10 @@ const Title = styled.h2`
 
 export const Panel: React.FC<{
   title?: string;
+  icon?: AppIconName;
   actions?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ title, actions, children }) => (
+}> = ({ title, icon, actions, children }) => (
   <Section>
     {(title || actions) && (
       <div
@@ -33,7 +39,12 @@ export const Panel: React.FC<{
           justifyContent: 'space-between',
         }}
       >
-        {title && <Title>{title}</Title>}
+        {title && (
+          <Title>
+            {icon && <Icon name={icon} size="sm" />}
+            {title}
+          </Title>
+        )}
         {actions}
       </div>
     )}

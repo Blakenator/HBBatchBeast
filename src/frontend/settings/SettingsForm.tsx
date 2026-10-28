@@ -14,6 +14,8 @@ import { settingsMessages } from './messages';
 import { LanguageSelect } from './LanguageSelect';
 import { GlobalSystemSettings } from './GlobalSystemSettings';
 import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
+import { Icon } from '../ui/Icon';
+import type { AppIconName } from '../ui/icons';
 import { LibraryBar } from './library/LibraryBar';
 import { LibraryEditor } from './library/LibraryEditor';
 import { PresetManager } from '../presets/PresetManager';
@@ -21,6 +23,19 @@ import { PresetManager } from '../presets/PresetManager';
 interface SettingsFormProps {
   config: AppConfigV2;
 }
+
+const tabTitle = (icon: AppIconName, label: string) => (
+  <span
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 'var(--hb-space-xs)',
+    }}
+  >
+    <Icon name={icon} size="sm" />
+    {label}
+  </span>
+);
 
 export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
   const { formatMessage } = useIntl();
@@ -85,7 +100,10 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
       <Tabs defaultActiveKey="libraries" className="mb-3">
         <Tab
           eventKey="global"
-          title={formatMessage(settingsMessages.globalSettings)}
+          title={tabTitle(
+            'globalSettings',
+            formatMessage(settingsMessages.globalSettings),
+          )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
             <LanguageSelect config={currentGlobalConfig} />
@@ -103,7 +121,10 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
 
         <Tab
           eventKey="libraries"
-          title={formatMessage(settingsMessages.librarySettings)}
+          title={tabTitle(
+            'libraries',
+            formatMessage(settingsMessages.librarySettings),
+          )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
             <LibraryBar
@@ -135,7 +156,10 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
 
         <Tab
           eventKey="presets"
-          title={formatMessage(settingsMessages.presetSettings)}
+          title={tabTitle(
+            'presets',
+            formatMessage(settingsMessages.presetSettings),
+          )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
             <PresetManager

@@ -61,7 +61,7 @@ export const LauncherPage: React.FC<LauncherPageProps> = ({
   return (
     <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
       <PanelGrid>
-        <Panel title="Quick convert">
+        <Panel title="Quick convert" icon="quick">
           <p style={{ margin: 0, color: 'var(--hb-textMuted)' }}>
             Convert a folder once without changing your saved libraries. You
             can still review the queue, edit filters and mapping rules, and save
@@ -73,17 +73,17 @@ export const LauncherPage: React.FC<LauncherPageProps> = ({
             </Alert>
           ) : (
             <Actions>
-              <Button variant="success" onClick={onQuickConvert}>
+              <Button variant="success" icon="quick" onClick={onQuickConvert}>
                 Start a quick conversion
               </Button>
-              <Button variant="ghost" onClick={onOpenSettings}>
+              <Button variant="ghost" icon="presets" onClick={onOpenSettings}>
                 Manage presets
               </Button>
             </Actions>
           )}
         </Panel>
 
-        <Panel title="Libraries">
+        <Panel title="Libraries" icon="libraries">
           {config.libraries.length === 0 ? (
             <Muted>No libraries yet.</Muted>
           ) : (
@@ -108,6 +108,7 @@ export const LauncherPage: React.FC<LauncherPageProps> = ({
                       <Button
                         compact
                         variant="secondary"
+                        icon="arrowRight"
                         onClick={() => onOpenLibrary(library.id)}
                       >
                         Open
@@ -115,6 +116,7 @@ export const LauncherPage: React.FC<LauncherPageProps> = ({
                       <Button
                         compact
                         variant="ghost"
+                        icon="quick"
                         onClick={() => onQuickFromLibrary(library)}
                       >
                         Use as quick run
@@ -126,7 +128,7 @@ export const LauncherPage: React.FC<LauncherPageProps> = ({
             </Grid>
           )}
           <Actions>
-            <Button variant="secondary" onClick={onOpenSettings}>
+            <Button variant="secondary" icon="libraries" onClick={onOpenSettings}>
               Manage libraries
             </Button>
           </Actions>
