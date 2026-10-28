@@ -97,6 +97,13 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     () => libraryToRuntimeConfig(config, library),
     [config, library],
   );
+  const sourceRoots = useMemo(
+    () =>
+      library.folders
+        .map((folder) => folder.source)
+        .filter((source) => source.trim().length > 0),
+    [library.folders],
+  );
   const problems = useMemo(
     () => validateLibrary(library, config.presets),
     [library, config.presets],
@@ -519,6 +526,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         ) : (
           <QueueTable
             rows={rows}
+            roots={sourceRoots}
             onOpenLog={setLogRow}
             onCancel={
               runActive

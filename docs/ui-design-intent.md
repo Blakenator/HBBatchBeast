@@ -95,6 +95,10 @@ scroll to the field.
 
 - Virtualized; stable scroll and selection at 10k+ rows (US-15, F3). Implemented with TanStack Table (models, sorting,
   filtering, sizing, visibility) and TanStack Virtual (row windowing).
+- View switch: **Flat list** (default) or **Folder tree**. The tree groups rows under the library source folders, starts
+  fully collapsed, and shows per-folder file count, total source size, state breakdown and aggregate progress. Existing
+  state filters and path search apply to the tree, and folder aggregates only count matching files. Files keep the same
+  columns and row actions, indented under their folder.
 - Columns: `#`, file path (truncated middle, full on hover/copy), preset (resolved), state, progress, ETA, speed, size,
   reason, actions. Every data column is sortable (ascending → descending → unsorted), resizable (drag the header edge,
   or focus the separator and use arrow keys), reorderable (drag the grip or use the column menu arrows) and hideable.

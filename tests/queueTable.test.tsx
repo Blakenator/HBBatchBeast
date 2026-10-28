@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { IntlProvider } from 'react-intl';
 import { getDefaultMessages } from '../src/frontend/allMessages';
 import { QueueRow, QueueTable } from '../src/frontend/run/QueueTable';
@@ -41,10 +41,16 @@ function renderTable(
   rows: QueueRow[],
   onOpenLog = vi.fn(),
   onCancel?: (row: QueueRow) => void,
+  roots?: string[],
 ) {
   return render(
     <IntlProvider locale="en" messages={messages} defaultLocale="en">
-      <QueueTable rows={rows} onOpenLog={onOpenLog} onCancel={onCancel} />
+      <QueueTable
+        rows={rows}
+        roots={roots}
+        onOpenLog={onOpenLog}
+        onCancel={onCancel}
+      />
     </IntlProvider>,
   );
 }
@@ -245,5 +251,153 @@ describe('QueueTable', () => {
     expect(await screen.findByText('Filter stages')).toBeTruthy();
     expect(screen.getAllByText(/contains none of/).length).toBeGreaterThan(0);
     expect(screen.getByText('Failed here')).toBeTruthy();
+  });
+
+  describe('folder view', () => {
+    const treeRows: QueueRow[] = [
+      {
+        index: 0,
+        path: '/media/movies/a.mkv',
+        preset: 'Fast 1080p30',
+        state: 'success',
+        sourceBytes: 10 * 1024 * 1024,
+        progress: { percent: 100 },
+      },
+      {
+        index: 1,
+        path: '/media/movies/sub/b.mkv',
+        preset: 'Fast 1080p30',
+        state: 'error',
+        reason: 'Encoder crashed',
+        sourceBytes: 5 * 1024 * 1024,
+      },
+      {
+        index: 2,
+        path: '/media/tv/c.mkv',
+        state: 'pending',
+        sourceBytes: 2 * 1024 * 1024,
+      },
+      {
+        index: 3,
+        path: '/media/movies/d.mkv',
+        state: 'pending',
+        sourceBytes: 1024 * 1024,
+      },
+    ];
+    const roots = ['/media/movies', '/media/tv'];
+
+    function switchToFolders() {
+      fireEvent.click(screen.getByRole('radio', { name: 'Folder tree' }));
+    }
+
+    it('keeps the flat list as the default view', () => {
+      renderTable(rows, vi.fn(), undefined, roots);
+
+      expect(
+        screen.getByRole('radio', { name: 'Flat list' }).getAttribute(
+          'aria-checked',
+        ),
+      ).toBe('true');
+      expect(screen.getByText('b.mkv')).toBeTruthy();
+    });
+
+    it('starts fully collapsed and shows aggregate folder stats', () => {
+      renderTable(treeRows, vi.fn(), undefined, roots);
+      switchToFolders();
+
+      expect(screen.queryByText('a.mkv')).toBeNull();
+      expect(screen.queryByText('b.mkv')).toBeNull();
+
+      const movies = screen.getByRole('button', {
+        name: /Expand \/media\/movies/,
+      });
+      expect(movies.getAttribute('aria-expanded')).toBe('false');
+      expect(movies.getAttribute('aria-label')).toContain(
+        '3 files, 16.0 MB, Pending: 1, Success: 1, Error: 1, Overall progress 67%',
+      );
+
+      const tv = screen.getByRole('button', { name: /Expand \/media\/tv/ });
+      expect(tv.getAttribute('aria-label')).toContain('1 file, 2.0 MB');
+      expect(tv.getAttribute('aria-label')).not.toContain('Overall progress');
+    });
+
+    it('expands nested folders and keeps file row actions wired', () => {
+      const onOpenLog = vi.fn();
+      renderTable(treeRows, onOpenLog, undefined, roots);
+      switchToFolders();
+
+      fireEvent.click(
+        screen.getByRole('button', { name: /Expand \/media\/movies/ }),
+      );
+      expect(screen.getByText('a.mkv')).toBeTruthy();
+      expect(screen.getByText('d.mkv')).toBeTruthy();
+      expect(screen.queryByText('b.mkv')).toBeNull();
+
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: /Expand \/media\/movies\/sub/,
+        }),
+      );
+      expect(screen.getByText('b.mkv')).toBeTruthy();
+
+      const row = screen.getByText('b.mkv').closest('[role="row"]');
+      expect(row).toBeTruthy();
+      fireEvent.click(
+        within(row as HTMLElement).getByRole('button', {
+          name: /show the log/i,
+        }),
+      );
+      expect(onOpenLog).toHaveBeenCalledWith(treeRows[1]);
+    });
+
+    it('applies the state filter to the tree and recomputes aggregates', () => {
+      renderTable(treeRows, vi.fn(), undefined, roots);
+      switchToFolders();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Error' }));
+
+      expect(
+        screen.queryByRole('button', { name: /Expand \/media\/tv/ }),
+      ).toBeNull();
+      const movies = screen.getByRole('button', {
+        name: /Expand \/media\/movies/,
+      });
+      expect(movies.getAttribute('aria-label')).toContain(
+        '1 file, 5.0 MB, Error: 1, Overall progress 100%',
+      );
+
+      fireEvent.click(movies);
+      expect(screen.queryByText('a.mkv')).toBeNull();
+      expect(screen.queryByText('d.mkv')).toBeNull();
+      expect(
+        screen.getByRole('button', { name: /Expand \/media\/movies\/sub/ }),
+      ).toBeTruthy();
+    });
+
+    it('applies the path search to the tree and recomputes aggregates', () => {
+      renderTable(treeRows, vi.fn(), undefined, roots);
+      switchToFolders();
+
+      fireEvent.change(screen.getByRole('textbox', { name: 'Filter by path' }), {
+        target: { value: 'd.mkv' },
+      });
+
+      expect(
+        screen.queryByRole('button', { name: /Expand \/media\/tv/ }),
+      ).toBeNull();
+      const movies = screen.getByRole('button', {
+        name: /Expand \/media\/movies/,
+      });
+      expect(movies.getAttribute('aria-label')).toContain('1 file, 1.0 MB');
+
+      fireEvent.click(movies);
+      expect(screen.getByText('d.mkv')).toBeTruthy();
+      expect(screen.queryByText('a.mkv')).toBeNull();
+      expect(
+        screen.queryByRole('button', {
+          name: /Expand \/media\/movies\/sub/,
+        }),
+      ).toBeNull();
+    });
   });
 });

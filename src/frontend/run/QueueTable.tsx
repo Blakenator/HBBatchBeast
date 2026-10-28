@@ -32,12 +32,20 @@ import { mediaMessages } from './mediaMessages';
 import { MediaInfoModal } from './MediaInfoModal';
 import { Button, IconButton } from '../ui/Button';
 import { Icon } from '../ui/Icon';
+import type { AppIconName } from '../ui/icons';
 import { normalizePresetName } from '../../common';
 import type { RunItemAction } from '../../common';
 import type { FilterTrace } from '../../common/filterExpression';
 import type { PresetTrace } from '../../common/library';
 import { RunItemProgress, parsePercent } from '../../common/runTelemetry';
 import { FilterTracePopover } from './FilterTracePopover';
+import { SegmentedControl } from '../settings/SegmentedControl';
+import {
+  buildFolderTree,
+  flattenFolderTree,
+  type FolderNode,
+  type VisibleTreeNode,
+} from './folderTree';
 import {
   firstLine,
   formatBytes,
@@ -80,6 +88,8 @@ export interface QueueRow {
 
 interface QueueTableProps {
   rows: QueueRow[];
+  /** Library source folders used as roots for the folder tree view. */
+  roots?: string[];
   onOpenLog: (row: QueueRow) => void;
   /** Provided only while a run is active; enables the per-row cancel action. */
   onCancel?: (row: QueueRow) => void;
@@ -221,13 +231,103 @@ const BodyRow = styled.div`
   }
 `;
 
-const Cell = styled.div<{ $align?: 'left' | 'right' }>`
+const Cell = styled.div<{ $align?: 'left' | 'right'; $indent?: number }>`
   min-width: 0;
   padding: 0 var(--hb-space-sm);
+  padding-left: ${({ $indent }) =>
+    `calc(var(--hb-space-sm) + ${$indent ?? 0}px)`};
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: ${({ $align }) => ($align === 'right' ? 'right' : 'left')};
+`;
+
+const FolderButton = styled.button<{ $depth: number }>`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0 var(--hb-space-sm);
+  padding-left: ${({ $depth }) =>
+    `calc(var(--hb-space-sm) + ${$depth * 16}px)`};
+
+  &:hover {
+    background: var(--hb-surfaceMuted);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--hb-focus);
+    outline-offset: -2px;
+  }
+`;
+
+const FolderCell = styled.div`
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 100%;
+`;
+
+const FolderName = styled.span`
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+`;
+
+const FolderStats = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hb-space-md);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-xs);
+  white-space: nowrap;
+`;
+
+const StateChip = styled.span<{ $color: string }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: ${({ $color }) => $color};
+  font-variant-numeric: tabular-nums;
+`;
+
+const FolderProgress = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--hb-textMuted);
+`;
+
+const FolderProgressTrack = styled.span`
+  display: inline-block;
+  width: 64px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--hb-surfaceMuted);
+  overflow: hidden;
+`;
+
+const FolderProgressFill = styled.span<{ $percent: number }>`
+  display: block;
+  height: 100%;
+  width: ${({ $percent }) => Math.max(0, Math.min(100, $percent))}%;
+  background: var(--hb-accent);
 `;
 
 const PathCell = styled.div`
@@ -346,6 +446,28 @@ const stateColor: Record<QueueRowState, string> = {
   excluded: 'var(--hb-textMuted)',
   skipped: 'var(--hb-textMuted)',
 };
+
+const stateIcon: Record<QueueRowState, AppIconName> = {
+  pending: 'statusIdle',
+  running: 'statusRunning',
+  success: 'passed',
+  error: 'failed',
+  cancelled: 'cancel',
+  excluded: 'excluded',
+  skipped: 'neutral',
+};
+
+const stateOrder: QueueRowState[] = [
+  'running',
+  'pending',
+  'success',
+  'error',
+  'cancelled',
+  'excluded',
+  'skipped',
+];
+
+const INDENT_WIDTH = 16;
 
 const cellAlign: Record<string, 'left' | 'right'> = {
   index: 'right',
@@ -496,11 +618,14 @@ function normalizeOrder(current: ColumnOrderState, ids: string[]): string[] {
 
 export const QueueTable: React.FC<QueueTableProps> = ({
   rows,
+  roots,
   onOpenLog,
   onCancel,
 }) => {
   const { formatMessage } = useIntl();
   const columnsPopoverId = useId();
+  const [view, setView] = useState<'flat' | 'folders'>('flat');
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<QueueRowState | 'all'>('all');
   const [search, setSearch] = useState('');
   const [inspecting, setInspecting] = useState<string | null>(null);
@@ -563,7 +688,7 @@ export const QueueTable: React.FC<QueueTableProps> = ({
           const { directory, name } = splitPath(info.getValue());
           return (
             <PathCell title={info.getValue()}>
-              <Directory>{directory}</Directory>
+              {view === 'flat' ? <Directory>{directory}</Directory> : null}
               <FileName>{name}</FileName>
             </PathCell>
           );
@@ -771,7 +896,7 @@ export const QueueTable: React.FC<QueueTableProps> = ({
         },
       }),
     ]);
-  }, [formatMessage]);
+  }, [formatMessage, view]);
 
   const columnFilters = useMemo(
     () => (filter === 'all' ? [] : [{ id: 'state', value: filter }]),
@@ -813,12 +938,38 @@ export const QueueTable: React.FC<QueueTableProps> = ({
   });
 
   const tableRows = table.getRowModel().rows;
+  const folderTree = useMemo(
+    () =>
+      view === 'folders'
+        ? buildFolderTree(
+            tableRows.map((row) => row.original),
+            roots ?? [],
+          )
+        : [],
+    [tableRows, roots, view],
+  );
+  const treeNodes = useMemo<VisibleTreeNode<QueueRow>[]>(
+    () => (view === 'folders' ? flattenFolderTree(folderTree, expanded) : []),
+    [expanded, folderTree, view],
+  );
+  const tableRowsById = useMemo(
+    () => new Map(tableRows.map((row) => [row.id, row])),
+    [tableRows],
+  );
+
   const rowVirtualizer = useVirtualizer({
-    count: tableRows.length,
+    count: view === 'folders' ? treeNodes.length : tableRows.length,
     getScrollElement: () => viewport.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
-    getItemKey: (index) => tableRows[index]?.id ?? index,
+    getItemKey: (index) => {
+      if (view === 'flat') return tableRows[index]?.id ?? index;
+      const node = treeNodes[index];
+      if (!node) return index;
+      return node.kind === 'folder'
+        ? `folder:${node.node.key}`
+        : `file:${node.file.index}`;
+    },
     scrollMargin: HEADER_HEIGHT,
   });
 
@@ -885,6 +1036,167 @@ export const QueueTable: React.FC<QueueTableProps> = ({
     setColumnSizing({});
   };
 
+  const toggleFolder = (key: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  type TableRow = (typeof tableRows)[number];
+
+  const renderFileRow = (
+    row: TableRow,
+    start: number,
+    ariaIndex: number,
+    depth: number,
+  ) => {
+    const visibleCells = row.getVisibleCells();
+    const indentCellId = visibleCells.some((cell) => cell.column.id === 'path')
+      ? 'path'
+      : visibleCells[0]?.column.id;
+    return (
+      <BodyRow
+        key={row.id}
+        data-index={ariaIndex - 2}
+        role="row"
+        aria-rowindex={ariaIndex}
+        style={{
+          transform: `translateY(${start - HEADER_HEIGHT}px)`,
+          gridTemplateColumns: gridTemplate,
+          width: '100%',
+        }}
+      >
+        {visibleCells.map((cell) => (
+          <Cell
+            key={cell.id}
+            role="gridcell"
+            $align={cellAlign[cell.column.id]}
+            $indent={
+              cell.column.id === indentCellId ? depth * INDENT_WIDTH : 0
+            }
+          >
+            <table.FlexRender cell={cell} />
+          </Cell>
+        ))}
+      </BodyRow>
+    );
+  };
+
+  const stateSummary = (node: FolderNode<QueueRow>) =>
+    stateOrder
+      .filter((state) => node.stateCounts[state] > 0)
+      .map(
+        (state) =>
+          `${formatMessage(runMessages[state])}: ${node.stateCounts[state]}`,
+      );
+
+  const folderAriaLabel = (node: FolderNode<QueueRow>, open: boolean) => {
+    const parts = [
+      formatMessage(
+        open ? runMessages.collapseFolder : runMessages.expandFolder,
+        { folder: node.path },
+      ),
+      formatMessage(runMessages.folderFileCount, { count: node.fileCount }),
+      node.hasKnownSize ? formatBytes(node.sourceBytes) : '—',
+      ...stateSummary(node),
+    ];
+    if (node.percent !== undefined) {
+      parts.push(
+        `${formatMessage(runMessages.overallProgress)} ${formatPercent(
+          node.percent,
+          0,
+        )}`,
+      );
+    }
+    return parts.join(', ');
+  };
+
+  const renderFolderRow = (
+    node: FolderNode<QueueRow>,
+    depth: number,
+    start: number,
+    ariaIndex: number,
+  ) => {
+    const open = expanded.has(node.key);
+    return (
+      <BodyRow
+        key={`folder:${node.key}`}
+        role="row"
+        aria-rowindex={ariaIndex}
+        aria-level={depth + 1}
+        style={{
+          transform: `translateY(${start - HEADER_HEIGHT}px)`,
+          gridTemplateColumns: '1fr',
+          width: '100%',
+        }}
+      >
+        <FolderCell
+          role="gridcell"
+          aria-colspan={visibleColumns.length}
+        >
+          <FolderButton
+            type="button"
+            aria-expanded={open}
+            aria-label={folderAriaLabel(node, open)}
+            title={node.path}
+            $depth={depth}
+            onClick={() => toggleFolder(node.key)}
+          >
+            <Icon name={open ? 'collapse' : 'expand'} size="xs" tone="muted" />
+            <Icon name="folder" size="sm" tone="muted" />
+            <FolderName>{node.name}</FolderName>
+            <FolderStats>
+              <span>
+                {formatMessage(runMessages.folderFileCount, {
+                  count: node.fileCount,
+                })}
+              </span>
+              <span>
+                {node.hasKnownSize ? formatBytes(node.sourceBytes) : '—'}
+              </span>
+              {stateOrder.map((state) => {
+                const count = node.stateCounts[state];
+                if (count === 0) return null;
+                const label = `${formatMessage(runMessages[state])}: ${count}`;
+                return (
+                  <StateChip
+                    key={state}
+                    role="img"
+                    aria-label={label}
+                    title={label}
+                    $color={stateColor[state]}
+                  >
+                    <Icon name={stateIcon[state]} size="xs" />
+                    {count}
+                  </StateChip>
+                );
+              })}
+            </FolderStats>
+            <FolderProgress
+              title={`${formatMessage(runMessages.overallProgress)}: ${
+                node.percent === undefined
+                  ? '—'
+                  : formatPercent(node.percent, 0)
+              }`}
+            >
+              <FolderProgressTrack aria-hidden="true">
+                <FolderProgressFill $percent={node.percent ?? 0} />
+              </FolderProgressTrack>
+              <span>
+                {node.percent === undefined
+                  ? '—'
+                  : formatPercent(node.percent, 0)}
+              </span>
+            </FolderProgress>
+          </FolderButton>
+        </FolderCell>
+      </BodyRow>
+    );
+  };
+
   return (
     <div>
       <Toolbar role="group" aria-label={formatMessage(runMessages.filters)}>
@@ -909,7 +1221,31 @@ export const QueueTable: React.FC<QueueTableProps> = ({
           onChange={(event) => setSearch(event.target.value)}
           aria-label={formatMessage(runMessages.search)}
         />
-        <span style={{ marginLeft: 'auto' }}>
+        <span
+          style={{
+            marginLeft: 'auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--hb-space-sm)',
+          }}
+        >
+          <SegmentedControl
+            label={formatMessage(runMessages.queueView)}
+            value={view}
+            onChange={(value) =>
+              setView(value === 'folders' ? 'folders' : 'flat')
+            }
+            options={[
+              {
+                value: 'flat',
+                label: formatMessage(runMessages.viewFlat),
+              },
+              {
+                value: 'folders',
+                label: formatMessage(runMessages.viewFolders),
+              },
+            ]}
+          />
           <OverlayTrigger
             trigger="click"
             placement="bottom-end"
@@ -996,7 +1332,9 @@ export const QueueTable: React.FC<QueueTableProps> = ({
       <Viewport
         ref={viewport}
         role="grid"
-        aria-rowcount={tableRows.length + 1}
+        aria-rowcount={
+          (view === 'folders' ? treeNodes.length : tableRows.length) + 1
+        }
         aria-colcount={visibleColumns.length}
         aria-label={formatMessage(runMessages.queue)}
         tabIndex={0}
@@ -1181,32 +1519,37 @@ export const QueueTable: React.FC<QueueTableProps> = ({
             minWidth: totalWidth,
           }}
         >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = tableRows[virtualRow.index];
-            return (
-              <BodyRow
-                key={row.id}
-                data-index={virtualRow.index}
-                role="row"
-                aria-rowindex={virtualRow.index + 2}
-                style={{
-                  transform: `translateY(${virtualRow.start - HEADER_HEIGHT}px)`,
-                  gridTemplateColumns: gridTemplate,
-                  width: '100%',
-                }}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <Cell
-                    key={cell.id}
-                    role="gridcell"
-                    $align={cellAlign[cell.column.id]}
-                  >
-                    <table.FlexRender cell={cell} />
-                  </Cell>
-                ))}
-              </BodyRow>
-            );
-          })}
+          {view === 'folders'
+            ? rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const node = treeNodes[virtualRow.index];
+                if (!node) return null;
+                if (node.kind === 'folder') {
+                  return renderFolderRow(
+                    node.node,
+                    node.depth,
+                    virtualRow.start,
+                    virtualRow.index + 2,
+                  );
+                }
+                const tableRow = tableRowsById.get(String(node.file.index));
+                if (!tableRow) return null;
+                return renderFileRow(
+                  tableRow,
+                  virtualRow.start,
+                  virtualRow.index + 2,
+                  node.depth,
+                );
+              })
+            : rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const row = tableRows[virtualRow.index];
+                if (!row) return null;
+                return renderFileRow(
+                  row,
+                  virtualRow.start,
+                  virtualRow.index + 2,
+                  0,
+                );
+              })}
         </Body>
       </Viewport>
 
