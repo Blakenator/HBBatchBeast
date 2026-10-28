@@ -6,6 +6,7 @@ import {
   BatchOperationMode,
   BatchTabConfig,
   RunBatchOperationProps,
+  outputContainerExtension,
   parseMappedRows,
   resolveFilterExpression,
   validateFilterExpression,
@@ -29,13 +30,6 @@ function splitLines(value?: string): string[] {
 /** Repeats/pads `values` to `length`, filling gaps with `fallback`. */
 function padTo(length: number, values: string[], fallback: string): string[] {
   return Array.from({ length }, (_, index) => values[index] ?? fallback);
-}
-
-/** queueBuild concatenates this onto the file name, so it must keep its dot. */
-function normalizeContainer(container?: string): string {
-  const trimmed = (container ?? '').trim();
-  if (!trimmed) return '.mp4';
-  return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
 }
 
 function toPresetArgument(preset: string): string {
@@ -192,7 +186,7 @@ export function buildQueueBuildConfig({
     filterExpression,
     copyFilteredFiles: advanced.copy_filtered_files_toggle === 1,
     copySrtFiles: advanced.copy_srt_files_toggle === 1,
-    container: normalizeContainer(batch.container),
+    container: outputContainerExtension(batch.container),
     mode: operationMode,
     presets,
     replaceIfSmaller:

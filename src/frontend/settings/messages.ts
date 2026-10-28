@@ -56,7 +56,16 @@ export const settingsMessages = createMessages({
   addFolders: { defaultMessage: 'Add folders…' },
   folderRowsHelp: {
     defaultMessage:
-      'Each row pairs one source folder with its destination (and temp folder when staging is on). Paste several paths to fill rows at once.',
+      'Each row pairs one source folder with its destination (and temp folder when staging is on). Subfolders keep their layout under the destination. Paste several paths to fill rows at once.',
+  },
+  folderPreviewLabel: { defaultMessage: 'Example output' },
+  sharedDestinationWarningOne: {
+    defaultMessage:
+      'Row {rows} also writes here — the folder trees merge, so matching relative paths would overwrite each other.',
+  },
+  sharedDestinationWarningMany: {
+    defaultMessage:
+      'Rows {rows} also write here — the folder trees merge, so matching relative paths would overwrite each other.',
   },
   missingSource: { defaultMessage: 'Add a source folder for this row.' },
   missingDestination: { defaultMessage: 'Add a destination folder for this row.' },

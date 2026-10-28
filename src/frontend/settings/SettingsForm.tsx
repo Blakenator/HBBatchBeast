@@ -10,6 +10,8 @@ import {
   GlobalSettingsConfig,
   HANDBRAKE_CONTAINERS,
   normalizeContainerExtension,
+  outputContainerExtension,
+  parseMappedRows,
   resolveGlobalSettings,
 } from '../../common';
 import { useHandBrakePresets, useUpdateConfigDebounced } from './hooks';
@@ -472,6 +474,17 @@ const SettingsGroup: React.FC<{
   const tempEnabled =
     group.pathRows !== undefined &&
     readValue(config, group.pathRows.tempToggle) === 1;
+  const previewContainer = outputContainerExtension(
+    String(readValue(config, 'tab_batch.container') ?? ''),
+  );
+  const suffixRows =
+    readValue(config, 'tab_batch.advanced.file_name_suffix_toggle') === 1
+      ? parseMappedRows(
+          String(
+            readValue(config, 'tab_batch.advanced.file_name_suffix') ?? '',
+          ),
+        )
+      : [];
   const showHardwareWarning =
     group.id === 'encoding' &&
     workerCount > 1 &&
@@ -513,6 +526,8 @@ const SettingsGroup: React.FC<{
           )}
           tempPath={String(readValue(config, group.pathRows.temp) ?? '')}
           tempEnabled={tempEnabled}
+          container={previewContainer}
+          suffixes={suffixRows}
           paths={{
             source: group.pathRows.source,
             destination: group.pathRows.destination,

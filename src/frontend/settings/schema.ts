@@ -109,7 +109,7 @@ export const settingsSchema: GroupSchema[] = [
     id: 'folders',
     title: 'Folders',
     description:
-      'Each source folder maps to one destination folder. Subfolders are scanned recursively, and missing output folders are created automatically.',
+      'Each source folder maps to one destination folder. Subfolders keep their layout under the destination, and missing output folders are created automatically.',
     pathRows: {
       source: 'tab_batch.path.source_path',
       destination: 'tab_batch.path.destination_path',

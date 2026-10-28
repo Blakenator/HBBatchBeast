@@ -8,6 +8,7 @@ import { OpenFolderButton } from '../ui/OpenFolderButton';
 import { isInside } from '../run/validation';
 import { BrowseButton } from './PathInput';
 import { Help, InlineNote } from './FieldLayout';
+import { folderRowPreview, sharedDestinationRows } from './folderRowPreview';
 import { settingsMessages } from './messages';
 
 export interface FolderRowPaths {
@@ -28,6 +29,10 @@ interface FolderRowsEditorProps {
   destinationPath: string;
   tempPath: string;
   tempEnabled: boolean;
+  /** Container extension used for the output preview. */
+  container: string;
+  /** Per-row filename suffixes, aligned with the source rows. */
+  suffixes: string[];
   paths: FolderRowPaths;
   onChange: (updates: Record<string, string>) => void;
 }
@@ -86,6 +91,33 @@ const Actions = styled.div`
   margin-top: var(--hb-space-sm);
 `;
 
+const Preview = styled.div`
+  display: grid;
+  gap: 2px;
+  margin-top: var(--hb-space-xs);
+  padding-left: var(--hb-space-sm);
+  border-left: 2px solid var(--hb-border);
+  font-size: var(--hb-font-xs);
+  color: var(--hb-textMuted);
+`;
+
+const PreviewLine = styled.span`
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const PreviewLabel = styled.span`
+  font-weight: 600;
+`;
+
+const NoteLine = styled(InlineNote)`
+  display: block;
+  margin-top: var(--hb-space-xs);
+`;
+
 const blankRow = (): FolderRow => ({ source: '', destination: '', temp: '' });
 
 function buildRows(
@@ -116,6 +148,8 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
   destinationPath,
   tempPath,
   tempEnabled,
+  container,
+  suffixes,
   paths,
   onChange,
 }) => {
@@ -223,11 +257,21 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
     return null;
   };
 
+  const sharedDestinations = sharedDestinationRows(
+    rows.map((row) => row.destination),
+  );
+
   return (
     <div>
       <Rows>
         {rows.map((row, index) => {
           const issue = rowIssues(row);
+          const preview = folderRowPreview({
+            destination: row.destination,
+            suffix: suffixes[index] ?? '',
+            container,
+          });
+          const sharedWith = sharedDestinations.get(index) ?? [];
           return (
             <RowCard key={index}>
               <RowHead>
@@ -345,7 +389,28 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
                 </FieldLine>
               )}
 
-              {issue && <InlineNote $tone="warning">{issue}</InlineNote>}
+              {preview && (
+                <Preview title={`${preview.sample} → ${preview.output}`}>
+                  <PreviewLabel>
+                    {formatMessage(settingsMessages.folderPreviewLabel)}
+                  </PreviewLabel>
+                  <PreviewLine>{preview.sample}</PreviewLine>
+                  <PreviewLine>→ {preview.output}</PreviewLine>
+                </Preview>
+              )}
+
+              {sharedWith.length > 0 && (
+                <NoteLine $tone="warning">
+                  {formatMessage(
+                    sharedWith.length === 1
+                      ? settingsMessages.sharedDestinationWarningOne
+                      : settingsMessages.sharedDestinationWarningMany,
+                    { rows: sharedWith.map((other) => other + 1).join(', ') },
+                  )}
+                </NoteLine>
+              )}
+
+              {issue && <NoteLine $tone="warning">{issue}</NoteLine>}
             </RowCard>
           );
         })}
