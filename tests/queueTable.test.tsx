@@ -207,4 +207,43 @@ describe('QueueTable', () => {
     renderTable(rows);
     expect(screen.getByText('Encoder crashed:')).toBeTruthy();
   });
+
+  it('opens a filter trace popover with the stage outcomes', async () => {
+    renderTable([
+      {
+        index: 0,
+        path: '/media/movies/sample.mkv',
+        state: 'excluded',
+        reason: 'Filename contains none of sample',
+        filterTrace: {
+          entries: [
+            {
+              ruleId: 'name',
+              groupPath: ['root'],
+              field: 'fileName',
+              operator: 'containsNone',
+              value: ['sample'],
+              negate: false,
+              status: 'fail',
+              observed: 'sample.mkv',
+              detail: 'filename contains none of sample (observed sample.mkv)',
+            },
+          ],
+          groupOutcomes: { root: 'fail' },
+          groupCombinators: { root: 'and' },
+          groupNegates: { root: false },
+          outcome: 'excluded',
+          excludedBy: 'name',
+        },
+      },
+    ]);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Why is this file here/i }),
+    );
+
+    expect(await screen.findByText('Filter stages')).toBeTruthy();
+    expect(screen.getAllByText(/contains none of/).length).toBeGreaterThan(0);
+    expect(screen.getByText('Failed here')).toBeTruthy();
+  });
 });

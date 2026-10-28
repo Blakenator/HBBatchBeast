@@ -4,6 +4,8 @@ import { versionWarningMessages } from './versionWarning/messages';
 import { batchOperationResultsMessages } from './home/messages';
 import { runMessages } from './run/messages';
 import { profileMessages } from './settings/profile/messages';
+import { filterBuilderMessages } from './ui/filterBuilder/messages';
+import { shellMessages, tokenListMessages } from './ui/messages';
 
 export const allMessages = {
   settingsMessages,
@@ -12,6 +14,9 @@ export const allMessages = {
   batchOperationResultsMessages,
   runMessages,
   profileMessages,
+  filterBuilderMessages,
+  shellMessages,
+  tokenListMessages,
 };
 
 /**

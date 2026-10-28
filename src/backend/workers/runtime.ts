@@ -243,6 +243,11 @@ export class WorkerRuntime {
 
     const runner = this.createRunner();
     this.runner = runner;
+    // A hard-killed run can leave a marked output behind. Removing it first
+    // keeps FFmpeg from stopping at its overwrite prompt on the next attempt.
+    if (item.tempOutput) {
+      await removeFile(item.outputPath);
+    }
     let stdout = '';
     let stderr = '';
 
@@ -361,6 +366,7 @@ export class WorkerRuntime {
     }
 
     let actualOutput = item.outputPath;
+    let reachedFinalPath = true;
     if (item.outputPath !== item.finalPath) {
       try {
         await moveFile(item.outputPath, item.finalPath);
@@ -370,13 +376,24 @@ export class WorkerRuntime {
           `Moved file: ${item.outputPath} -> ${item.finalPath}`,
         );
       } catch (error) {
-        this.console(
-          'error',
-          `Moving file failed: ${item.outputPath} -> ${item.finalPath}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        reachedFinalPath = false;
+        const message = `Moving file failed: ${item.outputPath} -> ${item.finalPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        this.console('error', message);
+        await this.writeErrorLog(item, message);
       }
+    }
+
+    // Without the rename the conversion never reached its final name. Keep the
+    // source untouched so the item can be retried safely.
+    if (!reachedFinalPath) {
+      this.result(
+        item,
+        'error',
+        `Could not move the converted file to ${item.finalPath}`,
+      );
+      return;
     }
 
     const logTarget =

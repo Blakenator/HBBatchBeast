@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { BatchOperationMode, GlobalAppConfig } from '../src/common';
 import { buildQueueBuildConfig } from '../src/backend/helpers';
 
@@ -136,7 +139,13 @@ describe('buildQueueBuildConfig', () => {
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    expect(defaults.includeConverted).toBe(false);
+    expect(defaults.filterExpression.root.children).toContainEqual(
+      expect.objectContaining({
+        field: 'outputState',
+        operator: 'isNot',
+        value: 'converted',
+      }),
+    );
 
     const includeConverted = buildQueueBuildConfig({
       config: makeConfig({
@@ -145,7 +154,57 @@ describe('buildQueueBuildConfig', () => {
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    expect(includeConverted.includeConverted).toBe(true);
+    expect(includeConverted.filterExpression.root.children).not.toContainEqual(
+      expect.objectContaining({ field: 'outputState' }),
+    );
+  });
+
+  it('compiles the flat legacy filters into expression rules', () => {
+    const payload = buildQueueBuildConfig({
+      config: makeConfig({
+        ...twoSources,
+        advanced: {
+          included_file_types: 'mp4,mkv',
+          title_word_filter: 'sample,trailer',
+          min_file_size_filter_toggle: 1,
+          min_file_size_filter: '100',
+          max_file_size_filter_toggle: 1,
+          max_file_size_filter: '900',
+          included_property_filter: "codec_name: 'hevc',width: '1920'",
+          included_property_filter_any_toggle: 1,
+          excluded_property_filter: "codec_name: 'mpeg4'",
+          excluded_property_filter_all_toggle: 1,
+        },
+      }),
+      operationMode: BatchOperationMode.ScanOnly,
+    });
+
+    const rules = payload.filterExpression.root.children;
+    expect(rules).toContainEqual(
+      expect.objectContaining({
+        field: 'fileType',
+        value: ['mp4', 'mkv'],
+      }),
+    );
+    expect(rules).toContainEqual(
+      expect.objectContaining({
+        field: 'fileName',
+        operator: 'containsNone',
+        value: ['sample', 'trailer'],
+      }),
+    );
+    expect(rules).toContainEqual(
+      expect.objectContaining({ field: 'fileSize', operator: 'atLeast', value: 100 }),
+    );
+    expect(rules).toContainEqual(
+      expect.objectContaining({ field: 'fileSize', operator: 'atMost', value: 900 }),
+    );
+    expect(rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'group', combinator: 'or', negate: false }),
+        expect.objectContaining({ kind: 'group', combinator: 'and', negate: true }),
+      ]),
+    );
   });
 
   it('emits one suffix entry per source even when suffixes are disabled (D1)', () => {
@@ -211,16 +270,16 @@ describe('buildQueueBuildConfig', () => {
     expect(enabled.useTempFolder).toBe(true);
   });
 
-  it('appends srt file types when SRT copying is on', () => {
+  it('carries the SRT copy toggle', () => {
     const payload = buildQueueBuildConfig({
       config: makeConfig({
         ...twoSources,
-        advanced: { included_file_types: 'mp4,mkv', copy_srt_files_toggle: 1 },
+        advanced: { copy_srt_files_toggle: 1 },
       }),
       operationMode: BatchOperationMode.ScanOnly,
     });
 
-    expect(payload.includedFileTypes).toBe('mp4,mkv,srt,SRT');
+    expect(payload.copySrtFiles).toBe(true);
   });
 
   it('carries the file-handling toggles across', () => {
@@ -238,11 +297,54 @@ describe('buildQueueBuildConfig', () => {
       operationMode: BatchOperationMode.ScanAndConvert,
     });
 
-    expect(payload.titleWordFilter).toBe('sample');
+    expect(payload.filterExpression.root.children).toContainEqual(
+      expect.objectContaining({
+        field: 'fileName',
+        operator: 'containsNone',
+        value: ['sample'],
+      }),
+    );
     expect(payload.replaceIfSmaller).toBe(true);
     expect(payload.removeApostrophes).toBe(true);
     expect(payload.replaceAlways).toBe(true);
     expect(payload.reverseQueue).toBe(true);
+  });
+
+  it('only distrusts outputs written by the interrupted run', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-journal-'));
+    const oldOutput = path.join(root, 'old.mkv');
+    const partialOutput = path.join(root, 'partial.mkv');
+    const missingOutput = path.join(root, 'missing.mkv');
+    fs.writeFileSync(oldOutput, 'complete');
+    fs.writeFileSync(partialOutput, 'partial');
+    const startedAt = Date.now();
+    const oldTime = new Date(startedAt - 60_000);
+    fs.utimesSync(oldOutput, oldTime, oldTime);
+    fs.utimesSync(partialOutput, new Date(startedAt + 1_000), new Date(startedAt + 1_000));
+
+    const journalPath = path.join(root, 'run-journal.json');
+    fs.writeFileSync(
+      journalPath,
+      JSON.stringify({
+        startedAt,
+        items: [
+          { state: 'cancelled', destinationPath: oldOutput },
+          { state: 'cancelled', destinationPath: partialOutput },
+          { state: 'error', destinationPath: missingOutput },
+        ],
+      }),
+    );
+
+    const payload = buildQueueBuildConfig({
+      config: makeConfig(twoSources),
+      operationMode: BatchOperationMode.ScanOnly,
+      journalPath,
+    });
+
+    expect(payload.untrustedOutputs).not.toContain(oldOutput);
+    expect(payload.untrustedOutputs).toContain(partialOutput);
+    expect(payload.untrustedOutputs).toContain(missingOutput);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
   it('rejects unsupported operation modes, including the dropped health check', () => {

@@ -6,7 +6,7 @@ import {
 } from '../../common';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBackend } from '../helpers';
-import { cloneDeep, debounce, isEqual, merge } from 'lodash';
+import { cloneDeep, debounce, isEqual, merge, mergeWith } from 'lodash';
 import { toast } from 'react-toastify';
 import { useIntl } from 'react-intl';
 import { settingsMessages } from './messages';
@@ -42,9 +42,13 @@ export function useUpdateConfigDebounced(config: GlobalAppConfig) {
   const mergeUpdate = (update: DeepPartial<BatchConfig>) =>
     setUpdatedConfig((recent) => {
       const newConfig = cloneDeep(recent);
-      newConfig.configs[newConfig.selected_config] = merge(
+      // Arrays (notably filter expression children) must be replaced, not
+      // index-merged, or deleting a rule leaves the old element behind.
+      newConfig.configs[newConfig.selected_config] = mergeWith(
         newConfig.configs[newConfig.selected_config],
         update,
+        (targetValue, sourceValue) =>
+          Array.isArray(sourceValue) ? sourceValue : undefined,
       );
       return newConfig;
     });

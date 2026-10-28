@@ -7,8 +7,10 @@ import {
   PROMISE_CHANNEL,
   GlobalAppConfig,
   DEFAULT_INCLUDED_FILE_TYPES,
+  DEFAULT_TEMP_MARKER_TOGGLE,
   BatchConfig,
   BatchTabConfig,
+  defaultFilterExpression,
 } from '../../../common';
 import { useBackend } from '../../helpers';
 import { useGlobalConfig, useSetGlobalConfigDirect } from '../../core/stores';
@@ -36,6 +38,8 @@ function emptyProfile(name: string): BatchConfig {
       // deliberately partial `advanced` block.
       advanced: {
         included_file_types: DEFAULT_INCLUDED_FILE_TYPES,
+        temp_marker_toggle: DEFAULT_TEMP_MARKER_TOGGLE,
+        filter_expression: defaultFilterExpression(),
       } as BatchTabConfig['advanced'],
     },
   };

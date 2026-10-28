@@ -77,6 +77,8 @@ integration('conversion integration', () => {
     expect(state.counts.success, JSON.stringify(state.items)).toBe(1);
     expect(fs.existsSync(destinationPath)).toBe(true);
     expect(fs.statSync(destinationPath).size).toBeGreaterThan(0);
+    // The on-by-default temp marker is renamed away once the file completes.
+    expect(fs.readdirSync(destinationDir)).toEqual(['sample.mp4']);
 
     fs.rmSync(root, { recursive: true, force: true });
   }, 90000);

@@ -29,14 +29,16 @@ App shell
 │   └── Live view (appears after scan)
 │       ├── Progress header: counts, failures, elapsed, worker chips
 │       ├── Queue/results table: virtualized, filter chips (All / Remaining / Success / Error / Cancelled)
+│       ├── Per-row Filter column: stage-by-stage include/exclude/copy trace popover
 │       └── Row actions: cancel item · open log · reveal in folder · media info
 ├── Settings drawer
 │   ├── Global tab   — language, worker count, verbose worker logs, log files and locations
-│   └── Profiles tab — profile selector and per-profile conversion settings
-│       ├── Folders       — source/destination/temp rows, auto-create, profile paths
-│       ├── Encoding      — HandBrake/FFmpeg, preset per row, container, suffix
-│       ├── Filters       — file types, size range, title words, media properties, SRT copying
-│       └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
+│   ├── Profiles tab — profile selector and per-profile conversion settings
+│   │   ├── Folders       — source/destination/temp rows, auto-create, profile paths
+│   │   ├── Encoding      — HandBrake/FFmpeg, preset per row, container, suffix
+│   │   └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
+│   └── Filters tab   — step-by-step AND/OR rule stack, chip summary, ffprobe property/value pickers,
+│                       SRT and copy-filtered handling
 └── Secondary views (opened from row actions or header)
     ├── Log viewer
     ├── Media info
@@ -70,8 +72,8 @@ Rationale: the legacy app put six tabs of *configuration* in front of the user a
 | Profiles | Profile selector and create/rename/duplicate/delete actions | Conversion settings below apply only to the active profile. |
 | Folders | Paired source/destination rows, optional temp row per source, auto-create folders | Row editor; add/remove/reorder; paste-many support; per-row validation (US-02, US-03). |
 | Encoding | Encoder switch, per-row preset selector populated from the installed HandBrakeCLI, custom argument editor, container select, per-row suffix | Preset labels in plain language; only the active encoder's controls are shown; NVENC warning inline; validation that preset count matches row count (US-04, US-05, US-08). |
-| Filters | File-type token list, size min/max with units, title words, include/exclude property filters with any/all, SRT toggle | Live "matches N files" estimate shown after a scan; filters never silently override each other (US-06, US-07). |
-| File handling | Delete source, replace original (always / if smaller), remove apostrophes, reverse order, custom batch hook, low priority | Destructive pair visually grouped and explained (US-19, US-20). |
+| Filters | Step-by-step rule stack with nested **Match all** / **Match any** groups, a read-only chip summary, an Add-stage menu for unused filters, and catalog-backed ffprobe property/value pickers | Rules are evaluated in order at scan time; unused filters appear only in the Add-stage menu; the same stage order drives the per-file trace popover (US-06, US-07, US-09). |
+| File handling | Delete source, replace original (always / if smaller), remove apostrophes, reverse order, custom batch hook, low priority, in-progress `.temp` marker | Destructive pair visually grouped and explained (US-19, US-20). |
 | Profiles | List with create/rename/duplicate/delete, active marker | Deleting the last profile is blocked with an explanation (US-21). |
 | System | Worker count, queue-view limit, verbose logs, language | Worker count shows the practical range; language applies immediately (US-14, US-22). |
 
@@ -116,8 +118,9 @@ enabled). "Add row" clones the last row's structure. Pasting multiple lines fill
 never silently dropped; the validation banner names the incomplete row.
 
 **Progressive disclosure (D6).** Visible by default: source/destination, encoder, preset, container, scan
-action. Behind Advanced: temp folders, custom preset JSON, suffix, filters, size bounds, property filters,
-delete/replace, apostrophe handling, queue order, batch hook, priority, verbose logs.
+action. Behind Advanced: temp folders, custom preset JSON, suffix, delete/replace, apostrophe handling,
+queue order, batch hook, priority, verbose logs. Scan filters live in their own tab because the rule
+builder is the most complex settings surface; unused filter types stay in the Add-stage menu.
 
 **Validation (US-10).** Field-level, on blur, fix-oriented ("Destination is inside the source folder — choose a
 location outside `/media/movies`"). Cross-field rules (counts, nesting) validated at the row group. A run is
@@ -180,7 +183,8 @@ must act on. Errors are never toast-only.
 | Queue table filters + row actions | US-16–US-18, US-24, F4 |
 | Settings → Folders | US-02, US-03 |
 | Settings → Encoding | US-04, US-05, US-08 |
-| Settings → Filters | US-06, US-07 |
+| Settings → Filters rule stack | US-06, US-07 |
+| Queue Filter trace popover | US-09, US-16 |
 | Settings → File handling | US-19, US-20 |
 | Settings → Profiles | US-21, F5 |
 | Settings → System / language | US-14, US-22 |

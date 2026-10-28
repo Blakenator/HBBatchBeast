@@ -62,6 +62,16 @@ process.on('message', (message) => {
         excluded: [null],
         destinations: ['/dst/a.mp4'],
         destinationsFinal: [null],
+        traces: [
+          {
+            entries: [],
+            groupOutcomes: {},
+            groupCombinators: {},
+            groupNegates: {},
+            outcome: 'included',
+          },
+        ],
+        typeFiltered: 0,
         notExists: 1,
       },
     });

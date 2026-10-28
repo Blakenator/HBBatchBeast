@@ -18,6 +18,7 @@ function makeItem(overrides: Partial<WorkerItemConfig> = {}): WorkerItemConfig {
     sourcePath: '/src/a.mkv',
     outputPath: '/tmp/a.mp4',
     finalPath: '/dst/a.mp4',
+    tempOutput: false,
     action: 'encode',
     copyFilteredFiles: false,
     encoder: {

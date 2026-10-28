@@ -3,8 +3,9 @@ import {
   BatchTabConfig,
   ConversionItem,
   GlobalAppConfig,
-  parsePropertyFilters,
+  isTempMarkerEnabled,
   resolveGlobalSettings,
+  withTempMarker,
 } from '../../common';
 import { userPresetFiles } from '../helpers/handBrakePresets';
 import { WorkerItemConfig } from '../workers/protocol';
@@ -17,29 +18,6 @@ function handBrakeCliPath(platform: NodeJS.Platform): string {
   // The bundled Windows binary sits next to the app resources; elsewhere the
   // user supplies HandBrakeCLI on PATH.
   return platform === 'win32' ? 'HandBrakeCLI.exe' : 'HandBrakeCLI';
-}
-
-function filterMode(
-  anyToggle: number | undefined,
-  allToggle: number | undefined,
-): 'off' | 'any' | 'all' {
-  if (truthy(allToggle)) return 'all';
-  if (truthy(anyToggle)) return 'any';
-  return 'off';
-}
-
-function parseSizeMb(
-  toggle: number | undefined,
-  raw: string | undefined,
-  label: string,
-): number | undefined {
-  if (!truthy(toggle)) return undefined;
-  const trimmed = (raw ?? '').trim();
-  const value = Number(trimmed);
-  if (!trimmed || !Number.isFinite(value) || value < 0) {
-    throw new AppError(`Invalid ${label}`, { context: { value: raw } });
-  }
-  return value;
 }
 
 /**
@@ -86,6 +64,13 @@ export function buildWorkerItemConfig(
     });
   }
 
+  // Encode into a marked name; the worker renames it to `finalPath` only after
+  // the encoder succeeds. Copies keep their current destination behaviour.
+  const markedOutput =
+    action === 'encode' && isTempMarkerEnabled(advanced)
+      ? withTempMarker(outputPath)
+      : outputPath;
+
   const ffmpeg = batch.FFmpeg_toggle === 1;
   const encoder = {
     kind: ffmpeg ? ('ffmpeg' as const) : ('handbrake' as const),
@@ -94,22 +79,12 @@ export function buildWorkerItemConfig(
     presetImportFiles: ffmpeg ? [] : presetImportFiles,
   };
 
-  const minMb = parseSizeMb(
-    advanced.min_file_size_filter_toggle,
-    advanced.min_file_size_filter,
-    'minimum file size',
-  );
-  const maxMb = parseSizeMb(
-    advanced.max_file_size_filter_toggle,
-    advanced.max_file_size_filter,
-    'maximum file size',
-  );
-
   return {
     queueNumber: index,
     sourcePath: item.path,
-    outputPath,
+    outputPath: markedOutput,
     finalPath,
+    tempOutput: markedOutput !== outputPath,
     action,
     ...(action === 'skip'
       ? { skipReason: item.excludedReason ?? 'Excluded by the file filter' }
@@ -128,24 +103,9 @@ export function buildWorkerItemConfig(
     lowPriority: truthy(advanced.low_process_priority_toggle),
     saveWorkerLogs: truthy(globalSettings.save_worker_logs_toggle),
     filters: {
-      include: {
-        mode: filterMode(
-          advanced.included_property_filter_any_toggle,
-          advanced.included_property_filter_all_toggle,
-        ),
-        rows: parsePropertyFilters(advanced.included_property_filter),
-      },
-      exclude: {
-        mode: filterMode(
-          advanced.excluded_property_filter_any_toggle,
-          advanced.excluded_property_filter_all_toggle,
-        ),
-        rows: parsePropertyFilters(advanced.excluded_property_filter),
-      },
-      size: {
-        ...(minMb !== undefined ? { minMb } : {}),
-        ...(maxMb !== undefined ? { maxMb } : {}),
-      },
+      include: { mode: 'off' as const, rows: [] },
+      exclude: { mode: 'off' as const, rows: [] },
+      size: {},
     },
   };
 }

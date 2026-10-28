@@ -108,6 +108,7 @@ function item(overrides: Partial<WorkerItemConfig> = {}): WorkerItemConfig {
     sourcePath: path.join(root, 'src', 'a.mp4'),
     outputPath: path.join(root, 'out', 'a.mp4'),
     finalPath: path.join(root, 'out', 'a.mp4'),
+    tempOutput: false,
     action: 'encode',
     copyFilteredFiles: false,
     encoder: {
@@ -445,6 +446,100 @@ describe('WorkerRuntime', () => {
     expect(resultEvent(0)?.state).toBe('success');
     expect(fs.existsSync(final)).toBe(true);
     expect(fs.existsSync(staging)).toBe(false);
+  });
+
+  it('renames a temp-marked output only after the encode succeeds', async () => {
+    const source = writeSource();
+    const marked = path.join(root, 'out', 'a.temp.mp4');
+    const final = path.join(root, 'out', 'a.mp4');
+    await configure();
+
+    await runItem(
+      item({
+        sourcePath: source,
+        outputPath: marked,
+        finalPath: final,
+        tempOutput: true,
+      }),
+    );
+
+    expect(resultEvent(0)?.state).toBe('success');
+    expect(fs.existsSync(final)).toBe(true);
+    expect(fs.existsSync(marked)).toBe(false);
+  });
+
+  it('removes a stale marked output before the encoder starts', async () => {
+    const source = writeSource();
+    const marked = path.join(root, 'out', 'a.temp.mp4');
+    fs.mkdirSync(path.dirname(marked), { recursive: true });
+    fs.writeFileSync(marked, 'stale');
+    let existedWhenEncoderStarted: boolean | undefined;
+    runner.onRun = () => {
+      existedWhenEncoderStarted = fs.existsSync(marked);
+    };
+    await configure();
+
+    await runItem(
+      item({
+        sourcePath: source,
+        outputPath: marked,
+        finalPath: path.join(root, 'out', 'a.mp4'),
+        tempOutput: true,
+      }),
+    );
+
+    expect(existedWhenEncoderStarted).toBe(false);
+    expect(resultEvent(0)?.state).toBe('success');
+  });
+
+  it('removes the marked output when a running encode is cancelled', async () => {
+    runner.mode = 'manual';
+    const source = writeSource();
+    const marked = path.join(root, 'out', 'a.temp.mp4');
+    await configure();
+
+    await runtime.handleCommand(
+      itemCommand(
+        item({
+          sourcePath: source,
+          outputPath: marked,
+          finalPath: path.join(root, 'out', 'a.mp4'),
+          tempOutput: true,
+        }),
+      ),
+    );
+    await waitFor(() => (runner.callCount > 0 ? true : undefined));
+    await runtime.handleCommand(cancelItemCommand(0));
+
+    await waitForResult(0);
+    expect(resultEvent(0)?.state).toBe('cancelled');
+    expect(fs.existsSync(marked)).toBe(false);
+    expect(fs.existsSync(path.join(root, 'out', 'a.mp4'))).toBe(false);
+  });
+
+  it('keeps the source and the marked file when the final rename fails', async () => {
+    const source = writeSource();
+    const marked = path.join(root, 'out', 'a.temp.mp4');
+    const blockedFinal = path.join(root, 'out', 'a.mp4');
+    // A non-empty directory in the way makes fs-extra's move fail.
+    fs.mkdirSync(blockedFinal, { recursive: true });
+    fs.writeFileSync(path.join(blockedFinal, 'keep.txt'), 'x');
+    await configure();
+
+    await runItem(
+      item({
+        sourcePath: source,
+        outputPath: marked,
+        finalPath: blockedFinal,
+        tempOutput: true,
+        deleteSource: true,
+        replaceOriginal: 'always',
+      }),
+    );
+
+    expect(resultEvent(0)?.state).toBe('error');
+    expect(fs.existsSync(source)).toBe(true);
+    expect(fs.existsSync(marked)).toBe(true);
   });
 
   it('deletes the source when configured and no replacement is requested', async () => {

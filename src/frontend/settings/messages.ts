@@ -66,17 +66,6 @@ export const settingsMessages = createMessages({
       'Destination is inside the source folder — choose a folder outside it.',
   },
 
-  removeToken: { defaultMessage: 'Remove {token}' },
-  addDefaults: { defaultMessage: 'Add common video types' },
-
-  propertyFilterMode: { defaultMessage: 'Property filter mode' },
-  propertyFilterOff: { defaultMessage: 'Off' },
-  propertyFilterAny: { defaultMessage: 'Match any' },
-  propertyFilterAll: { defaultMessage: 'Match all' },
-  propertyKey: { defaultMessage: 'Property name' },
-  propertyValue: { defaultMessage: 'Property value' },
-  removeProperty: { defaultMessage: 'Remove property filter' },
-
   presetUnavailableWarning: {
     defaultMessage:
       'This preset is not installed. Search for an installed preset or refresh the list to scan HandBrakeCLI again.',
@@ -129,23 +118,77 @@ export const settingsMessages = createMessages({
   containerHelp: {
     defaultMessage: 'Output file extension. HandBrake supports MP4 and MKV.',
   },
-  minSize: { defaultMessage: 'Minimum size (MB)' },
-  maxSize: { defaultMessage: 'Maximum size (MB)' },
-  sizeRangeHelp: {
-    defaultMessage: 'Files outside this range are filtered out of the queue.',
-  },
-  includeProperties: { defaultMessage: 'Include files with properties' },
-  excludeProperties: { defaultMessage: 'Exclude files with properties' },
-  includePropertiesHelp: {
-    defaultMessage:
-      'Match ffprobe stream properties. "Any" keeps a file when one pair matches; "All" requires every pair.',
-  },
-  excludePropertiesHelp: {
-    defaultMessage:
-      'Drop files whose streams match these ffprobe properties. "Any" drops on the first match; "All" requires every pair.',
-  },
   batchHook: { defaultMessage: 'Batch file to run after each file' },
   pickBatchFile: { defaultMessage: 'Choose a batch file' },
   batchFileFilters: { defaultMessage: 'Batch scripts' },
   allProblems: { defaultMessage: 'Fix these before starting a run:' },
+
+  filterTab: { defaultMessage: 'Filters' },
+  filterTabDescription: {
+    defaultMessage:
+      'Build the rules that decide which files enter the queue. Stages are evaluated in order and every stage is shown in the queue trace.',
+  },
+  filterRulesTitle: { defaultMessage: 'Scan rules' },
+  filterRulesHelp: {
+    defaultMessage:
+      'Rules are combined with AND/OR groups. Unused filters stay in the Add stage menu.',
+  },
+  filterCategoryFile: { defaultMessage: 'File' },
+  filterCategorySize: { defaultMessage: 'Size' },
+  filterCategoryOutput: { defaultMessage: 'Output' },
+  filterCategoryMedia: { defaultMessage: 'Media property' },
+  filterFileType: { defaultMessage: 'File type' },
+  filterFileTypeDescription: {
+    defaultMessage: 'Matches files by extension.',
+  },
+  filterFileTypeIsAnyOf: { defaultMessage: 'is any of' },
+  filterFileTypeIsNoneOf: { defaultMessage: 'is none of' },
+  filterFileName: { defaultMessage: 'Filename' },
+  filterFileNameDescription: {
+    defaultMessage: 'Matches words inside the file name.',
+  },
+  filterFileNameContainsAny: { defaultMessage: 'contains any of' },
+  filterFileNameContainsNone: { defaultMessage: 'contains none of' },
+  filterFileSize: { defaultMessage: 'File size' },
+  filterFileSizeDescription: {
+    defaultMessage: 'Compares the source file size in decimal megabytes.',
+  },
+  filterFileSizeAtLeast: { defaultMessage: 'is at least' },
+  filterFileSizeAtMost: { defaultMessage: 'is at most' },
+  filterFileSizeBetween: { defaultMessage: 'is between' },
+  filterOutputState: { defaultMessage: 'Output state' },
+  filterOutputStateDescription: {
+    defaultMessage: 'Checks whether the destination already has a completed output.',
+  },
+  filterOutputStateIs: { defaultMessage: 'is' },
+  filterOutputStateIsNot: { defaultMessage: 'is not' },
+  filterOutputConverted: { defaultMessage: 'already converted' },
+  filterMediaProperty: { defaultMessage: 'Media property' },
+  filterMediaPropertyDescription: {
+    defaultMessage:
+      'Matches an ffprobe stream field. Pick a known property or type any top-level stream key.',
+  },
+  filterMediaPropertyEquals: { defaultMessage: 'equals' },
+  filterMediaPropertyNotEquals: { defaultMessage: 'does not equal' },
+  filterMediaPropertyContains: { defaultMessage: 'contains' },
+  filterMediaPropertyGt: { defaultMessage: 'is greater than' },
+  filterMediaPropertyLt: { defaultMessage: 'is less than' },
+  filterActionsTitle: { defaultMessage: 'Filtered file handling' },
+  filterCopyFiltered: {
+    defaultMessage: 'Copy filtered-out files to the destination',
+  },
+  filterCopySrt: { defaultMessage: 'Copy .srt sidecars' },
+  filterCopyFilteredHelp: {
+    defaultMessage:
+      'Files stopped by a rule are copied instead of skipped. Files already converted or replaced are never copied.',
+  },
+  filterCopySrtHelp: {
+    defaultMessage:
+      'Subtitle sidecars are copied next to the output and never converted.',
+  },
+  filterTypeIgnored: {
+    defaultMessage: '{count, plural, one {# file ignored by type} other {# files ignored by type}}',
+  },
+  filterProblemPrefix: { defaultMessage: 'Filters: {problem}' },
 });
+

@@ -3,6 +3,8 @@ import {
   HANDBRAKE_CONTAINERS,
   normalizeContainerExtension,
   parseMappedRows,
+  resolveFilterExpression,
+  validateFilterExpression,
 } from '../../common';
 
 const trimTrailingSeparators = (value: string) => value.replace(/[\\/]+$/, '');
@@ -134,6 +136,12 @@ export function validateBatchConfig(
         problems.push(`Folder ${index + 1} is missing its filename suffix.`);
       }
     }
+  }
+
+  for (const problem of validateFilterExpression(
+    resolveFilterExpression(advanced),
+  )) {
+    problems.push(`Filters: ${problem}`);
   }
 
   return problems;

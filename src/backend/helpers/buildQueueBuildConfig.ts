@@ -7,6 +7,8 @@ import {
   BatchTabConfig,
   RunBatchOperationProps,
   parseMappedRows,
+  resolveFilterExpression,
+  validateFilterExpression,
 } from '../../common';
 import { QueueBuildConfig } from '../processes/protocol';
 
@@ -62,17 +64,36 @@ interface JournalItem {
   destinationFinalPath?: string;
 }
 
-/** Output paths the last run did not complete successfully. */
+interface RunJournal {
+  startedAt?: number;
+  items?: JournalItem[];
+}
+
+/**
+ * Outputs the last run did not finish. An output that predates the run is from
+ * an earlier, completed attempt and stays trusted: stopping a run marks queued
+ * items cancelled without touching their existing files, and treating those as
+ * untrusted would re-queue the whole library on every stop.
+ */
 function unfinishedOutputs(journalPath: string): string[] {
   try {
-    const journal = JSON.parse(
-      fs.readFileSync(journalPath, 'utf8'),
-    ) as { items?: JournalItem[] };
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as RunJournal;
     const unfinished = new Set(['running', 'cancelled', 'error']);
+    const startedAt = journal.startedAt;
     const paths = (journal.items ?? [])
       .filter((item) => unfinished.has(item.state ?? ''))
-      .flatMap((item) => [item.destinationPath, item.destinationFinalPath]);
-    return [...new Set(paths.filter((value): value is string => Boolean(value)))];
+      .flatMap((item) => [item.destinationPath, item.destinationFinalPath])
+      .filter((value): value is string => Boolean(value))
+      .filter((output) => {
+        if (typeof startedAt !== 'number') return true;
+        try {
+          return fs.statSync(output).mtimeMs >= startedAt;
+        } catch {
+          // A missing output cannot be trusted as converted; keep it marked.
+          return true;
+        }
+      });
+    return [...new Set(paths)];
   } catch {
     return [];
   }
@@ -155,28 +176,31 @@ export function buildQueueBuildConfig({
     configuredPresets.find((preset) => preset.trim().length > 0) ?? '',
   );
 
-  const includedFileTypes =
-    advanced.copy_srt_files_toggle === 1
-      ? `${advanced.included_file_types ?? ''},srt,SRT`
-      : (advanced.included_file_types ?? '');
+  const filterExpression = resolveFilterExpression(advanced);
+  const expressionProblems = validateFilterExpression(filterExpression);
+  if (expressionProblems.length > 0) {
+    throw new AppError('Filter rules are invalid', {
+      context: { problems: expressionProblems },
+    });
+  }
 
   return {
     sources,
     destinations,
     tempDestinations,
     useTempFolder,
-    includedFileTypes,
+    filterExpression,
+    copyFilteredFiles: advanced.copy_filtered_files_toggle === 1,
+    copySrtFiles: advanced.copy_srt_files_toggle === 1,
     container: normalizeContainer(batch.container),
     mode: operationMode,
     presets,
-    titleWordFilter: advanced.title_word_filter ?? '',
     replaceIfSmaller:
       advanced.replace_original_file_if_converted_is_smaller_toggle === 1,
     fileSuffixes,
     removeApostrophes: advanced.remove_filename_apostrophes === 1,
     replaceAlways: advanced.replace_original_file_always_toggle === 1,
     reverseQueue: advanced.reverse_file_queue === 1,
-    includeConverted: advanced.include_converted_files_toggle === 1,
     logDirectory,
     untrustedOutputs: unfinishedOutputs(journalPath),
   };

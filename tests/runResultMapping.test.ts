@@ -29,11 +29,36 @@ function payload(overrides: Partial<QueueBuildResult> = {}): QueueBuildResult {
     skipOrCopy: [0, 1, 1],
     excluded: [
       null,
-      { code: 'titleMatch', reason: 'Title matches the title word filter: "720p"' },
+      { code: 'filtered', reason: 'Filename contains none of 720p' },
       { code: 'subtitle', reason: 'Subtitle file (copied, not converted)' },
     ],
     destinations: ['/dst/a.mp4', '/dst/sample.mp4', '/dst/subs.srt'],
     destinationsFinal: ['/final/a.mp4', '/final/sample.mp4', '/final/subs.srt'],
+    traces: [
+      {
+        entries: [],
+        groupOutcomes: {},
+        groupCombinators: {},
+        groupNegates: {},
+        outcome: 'included',
+      },
+      {
+        entries: [],
+        groupOutcomes: {},
+        groupCombinators: {},
+        groupNegates: {},
+        outcome: 'excluded',
+        excludedBy: 'name',
+      },
+      {
+        entries: [],
+        groupOutcomes: {},
+        groupCombinators: {},
+        groupNegates: {},
+        outcome: 'included',
+      },
+    ],
+    typeFiltered: 0,
     notExists: 3,
     ...overrides,
   };
@@ -49,7 +74,7 @@ describe('mapQueueBuildResult', () => {
     expect(withoutCopy.fileList[0].excludedReason).toBeUndefined();
     expect(withoutCopy.fileList[1]).toMatchObject({
       action: 'skip',
-      excludedReason: 'Title matches the title word filter: "720p"',
+      excludedReason: 'Filename contains none of 720p',
     });
     expect(withoutCopy.fileList[2]).toMatchObject({ action: 'copy' });
 

@@ -3,6 +3,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  FilterExpression,
+  createFilterGroup,
+  createFilterRule,
+} from '../src/common/filterExpression';
+import {
   destinationPath,
   outputRelativePath,
 } from '../src/backend/scanner/destination';
@@ -19,6 +24,50 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+interface ExpressionOptions {
+  fileTypes?: string[];
+  titleWords?: string[];
+  includeConverted?: boolean;
+  minMb?: number;
+  maxMb?: number;
+  mediaProperty?: {
+    operator: 'equals' | 'notEquals' | 'contains' | 'gt' | 'lt';
+    key: string;
+    value: string;
+  };
+}
+
+function expression(options: ExpressionOptions = {}): FilterExpression {
+  const children = [
+    createFilterRule(
+      'fileType',
+      'isAnyOf',
+      options.fileTypes ?? ['mp4', 'mkv', 'srt'],
+    ),
+  ];
+  if (!options.includeConverted) {
+    children.push(createFilterRule('outputState', 'isNot', 'converted'));
+  }
+  if (options.titleWords?.length) {
+    children.push(createFilterRule('fileName', 'containsNone', options.titleWords));
+  }
+  if (options.minMb !== undefined) {
+    children.push(createFilterRule('fileSize', 'atLeast', options.minMb));
+  }
+  if (options.maxMb !== undefined) {
+    children.push(createFilterRule('fileSize', 'atMost', options.maxMb));
+  }
+  if (options.mediaProperty) {
+    children.push(
+      createFilterRule('mediaProperty', options.mediaProperty.operator, {
+        key: options.mediaProperty.key,
+        value: options.mediaProperty.value,
+      }),
+    );
+  }
+  return { version: 1, root: createFilterGroup('and', children) };
+}
+
 function config(overrides: Partial<QueueBuildConfig> = {}): QueueBuildConfig {
   const source = path.join(root, 'source');
   const destination = path.join(root, 'destination');
@@ -29,17 +78,17 @@ function config(overrides: Partial<QueueBuildConfig> = {}): QueueBuildConfig {
     destinations: [destination],
     tempDestinations: [],
     useTempFolder: false,
-    includedFileTypes: 'mp4,mkv,srt',
+    filterExpression: expression(),
+    copyFilteredFiles: false,
+    copySrtFiles: true,
     container: '.mp4',
     mode: 'scanAndConvert',
     presets: ['-Z "Very Fast 1080p30"'],
-    titleWordFilter: '',
     replaceIfSmaller: false,
     fileSuffixes: [''],
     removeApostrophes: false,
     replaceAlways: false,
     reverseQueue: false,
-    includeConverted: false,
     logDirectory: path.join(root, 'logs'),
     untrustedOutputs: [],
     ...overrides,
@@ -90,6 +139,8 @@ describe('scanQueue', () => {
     ]);
     expect(result.excluded[0]).toMatchObject({ code: 'alreadyConverted' });
     expect(result.excluded[1]).toBeNull();
+    expect(result.traces[0].outcome).toBe('excluded');
+    expect(result.traces[1].outcome).toBe('included');
   });
 
   it('re-queues a file whose destination is an empty placeholder', async () => {
@@ -104,20 +155,36 @@ describe('scanQueue', () => {
     expect(result.excluded[0]).toBeNull();
   });
 
+  it('does not treat a leftover temp-marked output as converted', async () => {
+    write('a.mp4');
+    const base = config();
+    fs.writeFileSync(
+      path.join(root, 'destination', 'a.temp.mp4'),
+      'partial conversion',
+    );
+
+    const result = await scanQueue(base);
+
+    expect(result.notExists).toBe(1);
+    expect(result.excluded[0]).toBeNull();
+  });
+
   it('queues already-converted files when the profile includes them', async () => {
     write('a.mp4');
     write('b.mp4');
     const base = config();
     fs.writeFileSync(path.join(root, 'destination', 'a.mp4'), 'already');
 
-    const result = await scanQueue({ ...base, includeConverted: true });
+    const result = await scanQueue({
+      ...base,
+      filterExpression: expression({ includeConverted: true }),
+    });
 
     const index = result.sources.indexOf(path.join(root, 'source', 'a.mp4'));
     expect(index).toBeGreaterThanOrEqual(0);
     expect(result.excluded[index]).toBeNull();
     expect(result.excluded[result.sources.indexOf(path.join(root, 'source', 'b.mp4'))])
       .toBeNull();
-    // Both files will be processed, so both count as unconverted.
     expect(result.notExists).toBe(2);
   });
 
@@ -140,7 +207,10 @@ describe('scanQueue', () => {
     write('subs.srt');
 
     const result = await scanQueue(
-      config({ fileSuffixes: ['-conv'], titleWordFilter: 'sample' }),
+      config({
+        fileSuffixes: ['-conv'],
+        filterExpression: expression({ titleWords: ['sample'] }),
+      }),
     );
 
     const byName = new Map(
@@ -149,21 +219,74 @@ describe('scanQueue', () => {
         {
           destination: result.destinations[index],
           skip: result.skipOrCopy[index],
+          exclusion: result.excluded[index],
         },
       ]),
     );
-    expect(byName.get('keep.mp4')).toEqual({
+    expect(byName.get('keep.mp4')).toMatchObject({
       destination: path.join(root, 'destination', 'keep-conv.mp4'),
       skip: 0,
     });
     expect(byName.get('sample.mp4')?.skip).toBe(1);
-    expect(
-      result.excluded[result.sources.indexOf(path.join(root, 'source', 'sample.mp4'))],
-    ).toMatchObject({ code: 'titleMatch' });
-    expect(byName.get('subs.srt')).toEqual({
+    expect(byName.get('sample.mp4')?.exclusion).toMatchObject({
+      code: 'filtered',
+    });
+    expect(byName.get('subs.srt')).toMatchObject({
       destination: path.join(root, 'destination', 'subs.srt'),
       skip: 1,
+      exclusion: { code: 'subtitle' },
     });
+  });
+
+  it('filters by size and records the failing stage', async () => {
+    write('small.mp4', 'x'.repeat(10));
+    write('large.mp4', 'x'.repeat(2_000_000));
+
+    const result = await scanQueue(
+      config({ filterExpression: expression({ minMb: 1 }) }),
+    );
+
+    const smallIndex = result.sources.indexOf(path.join(root, 'source', 'small.mp4'));
+    const largeIndex = result.sources.indexOf(path.join(root, 'source', 'large.mp4'));
+    expect(result.excluded[smallIndex]).toMatchObject({ code: 'filtered' });
+    expect(result.excluded[largeIndex]).toBeNull();
+    expect(result.traces[smallIndex].excludedBy).toBeTruthy();
+    expect(
+      result.traces[smallIndex].entries.find(
+        (entry) => entry.ruleId === result.traces[smallIndex].excludedBy,
+      )?.field,
+    ).toBe('fileSize');
+  });
+
+  it('evaluates ffprobe media properties during the scan', async () => {
+    const sample = path.join(process.cwd(), 'tests/fixtures/sample.mp4');
+    const matchingConfig = config({
+      filterExpression: expression({
+        fileTypes: ['mp4'],
+        mediaProperty: { operator: 'equals', key: 'codec_name', value: 'h264' },
+      }),
+    });
+    fs.copyFileSync(sample, path.join(root, 'source', 'movie.mp4'));
+
+    const matching = await scanQueue(matchingConfig);
+    expect(matching.excluded[0]).toBeNull();
+    expect(
+      matching.traces[0].entries.find((entry) => entry.field === 'mediaProperty')
+        ?.status,
+    ).toBe('pass');
+
+    const missingConfig = config({
+      filterExpression: expression({
+        fileTypes: ['mp4'],
+        mediaProperty: { operator: 'equals', key: 'codec_name', value: 'hevc' },
+      }),
+    });
+    const missing = await scanQueue(missingConfig);
+    expect(missing.excluded[0]).toMatchObject({ code: 'filtered' });
+    expect(
+      missing.traces[0].entries.find((entry) => entry.field === 'mediaProperty')
+        ?.status,
+    ).toBe('fail');
   });
 
   it('computes temp final destinations and reverses the queue', async () => {

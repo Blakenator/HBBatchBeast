@@ -28,8 +28,9 @@ describe('buildWorkerItemConfig', () => {
     expect(config).toMatchObject({
       queueNumber: 3,
       sourcePath: '/src/a.mkv',
-      outputPath: '/dst/a.mp4',
+      outputPath: '/dst/a.temp.mp4',
       finalPath: '/dst/a.mp4',
+      tempOutput: true,
       action: 'encode',
       encoder: {
         kind: 'handbrake',
@@ -40,7 +41,52 @@ describe('buildWorkerItemConfig', () => {
     });
   });
 
-  it('carries file-handling toggles, filters and sizes', () => {
+  it('writes straight to the final name when the temp marker is turned off', () => {
+    const config = buildWorkerItemConfig(
+      makeConfig({ advanced: { temp_marker_toggle: 0 } }),
+      item,
+      0,
+    );
+
+    expect(config.outputPath).toBe('/dst/a.mp4');
+    expect(config.finalPath).toBe('/dst/a.mp4');
+    expect(config.tempOutput).toBe(false);
+  });
+
+  it('marks the staged output and keeps the final destination unmarked', () => {
+    const config = buildWorkerItemConfig(
+      makeConfig({
+        path: { source_path: '/s', destination_path: '/work', temp_toggle: 1 },
+        advanced: { temp_marker_toggle: 1 },
+      }),
+      { ...item, destinationPath: '/work/a.mp4', destinationFinalPath: '/final/a.mp4' },
+      0,
+    );
+
+    expect(config.outputPath).toBe('/work/a.temp.mp4');
+    expect(config.finalPath).toBe('/final/a.mp4');
+    expect(config.tempOutput).toBe(true);
+  });
+
+  it('leaves copies and skips unmarked', () => {
+    const copy = buildWorkerItemConfig(
+      makeConfig(),
+      { ...item, action: 'copy' },
+      0,
+    );
+    expect(copy.outputPath).toBe('/dst/a.mp4');
+    expect(copy.tempOutput).toBe(false);
+
+    const skip = buildWorkerItemConfig(
+      makeConfig(),
+      { path: '/src/a.mkv', preset: 'x', action: 'skip' },
+      0,
+    );
+    expect(skip.outputPath).toBe('/src/a.mkv');
+    expect(skip.tempOutput).toBe(false);
+  });
+
+  it('carries file-handling toggles and leaves filtering to the scanner', () => {
     const config = buildWorkerItemConfig(
       makeConfig({
         path: { source_path: '/s', destination_path: '/d', temp_toggle: 1 },
@@ -74,15 +120,11 @@ describe('buildWorkerItemConfig', () => {
     expect(config.deleteSource).toBe(true);
     expect(config.customBatPath).toBe('/run.sh');
     expect(config.lowPriority).toBe(true);
-    expect(config.filters.include).toEqual({
-      mode: 'any',
-      rows: [{ key: 'codec_name', value: 'h264' }],
+    expect(config.filters).toEqual({
+      include: { mode: 'off', rows: [] },
+      exclude: { mode: 'off', rows: [] },
+      size: {},
     });
-    expect(config.filters.exclude).toEqual({
-      mode: 'all',
-      rows: [{ key: 'codec_name', value: 'hevc' }],
-    });
-    expect(config.filters.size).toEqual({ minMb: 10, maxMb: 900 });
   });
 
   it('switches to FFmpeg mode and honours verbose logging', () => {
@@ -130,7 +172,7 @@ describe('buildWorkerItemConfig', () => {
     expect(config.saveWorkerLogs).toBe(true);
   });
 
-  it('fails loudly when required paths or sizes are invalid', () => {
+  it('fails loudly when required paths are invalid', () => {
     expect(() =>
       buildWorkerItemConfig(makeConfig(), { ...item, destinationPath: '' }, 0),
     ).toThrow(/no output path/);
@@ -144,19 +186,6 @@ describe('buildWorkerItemConfig', () => {
         0,
       ),
     ).toThrow(/no final destination/);
-
-    expect(() =>
-      buildWorkerItemConfig(
-        makeConfig({
-          advanced: {
-            min_file_size_filter_toggle: 1,
-            min_file_size_filter: 'nope',
-          },
-        }),
-        item,
-        0,
-      ),
-    ).toThrow(/Invalid minimum file size/);
   });
 
   it('uses the item path as a placeholder destination for skipped items', () => {
@@ -167,6 +196,7 @@ describe('buildWorkerItemConfig', () => {
     );
     expect(config.outputPath).toBe('/src/a.mkv');
     expect(config.finalPath).toBe('/src/a.mkv');
+    expect(config.tempOutput).toBe(false);
     expect(config.skipReason).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   countConfiguredRows,
+  isTempMarkerEnabled,
   normalizeFileType,
   normalizePresetName,
   parseCommandPair,
@@ -11,6 +12,7 @@ import {
   serializeMappedRows,
   serializePropertyFilters,
   serializeTokenList,
+  withTempMarker,
 } from '../src/common';
 
 describe('mapped rows', () => {
@@ -99,5 +101,22 @@ describe('FFmpeg command pairs', () => {
     expect(serializeCommandPair({ input: '-ss 10', output: '' })).toBe('-ss 10,');
     expect(serializeCommandPair({ input: '', output: '' })).toBe('');
     expect(parseCommandPair('-ss 10')).toEqual({ input: '-ss 10', output: '' });
+  });
+});
+
+describe('temp output marker', () => {
+  it('inserts the marker before the extension so encoders keep inferring the container', () => {
+    expect(withTempMarker('/out/movie.mkv')).toBe('/out/movie.temp.mkv');
+    expect(withTempMarker('/out/movie-suffix.mp4')).toBe(
+      '/out/movie-suffix.temp.mp4',
+    );
+    expect(withTempMarker('/out/no-extension')).toBe('/out/no-extension.temp');
+  });
+
+  it('is enabled unless the profile turns it off', () => {
+    expect(isTempMarkerEnabled(undefined)).toBe(true);
+    expect(isTempMarkerEnabled({})).toBe(true);
+    expect(isTempMarkerEnabled({ temp_marker_toggle: 1 })).toBe(true);
+    expect(isTempMarkerEnabled({ temp_marker_toggle: 0 })).toBe(false);
   });
 });

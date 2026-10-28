@@ -218,7 +218,7 @@ wrong primitive or stale version is a loud error instead of plausible-but-wrong 
 | Message | Payload |
 | --- | --- |
 | `configure` | `{ logDirectory }` |
-| `item` | `WorkerItemConfig` — action, source/output/final paths, encoder (kind, executable, preset, preset imports), copy/delete/replace flags, custom batch path, priority, filters |
+| `item` | `WorkerItemConfig` — action, source/output/final paths, encoder (kind, executable, preset, preset imports), copy/delete/replace flags, custom batch path, priority, inert filter block (scan owns filtering) |
 | `cancel-item` | `{ queueNumber }` — kills the running encoder and reports `cancelled` |
 | `shutdown` | — (child exits 0) |
 
@@ -244,9 +244,12 @@ writes and file moves; `worker2`, `mediaAnalyser` and `priorityModule` were dele
 ### Scan exclusions and destination ownership
 
 A scan lists **every** matching file, including ones it will not convert, with an `excluded` entry
-(`{ code, reason }`, `code` = `alreadyConverted` | `alreadyReplaced` | `titleMatch` | `subtitle`) — the queue
-shows them as `Excluded` with the reason instead of dropping them. `alreadyConverted`/`alreadyReplaced` are
-always skipped; `titleMatch` is copied when `copy_filtered_files` is on; `subtitle` is copied.
+(`{ code, reason }`, `code` = `alreadyConverted` | `alreadyReplaced` | `filtered` | `subtitle`) and a
+per-file `trace` of every filter stage. The queue shows excluded rows with the reason and a **Filter**
+column that explains the pass/fail/skip status of each stage. `alreadyConverted`/`alreadyReplaced` are
+always skipped; any `filtered` result is copied when `copy_filtered_files` is on; `subtitle` is copied.
+Filter rules are persisted as a boolean `filter_expression`; legacy flat fields are compiled into an
+equivalent expression on read and are no longer rendered.
 
 A destination only counts as converted when it exists **and is non-empty**, and the scanner distrusts outputs
 that the run journal records as `running`/`cancelled`/`error` (`QueueBuildConfig.untrustedOutputs`). Encoders
@@ -418,10 +421,10 @@ State: ✅ done · 🟡 partial · ⛔ not started.
 
 | ID | Feature slice | Short description | State | Depends on | Suggested | Keep? |
 | --- | --- | --- | --- | --- | --- | --- |
-| S14 | Scan / queue build | Recursively scan source folders, diff against destination, apply file-type + title filters, return queue with per-file preset and extra actions. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
+| S14 | Scan / queue build | Recursively scan source folders, evaluate the boolean filter expression (type, name, size, output state, ffprobe properties), return queue with per-file preset, stage trace and extra actions. | ✅ | S04 | Keep | `[x] yes  [ ] no` |
 | S15 | Batch paths & folder options | Paired source/destination rows with optional per-row temp folders (folder pickers, add/remove row, multi-line paste), temp-conversion toggle, auto-create folders, per-row validation. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
 | S16 | Encoder & preset selection | HandBrake vs FFmpeg segmented switch, per-folder preset rows populated from the installed HandBrakeCLI, per-folder FFmpeg/custom argument rows, container select, per-folder suffix, preset validation; NVENC/imported-preset warnings remain. | ✅ | S15 | Keep | `[x] yes  [ ] no` |
-| S17 | File selection filters | Included file types, min/max size, title word filter, include/exclude media-property filters (any/all), copy-filtered-files, copy SRT files. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
+| S17 | File selection filters | Step-by-step AND/OR rule stack with file type, filename, size, output-state and ffprobe media-property stages; catalog-backed property/value pickers; copy-filtered-files and copy SRT actions; legacy flat fields migrate automatically. | ✅ | S14 | Keep | `[x] yes  [ ] no` |
 | S18 | File handling actions | Delete source, replace original (always / if smaller), remove apostrophes, reverse queue, custom batch-file hook, low process priority. | ✅ | S16 | Keep | `[x] yes  [ ] no` |
 | S19 | Worker pool execution | Fork N `worker1` processes, dispatch queue items, track per-worker status/percentages, progress, priority process, cancel item, error collection. | ⛔ | S14, S16 | Keep — core of the app | `[x] yes  [ ] no` |
 | S20 | Queue controls | Start, pause, resume, stop, convert-selected; per-item select/deselect/invert in the queue view. | ⛔ | S19 | Keep | `[x] yes  [ ] no` |

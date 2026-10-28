@@ -21,6 +21,10 @@ export const runMessages = createMessages({
   noMatchingFiles: {
     defaultMessage: 'No files matched the current filters in the source folders.',
   },
+  typeFiltered: {
+    defaultMessage:
+      '{count, plural, one {# file ignored by type} other {# files ignored by type}}',
+  },
   failures: { defaultMessage: 'Failures' },
   console: { defaultMessage: 'Console output' },
   all: { defaultMessage: 'All' },
@@ -42,9 +46,17 @@ export const runMessages = createMessages({
   openFolderFailed: { defaultMessage: 'Could not open folder' },
   encoding: { defaultMessage: 'Encoding' },
   filters: { defaultMessage: 'Filters' },
+  noFilters: { defaultMessage: 'No filter rules' },
   noPreset: { defaultMessage: 'no preset set' },
   blockingIssues: { defaultMessage: 'Fix these before running' },
   scan: { defaultMessage: 'Scan' },
+  scanning: { defaultMessage: 'Scanning source folders…' },
+  rescanTitle: { defaultMessage: 'Rescan source folders?' },
+  rescanBody: {
+    defaultMessage:
+      'The current queue and any displayed run results will be replaced by a fresh scan. Files already converted will be checked again.',
+  },
+  rescanConfirm: { defaultMessage: 'Rescan' },
   queue: { defaultMessage: 'Queue' },
   queueCount: { defaultMessage: '{count} files' },
   confirmTitle: { defaultMessage: 'Confirm destructive options' },
@@ -163,6 +175,7 @@ export const runMessages = createMessages({
   colPresetArgs: { defaultMessage: 'Arguments' },
   customArguments: { defaultMessage: 'Custom arguments' },
   colState: { defaultMessage: 'State' },
+  colFilter: { defaultMessage: 'Filter' },
   colPercent: { defaultMessage: 'Progress' },
   colEta: { defaultMessage: 'ETA' },
   colSpeed: { defaultMessage: 'Speed' },

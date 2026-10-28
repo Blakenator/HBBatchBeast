@@ -11,17 +11,40 @@ const config = {
   destinations: ['/dst/a', '/dst/b'],
   tempDestinations: [],
   useTempFolder: false,
-  includedFileTypes: 'mp4,mkv',
+  filterExpression: {
+    version: 1,
+    root: {
+      id: 'root',
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        {
+          id: 'types',
+          kind: 'rule',
+          field: 'fileType',
+          operator: 'isAnyOf',
+          value: ['mp4', 'mkv'],
+        },
+        {
+          id: 'output',
+          kind: 'rule',
+          field: 'outputState',
+          operator: 'isNot',
+          value: 'converted',
+        },
+      ],
+    },
+  },
+  copyFilteredFiles: false,
+  copySrtFiles: false,
   container: '.mp4',
   mode: 'scanAndConvert' as const,
   presets: ['-Z "Very Fast 1080p30"', '-Z "H.265 MKV 1080p30"'],
-  titleWordFilter: '',
   replaceIfSmaller: false,
   fileSuffixes: ['', ''],
   removeApostrophes: false,
   replaceAlways: false,
   reverseQueue: false,
-  includeConverted: false,
   logDirectory: '/home/user/Documents/HBBatchBeast/Logs',
   untrustedOutputs: [],
 };
@@ -56,6 +79,30 @@ describe('queueBuild config codec', () => {
     );
     expect(decodeQueueBuildConfig({ ...config, extra: 1 }).ok).toBe(false);
   });
+
+  it('rejects invalid filter expressions', () => {
+    const result = decodeQueueBuildConfig({
+      ...config,
+      filterExpression: {
+        version: 1,
+        root: {
+          id: 'root',
+          kind: 'group',
+          combinator: 'and',
+          children: [
+            {
+              id: 'empty',
+              kind: 'rule',
+              field: 'fileType',
+              operator: 'isAnyOf',
+              value: [],
+            },
+          ],
+        },
+      },
+    });
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe('queueBuild message codecs', () => {
@@ -85,6 +132,16 @@ describe('queueBuild message codecs', () => {
       excluded: [null],
       destinations: ['/dst/a.mp4'],
       destinationsFinal: [null],
+      traces: [
+        {
+          entries: [],
+          groupOutcomes: {},
+          groupCombinators: {},
+          groupNegates: {},
+          outcome: 'included',
+        },
+      ],
+      typeFiltered: 0,
       notExists: 1,
     };
     expect(

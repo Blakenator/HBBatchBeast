@@ -32,7 +32,10 @@ import { mediaMessages } from './mediaMessages';
 import { MediaInfoModal } from './MediaInfoModal';
 import { Button } from '../ui/Button';
 import { normalizePresetName } from '../../common';
+import type { RunItemAction } from '../../common';
+import type { FilterTrace } from '../../common/filterExpression';
 import { RunItemProgress, parsePercent } from '../../common/runTelemetry';
+import { FilterTracePopover } from './FilterTracePopover';
 import {
   firstLine,
   formatBytes,
@@ -58,6 +61,8 @@ export interface QueueRow {
   state: QueueRowState;
   percent?: string;
   reason?: string;
+  /** Scanner action for pre-run rows; distinguishes copied from encoded. */
+  action?: RunItemAction;
   worker?: number;
   startedAt?: number;
   finishedAt?: number;
@@ -65,6 +70,8 @@ export interface QueueRow {
   outputBytes?: number;
   progress?: RunItemProgress;
   logTail?: string[];
+  /** Scan-stage trace; present for rows produced by a scan. */
+  filterTrace?: FilterTrace;
 }
 
 interface QueueTableProps {
@@ -375,6 +382,7 @@ const DEFAULT_COLUMN_SIZES: Record<string, number> = {
   eta: 84,
   speed: 96,
   size: 96,
+  filter: 112,
   reason: 180,
   actions: 190,
 };
@@ -697,6 +705,25 @@ export const QueueTable: React.FC<QueueTableProps> = ({
             {formatBytes(info.getValue())}
           </span>
         ),
+      }),
+      columnHelper.display({
+        id: 'filter',
+        header: label('colFilter'),
+        size: DEFAULT_COLUMN_SIZES.filter,
+        minSize: 88,
+        maxSize: 180,
+        cell: (info) => {
+          const row = info.row.original;
+          return (
+            <FilterTracePopover
+              trace={row.filterTrace}
+              state={row.state}
+              action={row.action}
+              path={row.path}
+              reason={row.reason}
+            />
+          );
+        },
       }),
       columnHelper.accessor((row) => firstLine(row.reason) ?? '', {
         id: 'reason',

@@ -92,6 +92,7 @@ function item(overrides: Partial<WorkerItemConfig> = {}): WorkerItemConfig {
     sourcePath: path.join(root, 'src', 'a.mp4'),
     outputPath: path.join(root, 'out', 'a.mp4'),
     finalPath: path.join(root, 'out', 'a.mp4'),
+    tempOutput: false,
     action: 'encode',
     copyFilteredFiles: false,
     encoder: {
@@ -187,6 +188,7 @@ describe('worker1 fork contract', () => {
           sourcePath: second,
           outputPath: path.join(root, 'out', 'b.mp4'),
           finalPath: path.join(root, 'out', 'b.mp4'),
+          tempOutput: false,
         }),
       ),
     );

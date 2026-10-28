@@ -163,7 +163,7 @@ describe('queueBuild contract', () => {
     );
     expect(sampleIndex).toBeGreaterThanOrEqual(0);
     expect(result.skipOrCopy[sampleIndex]).toBe(1);
-    expect(result.excluded[sampleIndex]).toMatchObject({ code: 'titleMatch' });
+    expect(result.excluded[sampleIndex]).toMatchObject({ code: 'filtered' });
     expect(result.excluded[sampleIndex]?.reason).toContain('sample');
   });
 

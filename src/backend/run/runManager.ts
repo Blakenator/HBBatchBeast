@@ -167,6 +167,8 @@ export class RunManager {
   private exitedWorkers = new Set<number>();
   private stopped = false;
   private lastJournalWrite = 0;
+  /** Output path each dispatched item is writing to (may carry a `.temp` marker). */
+  private readonly outputPaths = new Map<number, string>();
   /** Throttles output-size samples so progress bursts do not stat files constantly. */
   private writtenSampledAt = new Map<number, number>();
 
@@ -195,6 +197,7 @@ export class RunManager {
     this.pendingRequests.clear();
     this.exitedWorkers.clear();
     this.writtenSampledAt.clear();
+    this.outputPaths.clear();
     const workerCount = Math.max(1, this.deps.workerCount ?? 1);
     const startedAt = Date.now();
     this.state = {
@@ -266,6 +269,7 @@ export class RunManager {
     this.activeByWorker.clear();
     this.pendingRequests.clear();
     this.exitedWorkers.clear();
+    this.outputPaths.clear();
     this.workers = [];
     this.finish('completed');
   }
@@ -343,8 +347,10 @@ export class RunManager {
         const now = Date.now();
         if (now - (this.writtenSampledAt.get(queueNumber) ?? 0) >= WRITTEN_SAMPLE_MS) {
           this.writtenSampledAt.set(queueNumber, now);
-          const fromDisk = item.destinationPath
-            ? this.readFileSize(item.destinationPath)
+          const outputPath =
+            this.outputPaths.get(queueNumber) ?? item.destinationPath;
+          const fromDisk = outputPath
+            ? this.readFileSize(outputPath)
             : undefined;
           const fromTelemetry = item.progress.bytes;
           const written = Math.max(fromDisk ?? 0, fromTelemetry ?? 0);
@@ -385,6 +391,7 @@ export class RunManager {
           if (item.state === 'success') item.logTail = undefined;
         }
         this.activeByWorker.delete(workerNumber);
+        this.outputPaths.delete(queueNumber);
         this.recount();
         this.emit(true);
         this.checkForCompletion();
@@ -421,6 +428,7 @@ export class RunManager {
             if (item.startedAt !== undefined) item.finishedAt = Date.now();
           }
           this.activeByWorker.delete(workerNumber);
+          if (active !== undefined) this.outputPaths.delete(active);
         }
 
         const anyAlive = this.workers.some(
@@ -491,9 +499,12 @@ export class RunManager {
     }
 
     try {
-      worker.sendItem(this.deps.buildItemConfig(this.state.items[next], next));
+      const config = this.deps.buildItemConfig(this.state.items[next], next);
+      this.outputPaths.set(next, config.outputPath);
+      worker.sendItem(config);
     } catch (error) {
       const item = this.state.items[next];
+      this.outputPaths.delete(next);
       item.state = 'error';
       item.reason =
         error instanceof Error ? error.message : 'Could not dispatch the item';

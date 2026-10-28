@@ -58,6 +58,8 @@ source→destination pairs, so that I can convert several libraries in one run.*
 folder and moved into the destination when finished, so that broken conversions never appear in my library.*
 - One temp folder per source row; counts must match.
 - A file that fails never reaches the destination.
+- In-progress outputs carry a `.temp` marker (`movie.temp.mkv`) and are renamed only when complete, so a
+  stopped run leaves the unfinished files visible. On by default; can be turned off in File handling.
 
 ### I2 — Encode by my rules
 
@@ -73,8 +75,10 @@ preset, a container and an optional suffix, so that output matches my devices.*
 
 **US-06 — Filter what gets converted.** *As a server operator, I want to include or exclude files by type,
 size, filename words and media properties, so that an unattended run does not do the wrong thing.*
-- Included file types are edited as a token list, not a comma string.
-- Size bounds accept units; title-word and property filters preview how many files they would match.
+- Filters are a step-by-step rule stack with nested **Match all** / **Match any** groups; unused filter
+  types appear only in the Add-stage menu.
+- Media-property rules use searchable ffprobe property and value pickers, while still accepting custom keys.
+- The chip summary shows the whole expression, and every stage is evaluated at scan time.
 
 **US-07 — Copy sidecar subtitles.** *As a library owner, I want `.srt` files copied next to converted output,
 so that subtitles survive the conversion.*
@@ -89,8 +93,9 @@ preset, so that I can use my own tuning.*
 
 **US-09 — Preview the queue.** *As a library owner, I want to scan without converting and see exactly what
 would happen, so that I can catch mistakes before a multi-hour run.*
-- Scan-only produces, per file: path, resolved preset, and any extra action (copy / skip / copy SRT).
-- Counts are summarised (found, to convert, already converted, filtered out).
+- Scan-only produces, per file: path, resolved preset, any extra action (copy / skip / copy SRT), and a
+  stage-by-stage filter trace reachable from the Filter column.
+- Counts are summarised (found, to convert, already converted, filtered out, ignored by type).
 - The preview can be cancelled instantly and leaves no partial output.
 
 **US-10 — Catch misconfiguration while editing.** *As a library owner, I want problems flagged as I fill in

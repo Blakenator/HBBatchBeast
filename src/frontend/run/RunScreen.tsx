@@ -6,15 +6,17 @@ import {
   BatchTabConfig,
   GlobalAppConfig,
   PROMISE_CHANNEL,
+  RunBatchOperationResult,
   countConfiguredRows,
-  parseTokenList,
+  resolveFilterExpression,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
 import { useBatchResult, useSetBatchResultDirect } from '../core/stores';
 import { AppStatus } from '../ui/StatusPill';
 import { Panel, PanelGrid } from '../ui/Panel';
 import { Button } from '../ui/Button';
-import { TokenChips } from '../ui/Tokens';
+import { FilterChips } from '../ui/filterBuilder/FilterChips';
+import { scanFilterFields } from '../settings/scanFilterFields';
 import { QueueTable, QueueRow } from './QueueTable';
 import { FailuresPanel } from './FailuresPanel';
 import { FolderPairs } from './FolderPairs';
@@ -35,6 +37,36 @@ function splitCount(value?: string, enabled?: boolean): number {
   return enabled ? countConfiguredRows(value) : 0;
 }
 
+interface ScanRunnerProps {
+  config: GlobalAppConfig;
+  onResult: (result: RunBatchOperationResult) => void;
+  onStateChange: (state: { loading: boolean; error?: { message: string } }) => void;
+}
+
+/**
+ * Mounted fresh for each scan. The async hook throws if a new message arrives
+ * while its previous complete payload is still set, so remounting is how a
+ * rescan guarantees clean hook state.
+ */
+const ScanRunner: React.FC<ScanRunnerProps> = ({
+  config,
+  onResult,
+  onStateChange,
+}) => {
+  const scan = useBackendAsync({
+    channel: ASYNC_CHANNEL.RunBatchOperation,
+    props: { config },
+    skip: false,
+    onComplete: onResult,
+  });
+
+  useEffect(() => {
+    onStateChange({ loading: scan.loading, error: scan.error ?? undefined });
+  }, [scan.loading, scan.error, onStateChange]);
+
+  return null;
+};
+
 export const RunScreen: React.FC<RunScreenProps> = ({
   config,
   onStatusChange,
@@ -42,6 +74,12 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 }) => {
   const { formatMessage } = useIntl();
   const [confirming, setConfirming] = useState(false);
+  const [confirmingRescan, setConfirmingRescan] = useState(false);
+  const [scanRequest, setScanRequest] = useState(0);
+  const [scanState, setScanState] = useState<{
+    loading: boolean;
+    error?: { message: string };
+  }>({ loading: false });
   const batchResult = useBatchResult();
   const setBatchResult = useSetBatchResultDirect();
   const current = config.configs[config.selected_config];
@@ -52,18 +90,13 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     [current.tab_batch],
   );
 
-  const scan = useBackendAsync({
-    channel: ASYNC_CHANNEL.RunBatchOperation,
-    props: { config },
-    skip: true,
-    onComplete: (result) => setBatchResult(result),
-  });
-
   const scanItems = batchResult?.fileList ?? [];
   // Excluded rows are visible in the queue but never need a worker.
   const runnableItems = scanItems.filter(
     (item) => (item.action ?? 'encode') !== 'skip',
   );
+
+  const filterExpression = resolveFilterExpression(batch.advanced);
 
   // A queue only describes the folders/presets it was scanned with; drop it when
   // the active profile or those settings change so the table cannot show stale
@@ -76,8 +109,9 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     batch.preset,
     batch.custom_preset_string,
     batch.container,
-    batch.advanced?.included_file_types,
-    batch.advanced?.title_word_filter,
+    JSON.stringify(filterExpression),
+    batch.advanced?.copy_srt_files_toggle,
+    batch.advanced?.copy_filtered_files_toggle,
   ].join('|');
 
   useEffect(() => {
@@ -108,6 +142,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     skip: true,
   });
   const [logRow, setLogRow] = useState<QueueRow | null>(null);
+  const [runHidden, setRunHidden] = useState(false);
 
   // A run only describes the settings it was started with. Keep the signature it
   // ran against so switching profiles or folders cannot show the previous run.
@@ -116,7 +151,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
     // The terminal payload wins: the last progress frame still says "running".
     run.completeData ?? run.lastProgressData ?? undefined;
   const runState: RunStatePayload | undefined =
-    runSignature !== null && runSignature !== queueSignature
+    runHidden || (runSignature !== null && runSignature !== queueSignature)
       ? undefined
       : liveRunState;
 
@@ -129,10 +164,10 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         return runState.counts.error > 0 ? 'error' : 'completed';
       }
     }
-    if (scan.loading || run.loading) return 'running';
-    if (scan.error || run.error) return 'error';
+    if (scanState.loading || run.loading) return 'running';
+    if (scanState.error || run.error) return 'error';
     return 'idle';
-  }, [runState, scan.loading, run.loading, scan.error, run.error]);
+  }, [runState, scanState.loading, run.loading, scanState.error, run.error]);
 
   useEffect(() => {
     onStatusChange(status);
@@ -155,6 +190,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             outputBytes: item.outputBytes,
             progress: item.progress,
             logTail: item.logTail,
+            filterTrace: scanItems[index]?.filterTrace,
           }))
         : scanItems.map((item, index) => ({
             index,
@@ -165,6 +201,8 @@ export const RunScreen: React.FC<RunScreenProps> = ({
                 ? ('excluded' as const)
                 : ('pending' as const),
             reason: item.excludedReason,
+            action: item.action,
+            filterTrace: item.filterTrace,
           })),
     [runState, scanItems],
   );
@@ -176,7 +214,18 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   // keeps streaming while the modal is open.
   const activeLogRow = logRow ? rows[logRow.index] ?? logRow : null;
 
+  const requestScan = () => {
+    // Clear the old view so the table shows the new scan instead of the last
+    // run's results, and remount the scan hook so refetching cannot race its
+    // previous complete payload.
+    setBatchResult(undefined);
+    setRunHidden(true);
+    setScanState({ loading: true });
+    setScanRequest((current) => current + 1);
+  };
+
   const startRun = () => {
+    setRunHidden(false);
     setRunSignature(queueSignature);
     void run.refetch();
   };
@@ -241,10 +290,25 @@ export const RunScreen: React.FC<RunScreenProps> = ({
           · {batch.container ?? '.mp4'}
         </Panel>
         <Panel title={formatMessage(runMessages.filters)}>
-          <TokenChips
-            tokens={parseTokenList(batch.advanced?.included_file_types)}
+          <FilterChips
+            expression={filterExpression}
+            fields={scanFilterFields}
+            empty={formatMessage(runMessages.noFilters)}
             ariaLabel={formatMessage(runMessages.filters)}
           />
+          {batchResult?.typeFilteredCount ? (
+            <div
+              style={{
+                marginTop: 'var(--hb-space-xs)',
+                color: 'var(--hb-textMuted)',
+                fontSize: 'var(--hb-font-xs)',
+              }}
+            >
+              {formatMessage(runMessages.typeFiltered, {
+                count: batchResult.typeFilteredCount,
+              })}
+            </div>
+          ) : null}
         </Panel>
       </PanelGrid>
 
@@ -261,8 +325,11 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 
       <div style={{ display: 'flex', gap: 'var(--hb-space-sm)' }}>
         <Button
-          onClick={() => scan.refetch({ config })}
-          disabled={scan.loading || running}
+          onClick={() => {
+            if (scanItems.length > 0 || runState) setConfirmingRescan(true);
+            else requestScan();
+          }}
+          disabled={scanState.loading || running}
         >
           {formatMessage(runMessages.scan)}
         </Button>
@@ -303,7 +370,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         >
           {formatMessage(runMessages.stop)}
         </Button>
-        {(scan.loading || run.loading) && <Spinner size="sm" />}
+        {(scanState.loading || run.loading) && <Spinner size="sm" />}
       </div>
 
       {runState && (
@@ -324,8 +391,39 @@ export const RunScreen: React.FC<RunScreenProps> = ({
 
       {runState && <RunCharts state={runState} telemetry={telemetry} />}
 
-      {scan.error && <Alert variant="danger">{scan.error.message}</Alert>}
+      {scanState.error && (
+        <Alert variant="danger">{scanState.error.message}</Alert>
+      )}
       {run.error && <Alert variant="danger">{run.error.message}</Alert>}
+
+      <Modal
+        show={confirmingRescan}
+        onHide={() => setConfirmingRescan(false)}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>{formatMessage(runMessages.rescanTitle)}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {formatMessage(runMessages.rescanBody)}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            onClick={() => setConfirmingRescan(false)}
+          >
+            {formatMessage(runMessages.cancel)}
+          </Button>
+          <Button
+            onClick={() => {
+              setConfirmingRescan(false);
+              requestScan();
+            }}
+          >
+            {formatMessage(runMessages.rescanConfirm)}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <Modal show={confirming} onHide={() => setConfirming(false)} centered>
         <Modal.Header closeButton>
@@ -372,15 +470,21 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         }
       >
         {rows.length === 0 ? (
-          <div style={{ color: 'var(--hb-textMuted)' }}>
-            {!batchResult
-              ? formatMessage(runMessages.scanFirst)
-              : batchResult.totalCount === 0
-                ? formatMessage(runMessages.noMatchingFiles)
-                : formatMessage(runMessages.nothingRunnable, {
-                    total: batchResult.totalCount,
-                    excluded: scanItems.length - runnableItems.length,
-                  })}
+          <div
+            style={{ color: 'var(--hb-textMuted)' }}
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {scanState.loading
+              ? formatMessage(runMessages.scanning)
+              : !batchResult
+                ? formatMessage(runMessages.scanFirst)
+                : batchResult.totalCount === 0
+                  ? formatMessage(runMessages.noMatchingFiles)
+                  : formatMessage(runMessages.nothingRunnable, {
+                      total: batchResult.totalCount,
+                      excluded: scanItems.length - runnableItems.length,
+                    })}
           </div>
         ) : (
           <QueueTable
@@ -398,6 +502,15 @@ export const RunScreen: React.FC<RunScreenProps> = ({
       </Panel>
 
       <ItemLogModal row={activeLogRow} onClose={() => setLogRow(null)} />
+
+      {scanRequest > 0 && (
+        <ScanRunner
+          key={scanRequest}
+          config={config}
+          onResult={setBatchResult}
+          onStateChange={setScanState}
+        />
+      )}
     </div>
   );
 };

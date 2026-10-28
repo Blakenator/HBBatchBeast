@@ -1,3 +1,5 @@
+import type { FilterExpression, FilterTrace } from './filterExpression';
+
 export enum BackendResultMode {
   Init = 'INIT',
   Progress = 'PROGRESS',
@@ -36,8 +38,12 @@ export interface BatchTabConfig {
     excluded_property_filter_any_toggle: 0 | 1;
     excluded_property_filter_all_toggle: 0 | 1;
     copy_filtered_files_toggle: 0 | 1;
+    /** Structured scan filter rules; legacy flat fields are compiled when absent. */
+    filter_expression?: FilterExpression;
     /** Queue files even when a non-empty output already exists. */
     include_converted_files_toggle: 0 | 1;
+    /** Write conversions as `name.temp.ext` and rename them when finished. */
+    temp_marker_toggle: 0 | 1;
     delete_source_files_toggle: 0 | 1;
     replace_original_file_if_converted_is_smaller_toggle: 0 | 1;
     replace_original_file_always_toggle: 0 | 1;
@@ -201,6 +207,8 @@ export interface RunBatchOperationResult {
     action?: RunItemAction;
     /** Why the scanner will not convert this file. */
     excludedReason?: string;
+    /** Per-stage filter decision, shown in the queue trace popover. */
+    filterTrace?: FilterTrace;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;
@@ -210,4 +218,6 @@ export interface RunBatchOperationResult {
   totalCount: number;
   unconvertedFilesCount: number;
   discoveredQueueCount: number;
+  /** Files ignored before evaluation because their type cannot match. */
+  typeFilteredCount?: number;
 }

@@ -77,6 +77,7 @@ function buildConfig(item: { path: string }, index: number): WorkerItemConfig {
     sourcePath: item.path,
     outputPath: `/dst/${index}.mp4`,
     finalPath: `/dst/${index}.mp4`,
+    tempOutput: false,
     action: 'encode',
     copyFilteredFiles: false,
     encoder: {
@@ -387,6 +388,36 @@ describe('RunManager', () => {
     ]);
 
     expect(manager.getState().items[0].writtenBytes).toBe(1234);
+    await manager.stop();
+  });
+
+  it('samples written bytes from the marked output path the worker is using', async () => {
+    const marked = path.join(root, 'live.temp.mp4');
+    fs.writeFileSync(marked, 'x'.repeat(4321));
+    const manager = new RunManager({
+      workerCount: 1,
+      buildItemConfig: (configItem, index) => ({
+        ...buildConfig(configItem, index),
+        outputPath: marked,
+        finalPath: path.join(root, 'live.mp4'),
+        tempOutput: true,
+      }),
+      createWorker: (_number, handlers) => ({
+        start: async () => handlers.onQueueRequest(),
+        cancelItem: () => undefined,
+        stop: async () => undefined,
+        sendItem: (config) => {
+          handlers.onStarted(config.queueNumber);
+          handlers.onProgress(config.queueNumber, { percent: 20 }, 'Encoding: 20%');
+        },
+      }),
+    });
+
+    await manager.start([
+      { path: '/src/live.mp4', preset: '-Z "x"', destinationPath: '/dst/live.mp4' },
+    ]);
+
+    expect(manager.getState().items[0].writtenBytes).toBe(4321);
     await manager.stop();
   });
 

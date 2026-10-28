@@ -10,7 +10,6 @@ import {
   GlobalSettingsConfig,
   HANDBRAKE_CONTAINERS,
   normalizeContainerExtension,
-  normalizeFileType,
   resolveGlobalSettings,
 } from '../../common';
 import { useHandBrakePresets, useUpdateConfigDebounced } from './hooks';
@@ -25,8 +24,6 @@ import { validateBatchConfig } from '../run/validation';
 import { Combobox } from '../ui/Combobox';
 import { Field, Help, Label, LabelRow } from './FieldLayout';
 import { SegmentedControl } from './SegmentedControl';
-import { TokenListEditor } from './TokenListEditor';
-import { PropertyFilterRows, PropertyFilterMode } from './PropertyFilterRows';
 import { AlignedRowsEditor } from './AlignedRowsEditor';
 import { FolderRowsEditor } from './FolderRowsEditor';
 import { PathInput } from './PathInput';
@@ -34,6 +31,7 @@ import { PresetScanStatus } from './PresetScanStatus';
 import { usesHardwareEncoder } from './presetWarnings';
 import { LanguageSelect } from './LanguageSelect';
 import { GlobalSystemSettings } from './GlobalSystemSettings';
+import { FilterTab } from './FilterTab';
 import { ProfileBar } from './profile/ProfileBar';
 import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
 
@@ -181,7 +179,7 @@ const SettingsField: React.FC<FieldProps> = ({
         <Form.Check
           id={id}
           type="switch"
-          checked={value === 1}
+          checked={(value ?? field.defaultValue) === 1}
           disabled={disabled}
           label={label}
           aria-describedby={helpId}
@@ -254,54 +252,6 @@ const SettingsField: React.FC<FieldProps> = ({
           }))}
           onChange={(next) => onChange(field.path, numericValue(next))}
           describedBy={helpId}
-        />
-        {help}
-      </Field>
-    );
-  }
-
-  if (field.kind === 'token-list') {
-    return (
-      <Field>
-        <Label htmlFor={id}>{label}</Label>
-        <TokenListEditor
-          id={id}
-          value={String(value ?? '')}
-          placeholder={field.placeholder}
-          describedBy={helpId}
-          normalize={field.fileTypes ? normalizeFileType : undefined}
-          defaults={field.defaults}
-          onChange={(next) => onChange(field.path, next)}
-        />
-        {help}
-      </Field>
-    );
-  }
-
-  if (field.kind === 'property-filters') {
-    const anyEnabled = readValue(config, field.anyPath ?? '') === 1;
-    const allEnabled = readValue(config, field.allPath ?? '') === 1;
-    const mode: PropertyFilterMode = anyEnabled
-      ? allEnabled
-        ? 'all'
-        : 'any'
-      : 'off';
-    return (
-      <Field>
-        <Label>{label}</Label>
-        <PropertyFilterRows
-          id={id}
-          value={String(value ?? '')}
-          mode={mode}
-          onChange={(next) => onChange(field.path, next)}
-          onModeChange={(next) => {
-            // The worker enters its filter branch when either flag is set; the
-            // "all" behaviour is selected by the all flag.
-            onChangeMany({
-              [field.anyPath ?? '']: next === 'off' ? 0 : 1,
-              [field.allPath ?? '']: next === 'all' ? 1 : 0,
-            });
-          }}
         />
         {help}
       </Field>
@@ -702,6 +652,16 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
                 </ul>
               </Alert>
             )}
+          </div>
+        </Tab>
+
+        <Tab
+          eventKey="filters"
+          title={formatMessage(settingsMessages.filterTab)}
+        >
+          <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
+            <ProfileBar />
+            <FilterTab config={currentConfig} onChange={handleChange} />
           </div>
         </Tab>
       </Tabs>

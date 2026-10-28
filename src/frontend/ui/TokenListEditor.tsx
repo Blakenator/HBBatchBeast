@@ -3,9 +3,9 @@ import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import { parseTokenList, serializeTokenList } from '../../common';
-import { Button } from '../ui/Button';
-import { TokenBox, TokenChip } from '../ui/Tokens';
-import { settingsMessages } from './messages';
+import { Button } from './Button';
+import { TokenBox, TokenChip } from './Tokens';
+import { tokenListMessages } from './messages';
 
 interface TokenListEditorProps {
   id: string;
@@ -91,7 +91,7 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
             {token}
             <ChipRemove
               type="button"
-              aria-label={formatMessage(settingsMessages.removeToken, { token })}
+              aria-label={formatMessage(tokenListMessages.removeToken, { token })}
               onClick={() => remove(index)}
             >
               ×
@@ -129,7 +129,7 @@ export const TokenListEditor: React.FC<TokenListEditorProps> = ({
           style={{ marginTop: 'var(--hb-space-xs)' }}
           onClick={() => commit(defaults.join(','))}
         >
-          {defaultsLabel ?? formatMessage(settingsMessages.addDefaults)}
+          {defaultsLabel ?? formatMessage(tokenListMessages.addCommonValues)}
         </Button>
       )}
     </div>

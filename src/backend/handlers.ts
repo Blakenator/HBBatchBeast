@@ -59,13 +59,15 @@ export function mapQueueBuildResult(
     totalCount: payload.total,
     discoveredQueueCount: payload.total,
     unconvertedFilesCount: payload.notExists,
+    typeFilteredCount: payload.typeFiltered,
     fileList: payload.sources.map((filepath, index) => {
       const exclusion = payload.excluded[index] ?? null;
       const fileIsSrt = filepath.toLowerCase().endsWith('.srt');
       const copiedSrt = exclusion?.code === 'subtitle';
       const copiedFromFilter =
-        exclusion?.code === 'titleMatch' && copyFilteredFiles;
-      const skippedFromFilter = exclusion !== null && !copiedSrt && !copiedFromFilter;
+        exclusion?.code === 'filtered' && copyFilteredFiles;
+      const skippedFromFilter =
+        exclusion !== null && !copiedSrt && !copiedFromFilter;
 
       return {
         path: filepath,
@@ -78,6 +80,7 @@ export function mapQueueBuildResult(
             ? ('skip' as const)
             : ('encode' as const),
         excludedReason: exclusion?.reason,
+        filterTrace: payload.traces[index],
         extraActions: {
           copiedFromFilter,
           skippedFromFilter,

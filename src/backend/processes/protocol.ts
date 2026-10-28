@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import {
+  FILTER_FIELDS,
+  FILTER_OPERATORS,
+  FilterExpression,
+  FilterGroup,
+  validateFilterExpression,
+} from '../../common/filterExpression';
 
 /**
  * Typed message protocol between the main process and its child-process modules.
@@ -18,6 +25,7 @@ export const EXCLUSION_CODES = [
   'alreadyReplaced',
   'titleMatch',
   'subtitle',
+  'filtered',
 ] as const;
 
 export type ExclusionCode = (typeof EXCLUSION_CODES)[number];
@@ -32,24 +40,83 @@ export type ChildLogLevel = 'info' | 'error';
 
 const v = z.literal(PROTOCOL_VERSION);
 
+const filterRuleSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.literal('rule'),
+    field: z.enum(FILTER_FIELDS),
+    operator: z.enum(FILTER_OPERATORS),
+    value: z.unknown(),
+    negate: z.boolean().optional(),
+  })
+  .strict();
+
+const filterGroupSchema: z.ZodType<FilterGroup> = z.lazy(() =>
+  z
+    .object({
+      id: z.string().min(1),
+      kind: z.literal('group'),
+      combinator: z.enum(['and', 'or']),
+      negate: z.boolean().optional(),
+      children: z.array(z.union([filterRuleSchema, filterGroupSchema])).max(50),
+    })
+    .strict(),
+);
+
+const filterExpressionSchema = z
+  .object({
+    version: z.literal(1),
+    root: filterGroupSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    for (const message of validateFilterExpression(value)) {
+      context.addIssue({ code: 'custom', message });
+    }
+  }) as z.ZodType<FilterExpression>;
+
+const filterTraceEntrySchema = z
+  .object({
+    ruleId: z.string().min(1),
+    groupPath: z.array(z.string()),
+    field: z.enum(FILTER_FIELDS),
+    operator: z.enum(FILTER_OPERATORS),
+    value: z.unknown(),
+    negate: z.boolean(),
+    status: z.enum(['pass', 'fail', 'skipped', 'error']),
+    observed: z.string().optional(),
+    detail: z.string().optional(),
+  })
+  .strict();
+
+const filterTraceSchema = z
+  .object({
+    entries: z.array(filterTraceEntrySchema),
+    groupOutcomes: z.record(z.string(), z.enum(['pass', 'fail'])),
+    groupCombinators: z.record(z.string(), z.enum(['and', 'or'])),
+    groupNegates: z.record(z.string(), z.boolean()),
+    outcome: z.enum(['included', 'excluded']),
+    excludedBy: z.string().optional(),
+  })
+  .strict();
+
 const queueBuildConfigSchema = z
   .object({
     sources: z.array(z.string().min(1)).min(1),
     destinations: z.array(z.string().min(1)),
     tempDestinations: z.array(z.string()),
     useTempFolder: z.boolean(),
-    includedFileTypes: z.string(),
+    filterExpression: filterExpressionSchema,
+    copyFilteredFiles: z.boolean(),
+    copySrtFiles: z.boolean(),
     container: z.string().min(1),
     mode: z.enum(BATCH_OPERATION_MODES),
     presets: z.array(z.string()),
-    titleWordFilter: z.string(),
     replaceIfSmaller: z.boolean(),
     fileSuffixes: z.array(z.string()),
     removeApostrophes: z.boolean(),
     replaceAlways: z.boolean(),
     reverseQueue: z.boolean(),
-    /** Queue files even when the destination already has content. */
-    includeConverted: z.boolean(),
     /** Logs directory; used for the replaced-originals cache. */
     logDirectory: z.string().min(1),
     /** Outputs the last run did not finish; never treat them as converted. */
@@ -96,6 +163,9 @@ const queueBuildResultSchema = z
     ),
     destinations: z.array(z.string().nullable()),
     destinationsFinal: z.array(z.string().nullable()),
+    traces: z.array(filterTraceSchema),
+    /** Files ignored before evaluation because their type cannot match. */
+    typeFiltered: z.number().int().nonnegative(),
     notExists: z.number().int().nonnegative(),
   })
   .strict();

@@ -27,20 +27,26 @@ the repository root.
    on your machine — including custom presets saved in the HandBrake app — one preset per source row;
    the custom path also accepts raw HandBrakeCLI arguments. FFmpeg mode takes its own arguments instead
    (the parts before and after `-i`). Advanced options are behind **Advanced options**.
-3. **Scan** to build the queue — the table shows every file that does not already exist at the
-   destination, with status chips and a path filter.
-4. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
-   the current state.
-5. Per-file **Info** opens the media-info viewer (container, duration, bit rate, per-stream codec,
+3. Build scan rules in the **Filters** tab. Rules are a step-by-step AND/OR stack: add only the stages
+   you need, combine them with **Match all** / **Match any** groups, and use the chip summary to review
+   the whole expression. Media-property stages use searchable ffprobe property and value pickers.
+4. **Scan** to build the queue — the table shows every file that does not already exist at the
+   destination, with status chips, a path filter, and a **Filter** column. Click that column to see the
+   stage-by-stage reason a file was included, copied or excluded.
+5. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
+   the current state. Completed files are renamed into place only at the end: while a conversion runs,
+   the output is written as `movie.temp.mkv`, so a stopped run leaves unfinished files clearly marked.
+   This is on by default; turn it off under **File handling → Advanced options**.
+6. Per-file **Info** opens the media-info viewer (container, duration, bit rate, per-stream codec,
    resolution/channels, language).
 
 Destructive options (delete source, replace the original) are grouped and explained in the settings
 drawer, and a single confirmation lists exactly what a run will do before it starts.
 
-The settings drawer separates **Global settings** from **Profiles** in tabs. Language, worker count,
-verbose worker logs, and diagnostics/log locations apply to the whole app; folders, encoding, filters,
-and file handling belong to the active profile. Create, duplicate, rename, and delete profiles from
-the **Profiles** tab. Settings save automatically as you edit them.
+The settings drawer separates **Global settings**, **Profiles**, and **Filters** in tabs. Language,
+worker count, verbose worker logs, and diagnostics/log locations apply to the whole app; folders,
+encoding, filter rules, and file handling belong to the active profile. Create, duplicate, rename, and
+delete profiles from the **Profiles** tab. Settings save automatically as you edit them.
 
 ### Where files live
 

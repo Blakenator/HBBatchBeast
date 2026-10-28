@@ -75,6 +75,8 @@ export const workerItemConfigSchema = z
     outputPath: z.string().trim().min(1),
     /** Final destination; equal to outputPath when not staging. */
     finalPath: z.string().trim().min(1),
+    /** Output carries the `.temp` marker and may be discarded before re-encoding. */
+    tempOutput: z.boolean(),
     action: z.enum(['encode', 'copy', 'skip']),
     skipReason: z.string().optional(),
     /** Copy files rejected by property/size filters instead of skipping. */

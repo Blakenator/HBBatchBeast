@@ -1,12 +1,21 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { parseTokenList } from '../../common/configValues';
+import { fileTypeGate } from '../../common/filterExpression';
+import type { FilterTrace } from '../../common/filterExpression';
 import {
   ExclusionCode,
   QueueBuildConfig,
   QueueBuildResult,
   ScanExclusion,
 } from '../processes/protocol';
+import { runFfprobe } from '../helpers/ffprobe';
+import {
+  FilterEvaluationContext,
+  evaluateFilterExpression,
+  filterTraceReason,
+  skippedFilterTrace,
+  OutputState,
+} from './filterEvaluation';
 import { outputRelativePath } from './destination';
 
 export interface ScanQueueCallbacks {
@@ -14,21 +23,32 @@ export interface ScanQueueCallbacks {
   onLog?: (message: string) => void;
 }
 
-interface Candidate {
+interface WalkedFile {
   source: string;
-  preset: string;
+  originalSource: string;
+  relative: string;
+  extension: string;
   destination: string;
   destinationFinal: string | null;
+  isSidecar: boolean;
+  preset: string;
+}
+
+interface Candidate extends WalkedFile {
   /** Why the scanner will not convert this file; null when it will. */
   exclusion: ScanExclusion | null;
+  trace: QueueBuildResult['traces'][number];
+  /** True when the destination had no usable output yet. */
+  unconverted: boolean;
 }
 
 const PROGRESS_INTERVAL = 100;
+const EVALUATION_CONCURRENCY = 4;
 
 /**
- * Single-pass recursive scan. Builds the queue while walking so the file list
- * is never materialized twice (the legacy module collected everything, then
- * filtered it in a second loop).
+ * Reads the source tree once, then evaluates the filter expression over the
+ * candidates with bounded concurrency. Property rules probe lazily so files
+ * rejected by a cheaper stage never pay the ffprobe cost.
  */
 export async function scanQueue(
   config: QueueBuildConfig,
@@ -39,16 +59,11 @@ export async function scanQueue(
     if (count % PROGRESS_INTERVAL === 0) callbacks.onProgress?.(phase, count);
   };
 
-  const supportedTypes = new Set(
-    parseTokenList(config.includedFileTypes).map((type) => type.toLowerCase()),
-  );
-  const titleWords = parseTokenList(config.titleWordFilter);
+  const gate = fileTypeGate(config.filterExpression);
   const replacedFiles = await readReplacedFiles(config);
   const untrustedOutputs = new Set(config.untrustedOutputs);
-
-  let total = 0;
-  let notExists = 0;
-  const queue: Candidate[] = [];
+  const walked: WalkedFile[] = [];
+  let typeFiltered = 0;
 
   for (let index = 0; index < config.sources.length; index += 1) {
     const sourceRoot = config.sources[index];
@@ -81,7 +96,11 @@ export async function scanQueue(
         }
 
         const extension = path.extname(entry.name).slice(1).toLowerCase();
-        if (!supportedTypes.has(extension)) continue;
+        const isSidecar = config.copySrtFiles && extension === 'srt';
+        if (!isSidecar && gate && !gate.has(extension)) {
+          typeFiltered += 1;
+          continue;
+        }
 
         let filePath = absolute;
         if (config.removeApostrophes && entry.name.includes("'")) {
@@ -99,13 +118,6 @@ export async function scanQueue(
           }
         }
 
-        const alreadyReplaced =
-          replacedFiles.has(filePath) ||
-          (filePath !== absolute && replacedFiles.has(absolute));
-
-        total += 1;
-        progress('discovered', total);
-
         const relative = path.relative(sourceRoot, filePath);
         if (relative.startsWith('..') || path.isAbsolute(relative)) {
           log(`Skipping file outside its source folder: ${filePath}`);
@@ -122,89 +134,189 @@ export async function scanQueue(
           ? path.join(finalRoot, outputRelative)
           : null;
 
-        const target = destinationFinal ?? destination;
-        const hasOutput =
-          !untrustedOutputs.has(target) &&
-          !untrustedOutputs.has(destination) &&
-          (await isConverted(target));
-        // "Include already converted" re-queues those files; report them as
-        // unconverted so the count matches what the run will process.
-        const converted = hasOutput && !config.includeConverted;
-        if (!converted) notExists += 1;
-
-        await ensureDirectory(path.dirname(destination));
-        if (destinationFinal) {
-          await ensureDirectory(path.dirname(destinationFinal));
-        }
-
-        const baseName = path.basename(relative, path.extname(relative));
-        const matchedTitleWord = titleWords.find((word) =>
-          baseName.includes(word),
-        );
-
-        queue.push({
+        walked.push({
           source: filePath,
-          preset,
+          originalSource: absolute,
+          relative,
+          extension,
           destination,
           destinationFinal,
-          exclusion: exclusionReason({
-            alreadyReplaced,
-            converted,
-            matchedTitleWord,
-            extension,
-          }),
+          isSidecar,
+          preset,
         });
-        progress('queued', queue.length);
+        progress('discovered', walked.length);
       }
     };
 
     await walk(sourceRoot);
   }
 
+  const queue: Candidate[] = new Array(walked.length);
+  let completed = 0;
+  let nextIndex = 0;
+
+  const evaluateNext = async (): Promise<void> => {
+    while (nextIndex < walked.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      queue[index] = await evaluateCandidate(
+        walked[index],
+        config,
+        replacedFiles,
+        untrustedOutputs,
+        log,
+      );
+      completed += 1;
+      progress('queued', completed);
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(EVALUATION_CONCURRENCY, walked.length) },
+      () => evaluateNext(),
+    ),
+  );
+
   if (config.reverseQueue) queue.reverse();
 
-  log(`File scanner: Finished (${queue.length} queued, ${total} found)`);
+  log(
+    `File scanner: Finished (${queue.length} queued, ${walked.length} found, ${typeFiltered} ignored by type)`,
+  );
 
   return {
-    total,
+    total: walked.length,
     sources: queue.map((candidate) => candidate.source),
     presets: queue.map((candidate) => candidate.preset),
     skipOrCopy: queue.map((candidate) => (candidate.exclusion ? 1 : 0)),
     excluded: queue.map((candidate) => candidate.exclusion),
     destinations: queue.map((candidate) => candidate.destination),
     destinationsFinal: queue.map((candidate) => candidate.destinationFinal),
-    notExists,
+    traces: queue.map((candidate) => candidate.trace),
+    typeFiltered,
+    notExists: queue.filter((candidate) => candidate.unconverted).length,
   };
 }
 
-interface ExclusionInput {
-  alreadyReplaced: boolean;
-  converted: boolean;
-  matchedTitleWord: string | undefined;
-  extension: string;
+async function evaluateCandidate(
+  file: WalkedFile,
+  config: QueueBuildConfig,
+  replacedFiles: Set<string>,
+  untrustedOutputs: Set<string>,
+  log: (message: string) => void,
+): Promise<Candidate> {
+  await ensureDirectory(path.dirname(file.destination));
+  if (file.destinationFinal) {
+    await ensureDirectory(path.dirname(file.destinationFinal));
+  }
+
+  const target = file.destinationFinal ?? file.destination;
+  const untrusted =
+    untrustedOutputs.has(target) || untrustedOutputs.has(file.destination);
+  const hasExisting = !untrusted && (await isConverted(target));
+  const replaced =
+    replacedFiles.has(file.source) || replacedFiles.has(file.originalSource);
+
+  const outputState: OutputState = replaced
+    ? 'replaced'
+    : hasExisting
+      ? 'converted'
+      : untrusted
+        ? 'untrusted'
+        : 'empty';
+
+  let trace: FilterTrace;
+  if (file.isSidecar) {
+    trace = skippedFilterTrace(
+      config.filterExpression,
+      'Subtitle sidecar copied without conversion',
+    );
+  } else {
+    const sourceStats = await fs.stat(file.source).catch((): undefined => undefined);
+    const context: FilterEvaluationContext = {
+      fileName: path.basename(file.source),
+      extension: file.extension,
+      ...(sourceStats ? { sizeBytes: sourceStats.size } : {}),
+      outputState,
+    };
+    trace = await evaluateFilterExpression(config.filterExpression, context, {
+      probe: () =>
+        runFfprobe(file.source).catch((error): undefined => {
+          log(
+            `ffprobe failed for "${file.source}": ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return undefined;
+        }),
+    });
+  }
+
+  let exclusion: ScanExclusion | null = null;
+  if (file.isSidecar && !replaced) {
+    exclusion = {
+      code: 'subtitle',
+      reason: 'Subtitle file (copied, not converted)',
+    };
+  } else if (replaced) {
+    // A replaced original is never converted again, even when the user asks to
+    // include already-converted files. Surface it as a failed system stage.
+    const entryId = 'system-already-replaced';
+    trace = {
+      ...trace,
+      entries: [
+        {
+          ruleId: entryId,
+          groupPath: [config.filterExpression.root.id],
+          field: 'outputState',
+          operator: 'is',
+          value: 'converted',
+          negate: false,
+          status: 'fail',
+          observed: 'replaced',
+          detail: 'Already replaced (see replaced-files log)',
+        },
+        ...trace.entries,
+      ],
+      groupOutcomes: {
+        ...trace.groupOutcomes,
+        [config.filterExpression.root.id]: 'fail',
+      },
+      outcome: 'excluded',
+      excludedBy: entryId,
+    };
+    exclusion = {
+      code: 'alreadyReplaced',
+      reason: 'Already replaced (see replaced-files log)',
+    };
+  } else if (trace.outcome === 'excluded') {
+    const code = exclusionCode(outputState);
+    exclusion = {
+      code,
+      reason:
+        code === 'alreadyConverted'
+          ? 'Already converted'
+          : filterTraceReason(trace) ?? 'Excluded by the file filter',
+    };
+  }
+
+  return {
+    ...file,
+    exclusion,
+    trace,
+    unconverted:
+      outputState === 'empty' ||
+      outputState === 'untrusted' ||
+      (!file.isSidecar && trace.outcome === 'included'),
+  };
 }
 
-const EXCLUSION_REASONS: Record<ExclusionCode, string> = {
-  alreadyReplaced: 'Already replaced (see replaced-files log)',
-  alreadyConverted: 'Already converted',
-  titleMatch: 'Title matches the title word filter',
-  subtitle: 'Subtitle file (copied, not converted)',
-};
-
-/** First matching exclusion wins; null means the file will be converted. */
-function exclusionReason(input: ExclusionInput): ScanExclusion | null {
-  const withReason = (code: ExclusionCode, extra?: string): ScanExclusion => ({
-    code,
-    reason: extra ? `${EXCLUSION_REASONS[code]}: "${extra}"` : EXCLUSION_REASONS[code],
-  });
-
-  if (input.alreadyReplaced) return withReason('alreadyReplaced');
-  if (input.converted) return withReason('alreadyConverted');
-  if (input.matchedTitleWord !== undefined) {
-    return withReason('titleMatch', input.matchedTitleWord);
-  }
-  if (input.extension === 'srt') return withReason('subtitle');
-  return null;
+function exclusionCode(outputState: OutputState): ExclusionCode {
+  // Existing output wins over a rule reason so copy-filtered-files can never
+  // overwrite a completed conversion, even when another stage failed first.
+  if (outputState === 'converted') return 'alreadyConverted';
+  if (outputState === 'replaced') return 'alreadyReplaced';
+  return 'filtered';
 }
 
 async function readReplacedFiles(

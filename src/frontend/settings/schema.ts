@@ -6,6 +6,8 @@
  * Paths are relative to a single `BatchConfig`.
  */
 
+import { DEFAULT_TEMP_MARKER_TOGGLE } from '../../common';
+
 export type FieldKind =
   | 'text'
   | 'multiline'
@@ -13,8 +15,6 @@ export type FieldKind =
   | 'toggle'
   | 'select'
   | 'segmented'
-  | 'token-list'
-  | 'property-filters'
   | 'preset-rows'
   | 'custom-args-rows'
   | 'suffix-rows'
@@ -66,17 +66,12 @@ export interface FieldSchema {
   /** Single path fields can open the OS picker. */
   browse?: 'folder' | 'file';
   browseFilters?: { name: string; extensions: string[] }[];
-  /** Selects keep a stored value that is not in the option list. */
-  /** Token lists can offer a one-click set of common values. */  defaults?: string[];
-  /** File-type tokens lose their dot and are compared case-insensitively. */
-  fileTypes?: boolean;
+  /** Value a toggle shows when the profile has not stored one yet. */
+  defaultValue?: 0 | 1;
   /** Rendered above the paired folder rows (e.g. the temp-staging switch). */
   beforeRows?: boolean;
   /** Aligned list fields follow the source folder rows. */
   alignTo?: string;
-  /** Property-filter rows write the enable/match flags alongside the pairs. */
-  anyPath?: string;
-  allPath?: string;
 }
 
 export interface FolderRowsSchema {
@@ -108,9 +103,6 @@ export const FALLBACK_HANDBRAKE_PRESETS = [
   'Very Fast 2160p60 4K HEVC',
   'Very Fast 2160p60 4K AV1',
 ];
-
-export const DEFAULT_FILE_TYPES =
-  'mp4,mkv,mov,m4v,mpg,mpeg,avi,flv,webm,wmv,vob,evo,mts,m2ts,ts,iso';
 
 export const settingsSchema: GroupSchema[] = [
   {
@@ -212,115 +204,18 @@ export const settingsSchema: GroupSchema[] = [
     ],
   },
   {
-    id: 'filters',
-    title: 'Filters',
-    description:
-      'Choose which files enter the queue. Filters apply before anything is converted.',
-    fields: [
-      {
-        path: 'tab_batch.advanced.include_converted_files_toggle',
-        label: 'Include files that are already converted',
-        kind: 'toggle',
-        help: 'By default a file is skipped when its destination already exists and is not empty. Turn this on to convert and overwrite those outputs again.',
-      },
-      {
-        path: 'tab_batch.advanced.included_file_types',
-        label: 'Included file types',
-        kind: 'token-list',
-        fileTypes: true,
-        defaults: DEFAULT_FILE_TYPES.split(','),
-        placeholder: 'mp4, mkv, mov…',
-        help: 'Add extensions one at a time. Matching ignores case.',
-      },
-      {
-        path: 'tab_batch.advanced.title_word_filter',
-        label: 'Skip filenames containing',
-        kind: 'token-list',
-        placeholder: 'sample, trailer…',
-        help: 'Any listed word matching the filename excludes the file.',
-      },
-      {
-        path: 'tab_batch.advanced.min_file_size_filter_toggle',
-        label: 'Filter by minimum size',
-        kind: 'toggle',
-        advanced: true,
-      },
-      {
-        path: 'tab_batch.advanced.min_file_size_filter',
-        label: 'Minimum size',
-        kind: 'number',
-        advanced: true,
-        min: 0,
-        unit: 'MB',
-        showWhen: {
-          all: [
-            {
-              path: 'tab_batch.advanced.min_file_size_filter_toggle',
-              equals: 1,
-            },
-          ],
-        },
-      },
-      {
-        path: 'tab_batch.advanced.max_file_size_filter_toggle',
-        label: 'Filter by maximum size',
-        kind: 'toggle',
-        advanced: true,
-      },
-      {
-        path: 'tab_batch.advanced.max_file_size_filter',
-        label: 'Maximum size',
-        kind: 'number',
-        advanced: true,
-        min: 0,
-        unit: 'MB',
-        showWhen: {
-          all: [
-            {
-              path: 'tab_batch.advanced.max_file_size_filter_toggle',
-              equals: 1,
-            },
-          ],
-        },
-        help: 'Files outside the enabled size range are filtered out.',
-      },
-      {
-        path: 'tab_batch.advanced.included_property_filter',
-        label: 'Include files with properties',
-        kind: 'property-filters',
-        advanced: true,
-        anyPath: 'tab_batch.advanced.included_property_filter_any_toggle',
-        allPath: 'tab_batch.advanced.included_property_filter_all_toggle',
-        help: 'Match ffprobe stream properties. "Any" keeps a file when one pair matches; "All" requires every pair.',
-      },
-      {
-        path: 'tab_batch.advanced.excluded_property_filter',
-        label: 'Exclude files with properties',
-        kind: 'property-filters',
-        advanced: true,
-        anyPath: 'tab_batch.advanced.excluded_property_filter_any_toggle',
-        allPath: 'tab_batch.advanced.excluded_property_filter_all_toggle',
-        help: 'Drop files whose streams match these ffprobe properties.',
-      },
-      {
-        path: 'tab_batch.advanced.copy_srt_files_toggle',
-        label: 'Copy .srt sidecars',
-        kind: 'toggle',
-        advanced: true,
-      },
-      {
-        path: 'tab_batch.advanced.copy_filtered_files_toggle',
-        label: 'Copy filtered-out files to the destination',
-        kind: 'toggle',
-        advanced: true,
-      },
-    ],
-  },
-  {
     id: 'handling',
     title: 'File handling',
     description: 'What happens to the original file and extras once a conversion succeeds.',
     fields: [
+      {
+        path: 'tab_batch.advanced.temp_marker_toggle',
+        label: 'Mark in-progress conversions with .temp',
+        kind: 'toggle',
+        advanced: true,
+        defaultValue: DEFAULT_TEMP_MARKER_TOGGLE,
+        help: 'Files are written as name.temp.mkv and renamed to name.mkv only after the conversion finishes, so a stopped run leaves unfinished files clearly marked.',
+      },
       {
         path: 'tab_batch.advanced.delete_source_files_toggle',
         label: 'Delete source files after a successful conversion',
