@@ -8,7 +8,7 @@ stories — not against the legacy UI.
 
 | # | Principle | Consequence for the build |
 | --- | --- | --- |
-| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | One primary screen. Settings stay in a drawer/route; Global and Profiles tabs organize settings inside the drawer, not as competing app navigation. |
+| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | Home is a launcher (Quick convert + libraries), then one library run screen. Settings is a persistent page with Global, Libraries and Presets tabs, reached from the header; it does not compete with the run. |
 | **D2** | **Preview before commit.** Nothing is converted until the user has seen what would happen. | Scan-only is the default first action; the run button lives in the review state, not the settings form. |
 | **D3** | **Safe by default, explicit by exception.** Destructive actions are off, isolated and explained. | Delete/replace live in their own section, visually marked, with one plain-language sentence each and a run-level confirmation. |
 | **D4** | **Progress is always visible and honest.** Long runs must never look stalled or finished-early. | Persistent run bar with counts, elapsed, per-worker state; cancellation and worker death are surfaced, not silent. |
@@ -21,24 +21,33 @@ stories — not against the legacy UI.
 
 ```
 App shell
-├── Header: app name · active profile selector · status pill (idle/scanning/running/paused/error) · Settings button
-├── Run screen  (default route)
-│   ├── Setup summary cards: Folders · Encoding · Filters · File handling   [edit → settings drawer]
+├── Header: app name · active library · status pill (idle/scanning/running/paused/error) · Home · Settings
+├── Home / launcher  (default route)
+│   ├── Quick convert: opens a temporary setup page (folders · preset · rules · filters)
+│   └── Libraries: cards with folder count, default preset, mapping-rule count, Open and Use as quick run
+├── Library run screen
+│   ├── Setup summary cards: Folders · Encoding/default preset/rules · Filters · File handling
 │   ├── Validation banner (only when blocking issues exist)
-│   ├── Actions: [Scan] / [Scan & Convert] / [Stop]
+│   ├── Actions: [Scan] / [Start conversion] / [Pause] / [Resume] / [Stop] / [Save as library]
 │   └── Live view (appears after scan)
 │       ├── Progress header: counts, failures, elapsed, worker chips
 │       ├── Queue/results table: virtualized, filter chips (All / Remaining / Success / Error / Cancelled)
 │       ├── Per-row Filter column: stage-by-stage include/exclude/copy trace popover
+│       ├── Preset column: resolved preset, with the mapping rule that selected it
 │       └── Row actions: cancel item · open log · reveal in folder · media info
-├── Settings drawer
-│   ├── Global tab   — language, worker count, verbose worker logs, log files and locations
-│   ├── Profiles tab — profile selector and per-profile conversion settings
-│   │   ├── Folders       — source/destination/temp rows, auto-create, profile paths
-│   │   ├── Encoding      — HandBrake/FFmpeg, preset per row, container, suffix
+├── Quick conversion page (temporary library)
+│   ├── Folders · preset/container · mapping rules (locked default) · scan filters
+│   └── Continue to scan → normal review/run screen; Save as library available
+├── Settings page
+│   ├── Global tab    — language, worker count, verbose worker logs, log files and locations
+│   ├── Libraries tab — library selector and per-library conversion settings
+│   │   ├── Folders       — source/destination/temp rows, suffix, temp staging
+│   │   ├── Encoding      — HandBrake/FFmpeg, container
+│   │   ├── Mapping rules — ordered first-match rules (folder/path, media, filename, size, type)
+│   │   │                   with a locked Default preset row at the bottom
+│   │   ├── Scan filters  — step-by-step AND/OR rule stack, chip summary, ffprobe pickers
 │   │   └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
-│   └── Filters tab   — step-by-step AND/OR rule stack, chip summary, ffprobe property/value pickers,
-│                       SRT and copy-filtered handling
+│   └── Presets tab   — reusable HandBrake/FFmpeg encoding recipes
 └── Secondary views (opened from row actions or header)
     ├── Log viewer
     ├── Media info
@@ -55,7 +64,7 @@ Rationale: the legacy app put six tabs of *configuration* in front of the user a
 | State | What it shows | Acceptance criteria |
 | --- | --- | --- |
 | **Empty (first run)** | Two required inputs (source, destination), default preset named, single primary action. | No disabled-but-unexplained controls; one obvious next step (US-01, F1.1). |
-| **Configured** | Summary cards of the active profile; validation banner if issues; `Scan` primary. | A user can tell, without opening settings, which folders, preset and filters are active (D1). |
+| **Configured** | Summary cards of the active library; validation banner if issues; `Scan` primary. | A user can tell, without opening settings, which folders, preset, mapping rules and filters are active (D1). |
 | **Scanning** | Live discovered-file count + analysed count; cancel available immediately. | Cancel returns to **Configured** with no partial state (US-09). |
 | **Review** | Summary line `N found · M to convert · K present · F filtered`; sample/virtualized rows with resolved preset and extra actions; blocking issues listed with links to the field. | Run button only enabled when there are zero blocking issues (US-09, US-10). |
 | **Running** | Progress header (done/total, failures, elapsed), worker chips with current file + %, queue table auto-filtered to Remaining, pause/stop/cancel-item. | Pause/stop/continue reflect actual state within one UI tick; no dead buttons (US-11–US-15). |
@@ -64,17 +73,18 @@ Rationale: the legacy app put six tabs of *configuration* in front of the user a
 | **Completed** | Result summary, failures count with "review failures", open destination, replaced-files list if applicable. | Summary is reachable from any filter state and states "nothing was converted" when that is the case (F1.7, F7). |
 | **Interrupted (recovered)** | Banner explaining the previous run did not finish, with counts. | App never silently presents a lost run as success (F3 branch). |
 
-### 3.2 Settings drawer
+### 3.2 Settings page
 
 | Tab / group | Must contain | Notes |
 | --- | --- | --- |
-| Global | Language, worker count, verbose worker logs, log files and locations | Preferences shared by all profiles; legacy per-profile system values migrate to global settings. |
-| Profiles | Profile selector and create/rename/duplicate/delete actions | Conversion settings below apply only to the active profile. |
-| Folders | Paired source/destination rows, optional temp row per source, auto-create folders | Row editor; add/remove/reorder; paste-many support; per-row validation (US-02, US-03). |
-| Encoding | Encoder switch, per-row preset selector populated from the installed HandBrakeCLI, custom argument editor, container select, per-row suffix | Preset labels in plain language; only the active encoder's controls are shown; NVENC warning inline; validation that preset count matches row count (US-04, US-05, US-08). |
-| Filters | Step-by-step rule stack with nested **Match all** / **Match any** groups, a read-only chip summary, an Add-stage menu for unused filters, and catalog-backed ffprobe property/value pickers | Rules are evaluated in order at scan time; unused filters appear only in the Add-stage menu; the same stage order drives the per-file trace popover (US-06, US-07, US-09). |
+| Global | Language, worker count, verbose worker logs, log files and locations | Preferences shared by all libraries. |
+| Libraries | Library selector and create/rename/duplicate/delete actions | Conversion settings below apply only to the active library; deleting the last library is blocked (US-21, US-28). |
+| Folders | Paired source/destination rows, optional temp row per source, per-row suffix, temp staging | Row editor; add/remove/reorder; paste-many support; per-row validation (US-02, US-03). |
+| Encoding | Encoder switch, container select, suffix rows | Presets come from the Presets tab and are filtered to the active encoder; NVENC warning inline (US-04, US-05, US-08, US-29). |
+| Mapping rules | Ordered first-match list; each rule has a condition tree (folder/path, media property, filename, size, type) and a preset. The default preset is a locked rule at the bottom. | Order is visible and reorderable; the locked default cannot be deleted; the queue shows which rule matched (US-29). |
+| Scan filters | Step-by-step rule stack with nested **Match all** / **Match any** groups, a read-only chip summary, an Add-stage menu for unused filters, and catalog-backed ffprobe property/value pickers | Rules are evaluated in order at scan time; unused filters appear only in the Add-stage menu; the same stage order drives the per-file trace popover (US-06, US-07, US-09). |
 | File handling | Delete source, replace original (always / if smaller), remove apostrophes, reverse order, custom batch hook, low priority, in-progress `.temp` marker | Destructive pair visually grouped and explained (US-19, US-20). |
-| Profiles | List with create/rename/duplicate/delete, active marker | Deleting the last profile is blocked with an explanation (US-21). |
+| Presets | Reusable HandBrake/FFmpeg recipes; add/rename/delete; usage protection | Presets referenced by a default or rule cannot be deleted without reassignment. |
 | System | Worker count, queue-view limit, verbose logs, language | Worker count shows the practical range; language applies immediately (US-14, US-22). |
 
 Rules for the drawer: it must never trap unsaved work (changes persist on blur with a saved-indicator toast),
@@ -164,7 +174,7 @@ must act on. Errors are never toast-only.
 
 | Legacy pattern | Replacement |
 | --- | --- |
-| Six top-level tabs of settings sharing one long scroll | Run screen + grouped settings drawer |
+| Six top-level tabs of settings sharing one long scroll | Run screen + persistent tabbed Settings page |
 | Newline-aligned textareas for paired data | Row editor with pairing validation |
 | `alert()`-style validation after submit | Inline, field-level, fix-oriented validation |
 | 33 `?`-glyph tooltip blobs | Short inline helper text + docs link for anything non-obvious |
@@ -181,12 +191,15 @@ must act on. Errors are never toast-only.
 | Review state + validation banner | US-09, US-10, F1.4–F1.5 |
 | Running / paused / stopping states | US-11–US-15, F3 |
 | Queue table filters + row actions | US-16–US-18, US-24, F4 |
-| Settings → Folders | US-02, US-03 |
-| Settings → Encoding | US-04, US-05, US-08 |
-| Settings → Filters rule stack | US-06, US-07 |
+| Home → Quick convert | US-28, F10 |
+| Settings → Libraries → Folders | US-02, US-03 |
+| Settings → Libraries → Encoding | US-04, US-05, US-08 |
+| Settings → Libraries → Mapping rules | US-29, F11 |
+| Settings → Libraries → Scan filters | US-06, US-07 |
+| Settings → Presets | US-08, US-29 |
 | Queue Filter trace popover | US-09, US-16 |
-| Settings → File handling | US-19, US-20 |
-| Settings → Profiles | US-21, F5 |
+| Settings → Libraries → File handling | US-19, US-20 |
+| Settings → Libraries (management) | US-21, F5 |
 | Settings → System / language | US-14, US-22 |
 | Log viewer | US-17, US-27 |
 | Media info | US-24, F8 |

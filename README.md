@@ -1,9 +1,11 @@
 # HBBatchBeast
 
-A desktop app for batch-converting video with **HandBrakeCLI** or **FFmpeg**. Point it at source
-folders, choose a destination, pick a preset per folder, and it scans recursively, skips files that
-already have output at the destination, and works through the queue with a configurable number of
-workers.
+A desktop app for batch-converting video with **HandBrakeCLI** or **FFmpeg**. Libraries describe
+your folders and scan filters, conversion presets describe the encoding recipes, and ordered mapping
+rules choose a preset per file (for example 480p → mobile, 1080p → TV). It scans recursively, skips
+files that already have output at the destination, and works through the queue with a configurable
+number of workers. A one-off **Quick convert** flow handles a single folder without creating a
+library.
 
 This is a fork of [HaveAGitGat/HBBatchBeast](https://github.com/HaveAGitGat/HBBatchBeast). The original
 single-file jQuery app has been replaced rather than patched: the Electron + React + TypeScript app lives at
@@ -19,45 +21,55 @@ the repository root.
 
 ## Using the app
 
-1. Open **Settings** and add at least one source folder with its destination: each row pairs a source
-   with a destination, the **…** buttons open the OS folder picker, and **Add folders…** adds several
-   rows at once. Pasting multiple lines into a path field fills successive rows. With temp staging on,
-   every row also gets a temp folder.
-2. Adjust encoding, filters and file handling. The preset list is read from the HandBrakeCLI installed
-   on your machine — including custom presets saved in the HandBrake app — one preset per source row;
-   the custom path also accepts raw HandBrakeCLI arguments. FFmpeg mode takes its own arguments instead
-   (the parts before and after `-i`). Advanced options are behind **Advanced options**.
-3. Build scan rules in the **Filters** tab. Rules are a step-by-step AND/OR stack: add only the stages
-   you need, combine them with **Match all** / **Match any** groups, and use the chip summary to review
-   the whole expression. Media-property stages use searchable ffprobe property and value pickers.
-4. **Scan** to build the queue — the table shows every file that does not already exist at the
-   destination, with status chips, a path filter, and a **Filter** column. Click that column to see the
-   stage-by-stage reason a file was included, copied or excluded.
-5. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
+1. On the home screen, either start a **Quick conversion** or open a saved library. Quick conversion
+   is a temporary setup page with the same folders, preset, mapping-rule and scan-filter controls as a
+   library. You can also press **Use as quick run** on a library to pre-fill those fields from it;
+   nothing is saved unless you choose **Save as library** after reviewing the queue.
+2. Open **Settings → Libraries** to manage a library. Each folder row pairs a source with a
+   destination; the **…** buttons open the OS folder picker, and multiple rows can be pasted or added
+   at once. With temp staging on, every row also gets a temp folder.
+3. Still in the library, choose the encoder (HandBrake or FFmpeg) and output container. Presets are
+   shared across libraries and live in the **Presets** tab; each preset is a HandBrake preset name or
+   raw arguments, or an FFmpeg `input,output` argument pair.
+4. Build **Default mapping rules**. Rules are evaluated top to bottom and the first match chooses the
+   preset. The bottom row is a locked **Default preset** used when no rule matches; it cannot be
+   removed. Conditions can use folder/path, filename, file size, file type and media properties such
+   as resolution or codec.
+5. Build scan filters in the library's **Scan filters** section. Rules are a step-by-step AND/OR
+   stack: add only the stages you need, combine them with **Match all** / **Match any** groups, and
+   use the chip summary to review the whole expression. Media-property stages use searchable ffprobe
+   property and value pickers.
+6. **Scan** to build the queue — the table shows every file that does not already exist at the
+   destination, with status chips, a path filter, resolved preset and a **Filter** column. Click that
+   column to see the stage-by-stage reason a file was included, copied or excluded; hover the preset
+   to see which mapping rule selected it.
+7. **Start conversion**, then pause, resume or stop at any time. The header pill and the tray icon show
    the current state. Completed files are renamed into place only at the end: while a conversion runs,
    the output is written as `movie.temp.mkv`, so a stopped run leaves unfinished files clearly marked.
-   This is on by default; turn it off under **File handling → Advanced options**.
-6. Per-file **Info** opens the media-info viewer (container, duration, bit rate, per-stream codec,
+   This is on by default; turn it off under **File handling**.
+8. Per-file **Info** opens the media-info viewer (container, duration, bit rate, per-stream codec,
    resolution/channels, language).
 
-Destructive options (delete source, replace the original) are grouped and explained in the settings
-drawer, and a single confirmation lists exactly what a run will do before it starts.
+Destructive options (delete source, replace the original) are grouped and explained in the library
+editor, and a single confirmation lists exactly what a run will do before it starts.
 
-The settings drawer separates **Global settings**, **Profiles**, and **Filters** in tabs. Language,
-worker count, verbose worker logs, and diagnostics/log locations apply to the whole app; folders,
-encoding, filter rules, and file handling belong to the active profile. Create, duplicate, rename, and
-delete profiles from the **Profiles** tab. Settings save automatically as you edit them.
+Settings is a full page rather than a drawer, with **Global settings**, **Libraries**, and
+**Presets** tabs. Language, worker count, verbose worker logs, and diagnostics/log locations apply to
+the whole app; folders, encoding, mapping rules, scan filters and file handling belong to the active
+library. Create, duplicate, rename, and delete libraries from the **Libraries** tab. Settings save
+automatically as you edit them. The header's back button returns to the home screen (or to the
+library run you left).
 
 ### Where files live
 
 | Path | Purpose |
 | --- | --- |
-| `~/Documents/HBBatchBeast/Config/Configuration.json` | profiles and app settings |
+| `~/Documents/HBBatchBeast/Config/Configuration.json` | libraries, presets and app settings (a `.v1.bak` copy is written on first migration from the profile format) |
 | `~/Documents/HBBatchBeast/Config/run-journal.json` | state of the last run, used to report an interrupted run |
 | `~/Documents/HBBatchBeast/Logs/` | master, error, conversion and scan logs plus filter caches |
 
-**Logs & diagnostics** in the settings drawer lists those logs, opens the folders, clears the filter
-caches and clears a recovered run journal.
+**Logs & diagnostics** in Settings lists those logs, opens the folders, clears the filter caches and
+clears a recovered run journal.
 
 ### Linux / Wayland
 
@@ -103,8 +115,10 @@ Deliberately **removed** (the rewrite has no equivalent and legacy config keys a
 
 Also different:
 
-- Settings are per **profile** with real create/duplicate/rename/delete instead of ten fixed slots.
-- The UI is a single job-centric screen (choose folders → scan → review → run) rather than tabs.
+- Libraries, conversion presets and per-library mapping rules replace the old fixed profile slots;
+  create, duplicate, rename and delete libraries from settings.
+- A home screen offers Quick convert for one-off folders alongside saved libraries, then flows into
+  the library run screen (scan → review → run).
 - A cross-platform tray icon with status indicators, and an application menu with reload, zoom,
   devtools (development builds) and a bug-report link.
 - A run journal means an interrupted run is reported as interrupted instead of looking completed.

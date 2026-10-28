@@ -34,6 +34,7 @@ import { Button } from '../ui/Button';
 import { normalizePresetName } from '../../common';
 import type { RunItemAction } from '../../common';
 import type { FilterTrace } from '../../common/filterExpression';
+import type { PresetTrace } from '../../common/library';
 import { RunItemProgress, parsePercent } from '../../common/runTelemetry';
 import { FilterTracePopover } from './FilterTracePopover';
 import {
@@ -72,6 +73,8 @@ export interface QueueRow {
   logTail?: string[];
   /** Scan-stage trace; present for rows produced by a scan. */
   filterTrace?: FilterTrace;
+  /** Which mapping rule chose this row's preset. */
+  presetTrace?: PresetTrace;
 }
 
 interface QueueTableProps {
@@ -598,7 +601,11 @@ export const QueueTable: React.FC<QueueTableProps> = ({
           const raw = (info.getValue() ?? '').trim();
           const name = presetNameFromArgs(raw);
           const text = name || (raw ? formatMessage(runMessages.customArguments) : '—');
-          return <span title={raw || undefined}>{text}</span>;
+          const trace = info.row.original.presetTrace;
+          const title = trace
+            ? `${raw}${trace.ruleName ? `\nSelected by ${trace.ruleName}` : ''}`
+            : raw;
+          return <span title={title || undefined}>{text}</span>;
         },
       }),
       columnHelper.accessor((row) => row.preset ?? '', {

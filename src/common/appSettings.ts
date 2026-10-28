@@ -1,18 +1,26 @@
-import { GlobalAppConfig, GlobalSettingsConfig } from './types';
+import { BatchConfig, GlobalAppConfig, GlobalSettingsConfig } from './types';
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettingsConfig = {
   worker_instance_number: '4',
   save_worker_logs_toggle: 0,
 };
 
+/** Shape shared by the current config and the legacy profile file. */
+export interface GlobalSettingsSource {
+  app_settings?: Partial<GlobalSettingsConfig>;
+  configs?: Partial<BatchConfig>[];
+  selected_config?: number;
+}
+
 /**
  * Reads app-wide settings while remaining compatible with values saved inside
  * profile `tab_system` objects by older versions.
  */
 export function resolveGlobalSettings(
-  config: GlobalAppConfig,
+  config: GlobalSettingsSource,
 ): GlobalSettingsConfig {
-  const legacy = config.configs[config.selected_config]?.tab_system;
+  const legacy =
+    config.configs?.[config.selected_config ?? 0]?.tab_system;
   return {
     worker_instance_number:
       config.app_settings?.worker_instance_number ??

@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { IntlProvider } from 'react-intl';
 import { getDefaultMessages } from '../src/frontend/allMessages';
-import { ASYNC_CHANNEL, GlobalAppConfig, PROMISE_CHANNEL } from '../src/common';
+import {
+  ASYNC_CHANNEL,
+  AppConfigV2,
+  Library,
+  defaultFilterExpression,
+} from '../src/common';
 import { useSetBatchResultDirect } from '../src/frontend/core/stores';
 import { RunScreen } from '../src/frontend/run/RunScreen';
 
@@ -67,21 +72,31 @@ afterEach(() => {
   scanMounts.mockClear();
 });
 
-const config: GlobalAppConfig = {
+const library: Library = {
+  id: 'library-default',
+  name: 'Default',
+  folders: [{ id: 'folder-1', source: '/src', destination: '/dst' }],
+  filters: defaultFilterExpression(),
+  encoder: 'handbrake',
+  container: '.mkv',
+  defaultPresetId: 'preset-1',
+  mappingRules: [],
+  defaults: { included_file_types: 'mkv', temp_marker_toggle: 0 },
+};
+
+const config: AppConfigV2 = {
+  schema_version: 2,
   lang: 'en',
-  selected_config: 0,
   version_message: 'test',
-  configs: [
+  selected_library: library.id,
+  presets: [
     {
-      name: 'Default',
-      tab_batch: {
-        path: { source_path: '/src', destination_path: '/dst' },
-        preset: 'Fast 1080p30',
-        container: '.mkv',
-        advanced: { included_file_types: 'mkv', temp_marker_toggle: 0 },
-      },
+      id: 'preset-1',
+      name: 'Fast 1080p30',
+      handbrake: { preset: 'Fast 1080p30' },
     },
   ],
+  libraries: [library],
 };
 
 function Harness() {
@@ -105,6 +120,7 @@ function Harness() {
   return (
     <RunScreen
       config={config}
+      library={library}
       onStatusChange={vi.fn()}
       onOpenSettings={vi.fn()}
     />

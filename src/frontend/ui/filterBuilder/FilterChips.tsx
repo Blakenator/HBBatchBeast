@@ -2,6 +2,7 @@ import React from 'react';
 import { useIntl } from 'react-intl';
 import {
   FilterExpression,
+  FilterRule,
   flattenFilterRules,
   isFilterExpressionEmpty,
 } from '../../../common/filterExpression';
@@ -15,6 +16,8 @@ interface FilterChipsProps {
   fields: FilterFieldDefinition[];
   empty?: React.ReactNode;
   ariaLabel?: string;
+  /** Overrides the default label for fields with an app-specific value. */
+  describeValue?: (rule: FilterRule) => string | undefined;
 }
 
 export const FilterChips: React.FC<FilterChipsProps> = ({
@@ -22,6 +25,7 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
   fields,
   empty,
   ariaLabel,
+  describeValue,
 }) => {
   const { formatMessage } = useIntl();
   if (isFilterExpressionEmpty(expression)) {
@@ -67,7 +71,8 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
                   :{' '}
                 </span>
               ) : null}
-              {describeRule(rule, field, formatMessage)}
+              {describeValue?.(rule) ??
+                describeRule(rule, field, formatMessage)}
             </TokenChip>
           </React.Fragment>
         );

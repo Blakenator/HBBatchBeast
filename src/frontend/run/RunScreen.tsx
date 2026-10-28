@@ -3,12 +3,13 @@ import { Alert, Modal, Spinner } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import {
   ASYNC_CHANNEL,
-  BatchTabConfig,
-  GlobalAppConfig,
+  AppConfigV2,
+  Library,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
-  countConfiguredRows,
-  resolveFilterExpression,
+  libraryToRuntimeConfig,
+  presetDisplayName,
+  validateLibrary,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
 import { useBatchResult, useSetBatchResultDirect } from '../core/stores';
@@ -25,20 +26,20 @@ import { RunCharts } from './RunCharts';
 import { useRunTelemetry } from './useRunTelemetry';
 import { runMessages } from './messages';
 import { RunStatePayload } from './types';
-import { validateBatchConfig } from './validation';
 
 interface RunScreenProps {
-  config: GlobalAppConfig;
+  config: AppConfigV2;
+  library: Library;
+  isQuick?: boolean;
+  onSaveLibrary?: (library: Library) => void;
+  onEditQuick?: () => void;
   onStatusChange: (status: AppStatus) => void;
   onOpenSettings: () => void;
 }
 
-function splitCount(value?: string, enabled?: boolean): number {
-  return enabled ? countConfiguredRows(value) : 0;
-}
-
 interface ScanRunnerProps {
-  config: GlobalAppConfig;
+  config: AppConfigV2;
+  library: Library;
   onResult: (result: RunBatchOperationResult) => void;
   onStateChange: (state: { loading: boolean; error?: { message: string } }) => void;
 }
@@ -50,12 +51,17 @@ interface ScanRunnerProps {
  */
 const ScanRunner: React.FC<ScanRunnerProps> = ({
   config,
+  library,
   onResult,
   onStateChange,
 }) => {
   const scan = useBackendAsync({
     channel: ASYNC_CHANNEL.RunBatchOperation,
-    props: { config },
+    props: {
+      config: libraryToRuntimeConfig(config, library),
+      library,
+      presets: config.presets,
+    },
     skip: false,
     onComplete: onResult,
   });
@@ -69,6 +75,10 @@ const ScanRunner: React.FC<ScanRunnerProps> = ({
 
 export const RunScreen: React.FC<RunScreenProps> = ({
   config,
+  library,
+  isQuick,
+  onSaveLibrary,
+  onEditQuick,
   onStatusChange,
   onOpenSettings,
 }) => {
@@ -82,36 +92,32 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   }>({ loading: false });
   const batchResult = useBatchResult();
   const setBatchResult = useSetBatchResultDirect();
-  const current = config.configs[config.selected_config];
-  const batch: Partial<BatchTabConfig> = current?.tab_batch ?? {};
 
+  const runtimeConfig = useMemo(
+    () => libraryToRuntimeConfig(config, library),
+    [config, library],
+  );
   const problems = useMemo(
-    () => validateBatchConfig(current.tab_batch),
-    [current.tab_batch],
+    () => validateLibrary(library, config.presets),
+    [library, config.presets],
   );
 
   const scanItems = batchResult?.fileList ?? [];
-  // Excluded rows are visible in the queue but never need a worker.
   const runnableItems = scanItems.filter(
     (item) => (item.action ?? 'encode') !== 'skip',
   );
 
-  const filterExpression = resolveFilterExpression(batch.advanced);
-
-  // A queue only describes the folders/presets it was scanned with; drop it when
-  // the active profile or those settings change so the table cannot show stale
-  // files and Start cannot run them.
   const queueSignature = [
-    config.selected_config,
-    batch.path?.source_path,
-    batch.path?.destination_path,
-    batch.path?.temp_destination_path,
-    batch.preset,
-    batch.custom_preset_string,
-    batch.container,
-    JSON.stringify(filterExpression),
-    batch.advanced?.copy_srt_files_toggle,
-    batch.advanced?.copy_filtered_files_toggle,
+    library.id,
+    JSON.stringify(library.folders),
+    library.encoder,
+    library.container,
+    library.defaultPresetId,
+    JSON.stringify(library.mappingRules),
+    JSON.stringify(library.filters),
+    library.defaults.copy_srt_files_toggle,
+    library.defaults.copy_filtered_files_toggle,
+    JSON.stringify(config.presets),
   ].join('|');
 
   useEffect(() => {
@@ -121,7 +127,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const run = useBackendAsync({
     channel: ASYNC_CHANNEL.RunConversion,
     props: {
-      config,
+      config: runtimeConfig,
       items: scanItems.map((item) => ({
         path: item.path,
         preset: item.preset ?? '',
@@ -144,11 +150,8 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const [logRow, setLogRow] = useState<QueueRow | null>(null);
   const [runHidden, setRunHidden] = useState(false);
 
-  // A run only describes the settings it was started with. Keep the signature it
-  // ran against so switching profiles or folders cannot show the previous run.
   const [runSignature, setRunSignature] = useState<string | null>(null);
   const liveRunState: RunStatePayload | undefined =
-    // The terminal payload wins: the last progress frame still says "running".
     run.completeData ?? run.lastProgressData ?? undefined;
   const runState: RunStatePayload | undefined =
     runHidden || (runSignature !== null && runSignature !== queueSignature)
@@ -191,6 +194,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             progress: item.progress,
             logTail: item.logTail,
             filterTrace: scanItems[index]?.filterTrace,
+            presetTrace: scanItems[index]?.presetTrace,
           }))
         : scanItems.map((item, index) => ({
             index,
@@ -203,6 +207,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
             reason: item.excludedReason,
             action: item.action,
             filterTrace: item.filterTrace,
+            presetTrace: item.presetTrace,
           })),
     [runState, scanItems],
   );
@@ -210,14 +215,9 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   const telemetry = useRunTelemetry(runState);
   const runActive =
     runState?.status === 'running' || runState?.status === 'paused';
-  // Re-resolve the open log against the latest rows so a running file's log
-  // keeps streaming while the modal is open.
   const activeLogRow = logRow ? rows[logRow.index] ?? logRow : null;
 
   const requestScan = () => {
-    // Clear the old view so the table shows the new scan instead of the last
-    // run's results, and remount the scan hook so refetching cannot race its
-    // previous complete payload.
     setBatchResult(undefined);
     setRunHidden(true);
     setScanState({ loading: true });
@@ -231,29 +231,33 @@ export const RunScreen: React.FC<RunScreenProps> = ({
   };
 
   const destructive = {
-    deleteSource: batch.advanced?.delete_source_files_toggle === 1,
+    deleteSource: library.defaults.delete_source_files_toggle === 1,
     replaceAlways:
-      batch.advanced?.replace_original_file_always_toggle === 1,
+      library.defaults.replace_original_file_always_toggle === 1,
     replaceIfSmaller:
-      batch.advanced?.replace_original_file_if_converted_is_smaller_toggle === 1,
+      library.defaults
+        .replace_original_file_if_converted_is_smaller_toggle === 1,
   };
   const hasDestructive =
-    destructive.deleteSource || destructive.replaceAlways || destructive.replaceIfSmaller;
+    destructive.deleteSource ||
+    destructive.replaceAlways ||
+    destructive.replaceIfSmaller;
 
   const running = runState?.status === 'running';
   const paused = runState?.status === 'paused';
-  const sourceCount = splitCount(
-    batch.path?.source_path,
-    true,
+  const sourceCount = library.folders.filter(
+    (folder) => folder.source.trim().length > 0,
+  ).length;
+  const destinationCount = library.folders.filter(
+    (folder) => folder.destination.trim().length > 0,
+  ).length;
+  const defaultPreset = config.presets.find(
+    (preset) => preset.id === library.defaultPresetId,
   );
-  const destinationCount = splitCount(batch.path?.destination_path, true);
-  const ffmpegMode = batch.FFmpeg_toggle === 1;
-  const customPresetCount = countConfiguredRows(batch.custom_preset_string);
-  const presetCount = countConfiguredRows(
-    ffmpegMode || customPresetCount > 0
-      ? batch.custom_preset_string
-      : batch.preset,
-  );
+  const sourcePath = library.folders.map((folder) => folder.source).join('\n');
+  const destinationPath = library.folders
+    .map((folder) => folder.destination)
+    .join('\n');
 
   if (sourceCount === 0) {
     return (
@@ -274,24 +278,25 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         <Panel title={formatMessage(runMessages.folders)}>
           <strong>{sourceCount}</strong> source →{' '}
           <strong>{destinationCount}</strong> destination
-          {batch.path?.temp_toggle === 1 ? ' · temp staging' : ''}
+          {library.defaults.temp_toggle === 1 ? ' · temp staging' : ''}
           <FolderPairs
-            sourcePath={batch.path?.source_path}
-            destinationPath={batch.path?.destination_path}
+            sourcePath={sourcePath}
+            destinationPath={destinationPath}
           />
         </Panel>
         <Panel title={formatMessage(runMessages.encoding)}>
-          {batch.FFmpeg_toggle === 1 ? 'FFmpeg' : 'HandBrake'} ·{' '}
-          {presetCount > 0
-            ? `${presetCount} ${ffmpegMode ? 'argument set' : 'preset'}${
-                presetCount === 1 ? '' : 's'
+          {library.encoder === 'ffmpeg' ? 'FFmpeg' : 'HandBrake'} ·{' '}
+          {presetDisplayName(defaultPreset) || formatMessage(runMessages.noPreset)}{' '}
+          · {library.container}
+          {library.mappingRules.length > 0
+            ? ` · ${library.mappingRules.length} mapping rule${
+                library.mappingRules.length === 1 ? '' : 's'
               }`
-            : formatMessage(runMessages.noPreset)}{' '}
-          · {batch.container ?? '.mp4'}
+            : ''}
         </Panel>
         <Panel title={formatMessage(runMessages.filters)}>
           <FilterChips
-            expression={filterExpression}
+            expression={library.filters}
             fields={scanFilterFields}
             empty={formatMessage(runMessages.noFilters)}
             ariaLabel={formatMessage(runMessages.filters)}
@@ -323,7 +328,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         </Alert>
       )}
 
-      <div style={{ display: 'flex', gap: 'var(--hb-space-sm)' }}>
+      <div style={{ display: 'flex', gap: 'var(--hb-space-sm)', flexWrap: 'wrap' }}>
         <Button
           onClick={() => {
             if (scanItems.length > 0 || runState) setConfirmingRescan(true);
@@ -370,6 +375,24 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         >
           {formatMessage(runMessages.stop)}
         </Button>
+        {isQuick && onEditQuick && (
+          <Button
+            variant="ghost"
+            onClick={onEditQuick}
+            disabled={running || paused}
+          >
+            Edit quick setup
+          </Button>
+        )}
+        {isQuick && onSaveLibrary && (
+          <Button
+            variant="ghost"
+            onClick={() => onSaveLibrary(library)}
+            disabled={problems.length > 0 || running || paused}
+          >
+            Save as library
+          </Button>
+        )}
         {(scanState.loading || run.loading) && <Spinner size="sm" />}
       </div>
 
@@ -404,9 +427,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         <Modal.Header closeButton>
           <Modal.Title>{formatMessage(runMessages.rescanTitle)}</Modal.Title>
         </Modal.Header>
-        <Modal.Body>
-          {formatMessage(runMessages.rescanBody)}
-        </Modal.Body>
+        <Modal.Body>{formatMessage(runMessages.rescanBody)}</Modal.Body>
         <Modal.Footer>
           <Button
             variant="secondary"
@@ -507,6 +528,7 @@ export const RunScreen: React.FC<RunScreenProps> = ({
         <ScanRunner
           key={scanRequest}
           config={config}
+          library={library}
           onResult={setBatchResult}
           onStateChange={setScanState}
         />

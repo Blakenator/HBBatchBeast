@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { usesHardwareEncoder } from '../src/frontend/settings/presetWarnings';
+import {
+  usesHardwareEncoder,
+  usesHardwarePreset,
+} from '../src/frontend/settings/presetWarnings';
 
 describe('presetWarnings', () => {
   it('detects active hardware presets and custom encoder arguments', () => {
@@ -16,6 +19,23 @@ describe('presetWarnings', () => {
         custom_preset_string: '-c:v h264_nvenc',
       }),
     ).toBe(true);
+  });
+
+  it('detects hardware recipes in reusable presets', () => {
+    expect(
+      usesHardwarePreset({
+        id: 'p1',
+        name: 'NVENC',
+        handbrake: { preset: 'H.264 (NVENC)' },
+      }),
+    ).toBe(true);
+    expect(
+      usesHardwarePreset({
+        id: 'p2',
+        name: 'Software',
+        ffmpeg: { inputArgs: '', outputArgs: '-c:v libx264 -crf 20' },
+      }),
+    ).toBe(false);
   });
 
   it('ignores inactive hardware presets and software encoders', () => {

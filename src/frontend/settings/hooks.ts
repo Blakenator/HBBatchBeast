@@ -1,18 +1,23 @@
 import {
-  BatchConfig,
-  PROMISE_CHANNEL,
+  AppConfigV2,
   DeepPartial,
-  GlobalAppConfig,
+  Library,
+  PROMISE_CHANNEL,
 } from '../../common';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBackend } from '../helpers';
-import { cloneDeep, debounce, isEqual, merge, mergeWith } from 'lodash';
+import { cloneDeep, debounce, isEqual, mergeWith } from 'lodash';
 import { toast } from 'react-toastify';
 import { useIntl } from 'react-intl';
 import { settingsMessages } from './messages';
 import { useSetGlobalConfigDirect } from '../core/stores';
 
-export function useUpdateConfigDebounced(config: GlobalAppConfig) {
+/** Replaces arrays instead of index-merging them (filter children, rules). */
+function replaceArrays(_target: unknown, source: unknown): unknown {
+  return Array.isArray(source) ? source : undefined;
+}
+
+export function useUpdateAppConfigDebounced(config: AppConfigV2) {
   const { formatMessage } = useIntl();
   const [updatedConfig, setUpdatedConfig] = useState(config);
   const setGlobalConfig = useSetGlobalConfigDirect();
@@ -22,7 +27,7 @@ export function useUpdateConfigDebounced(config: GlobalAppConfig) {
   });
   const debouncedUpdate = useCallback(
     debounce(
-      (args: GlobalAppConfig) =>
+      (args: AppConfigV2) =>
         refetch(args).then(({ error }) => {
           if (!error) {
             // Keep the shared store in step with what was just persisted so the
@@ -37,40 +42,57 @@ export function useUpdateConfigDebounced(config: GlobalAppConfig) {
     ),
     [refetch, setGlobalConfig],
   );
-  const currentConfig = updatedConfig.configs[updatedConfig.selected_config];
 
-  const mergeUpdate = (update: DeepPartial<BatchConfig>) =>
+  const mergeAppUpdate = (update: DeepPartial<AppConfigV2>) =>
+    setUpdatedConfig((recent) =>
+      mergeWith(cloneDeep(recent), update, replaceArrays),
+    );
+
+  const updateLibrary = (
+    updater: (library: Library) => Library,
+    libraryId?: string,
+  ) =>
     setUpdatedConfig((recent) => {
-      const newConfig = cloneDeep(recent);
-      // Arrays (notably filter expression children) must be replaced, not
-      // index-merged, or deleting a rule leaves the old element behind.
-      newConfig.configs[newConfig.selected_config] = mergeWith(
-        newConfig.configs[newConfig.selected_config],
-        update,
-        (targetValue, sourceValue) =>
-          Array.isArray(sourceValue) ? sourceValue : undefined,
-      );
-      return newConfig;
+      const id = libraryId ?? recent.selected_library;
+      return {
+        ...recent,
+        libraries: recent.libraries.map((library) =>
+          library.id === id ? updater(library) : library,
+        ),
+      };
     });
 
-  const mergeGlobalUpdate = (update: DeepPartial<GlobalAppConfig>) =>
-    setUpdatedConfig((recent) => merge(cloneDeep(recent), update));
+  const selectLibrary = (libraryId: string) =>
+    setUpdatedConfig((recent) => ({
+      ...recent,
+      selected_library: libraryId,
+    }));
+
+  const currentLibrary =
+    updatedConfig.libraries.find(
+      (library) => library.id === updatedConfig.selected_library,
+    ) ?? updatedConfig.libraries[0];
 
   useEffect(() => {
     if (!isEqual(config, updatedConfig)) {
       setUpdatedConfig(config);
     }
   }, [config]);
+
   useEffect(() => {
     if (!isEqual(config, updatedConfig)) {
       debouncedUpdate(updatedConfig);
     }
   }, [updatedConfig]);
+
   return {
-    currentConfig,
+    currentLibrary,
     currentGlobalConfig: updatedConfig,
-    mergeUpdate,
-    mergeGlobalUpdate,
+    mergeAppUpdate,
+    mergeGlobalUpdate: (update: DeepPartial<AppConfigV2>) =>
+      mergeAppUpdate(update),
+    updateLibrary,
+    selectLibrary,
   };
 }
 

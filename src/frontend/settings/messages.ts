@@ -20,17 +20,29 @@ export const settingsMessages = createMessages({
   globalSettings: { defaultMessage: 'Global settings' },
   globalSettingsDescription: {
     defaultMessage:
-      'These preferences apply to the app and are shared by every profile.',
+      'These preferences apply to the app and are shared by every library.',
   },
-  profileSettings: { defaultMessage: 'Profile settings' },
-  profileSettingsDescription: {
+  mappingFolderCategory: { defaultMessage: 'Folder' },
+  mappingFolder: { defaultMessage: 'Folder' },
+  mappingFolderDescription: {
+    defaultMessage: 'Match a library folder and an optional subfolder.',
+  },
+  mappingFolderIs: { defaultMessage: 'is' },
+  mappingFolderIsUnder: { defaultMessage: 'is under' },
+  librarySettings: { defaultMessage: 'Libraries' },
+  librarySettingsDescription: {
     defaultMessage:
-      'Profiles store conversion behavior such as folders, encoders, presets, and file handling.',
+      'Libraries store folders, scan filters, encoders, containers and preset mapping rules.',
+  },
+  presetSettings: { defaultMessage: 'Presets' },
+  presetSettingsDescription: {
+    defaultMessage:
+      'Reusable encoding recipes referenced by library defaults and mapping rules.',
   },
   workerProcesses: { defaultMessage: 'Worker processes' },
   workerProcessesHelp: {
     defaultMessage:
-      'Shared by all profiles. More workers use more CPU, memory, and GPU resources.',
+      'Shared by all libraries. More workers use more CPU, memory, and GPU resources.',
   },
   saveWorkerLogs: { defaultMessage: 'Save verbose worker logs' },
   saveWorkerLogsHelp: {

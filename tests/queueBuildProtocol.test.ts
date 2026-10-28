@@ -54,6 +54,48 @@ describe('queueBuild config codec', () => {
     expect(decodeQueueBuildConfig(config)).toEqual({ ok: true, value: config });
   });
 
+  it('accepts library folder ids, preset catalog and mapping rules', () => {
+    const libraryConfig = {
+      ...config,
+      folderIds: ['folder-1', 'folder-2'],
+      presetCatalog: [
+        { id: 'preset-1', name: 'Default', argument: '-Z "Very Fast 1080p30"' },
+        { id: 'preset-2', name: 'HD', argument: '-Z "Fast 1080p30"' },
+      ],
+      mappingRules: [
+        {
+          id: 'rule-1',
+          name: 'HD',
+          presetId: 'preset-2',
+          condition: {
+            version: 1,
+            root: {
+              id: 'rule-root',
+              kind: 'group',
+              combinator: 'and',
+              children: [
+                {
+                  id: 'folder-rule',
+                  kind: 'rule',
+                  field: 'folder',
+                  operator: 'is',
+                  value: { folderId: 'folder-1', subpath: 'Movies' },
+                },
+              ],
+            },
+          },
+        },
+      ],
+      defaultPresetId: 'preset-1',
+      defaultPreset: '-Z "Very Fast 1080p30"',
+    };
+
+    expect(decodeQueueBuildConfig(libraryConfig)).toEqual({
+      ok: true,
+      value: libraryConfig,
+    });
+  });
+
   it('rejects array lengths that do not line up with sources', () => {
     const result = decodeQueueBuildConfig({
       ...config,
@@ -143,6 +185,9 @@ describe('queueBuild message codecs', () => {
       ],
       typeFiltered: 0,
       notExists: 1,
+      presetTraces: [
+        { presetId: 'preset-1', presetName: 'Default', ruleId: 'rule-1' },
+      ],
     };
     expect(
       decodeChildMessage({

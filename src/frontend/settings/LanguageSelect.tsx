@@ -1,7 +1,7 @@
 import React from 'react';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
-import { GlobalAppConfig, PROMISE_CHANNEL } from '../../common';
+import { AppConfigV2, PROMISE_CHANNEL } from '../../common';
 import { useBackend } from '../helpers';
 import { Combobox } from '../ui/Combobox';
 import { settingsMessages } from './messages';
@@ -25,7 +25,7 @@ export const resolveLanguage = (): string =>
   (navigator.language ?? 'en-US').split('-')[0];
 
 interface LanguageSelectProps {
-  config: GlobalAppConfig;
+  config: AppConfigV2;
 }
 
 export const LanguageSelect: React.FC<LanguageSelectProps> = ({ config }) => {

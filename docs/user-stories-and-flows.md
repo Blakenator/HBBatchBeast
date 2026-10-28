@@ -33,7 +33,7 @@ candidate to cut.
 | **I4** | *Stay in control while it runs.* | pause/resume/stop, cancel item, worker count, low priority, queue table |
 | **I5** | *Tell me what went wrong.* | error/cancelled/other row filters, per-item status, error log, console |
 | **I6** | *Don't destroy my originals unless I said so.* | delete-source, replace-original (always / if smaller), caches |
-| **I7** | *Reuse my setup.* | config profiles, language, persisted config file |
+| **I7** | *Reuse my setup.* | libraries, reusable presets, mapping rules, language, persisted config file |
 | **I8** | *Help me understand a file.* | media info viewer |
 
 ## User stories
@@ -157,10 +157,11 @@ the converted file is smaller, or always, with a confirmation.*
 
 ### I7 — Reuse my setup
 
-**US-21 — Profiles.** *As a server operator, I want separate saved setups (e.g. Movies vs TV), so that I
+**US-21 — Libraries.** *As a server operator, I want separate saved libraries (e.g. Movies vs TV), so that I
 don't re-enter paths and presets each time.*
-- Create, rename, duplicate and delete profiles; switching is immediate and applies to the run screen.
-- The active profile is visible in the header, never ambiguous.
+- Create, rename, duplicate and delete libraries; switching is immediate and applies to the run screen.
+- The active library is visible in the header, never ambiguous.
+- Presets and mapping rules are reusable building blocks, not part of the folder definition.
 
 **US-22 — Language.** *As a library owner, I want the UI in my language, so that I can use it comfortably.*
 - Language change applies without restart; missing strings fall back to English.
@@ -169,6 +170,18 @@ don't re-enter paths and presets each time.*
 app, even if the config file was corrupted.*
 - Settings persist on change; an unreadable config is archived rather than crashing, and the app explains
   what happened.
+
+**US-28 — Convert one folder once.** *As a library owner, I want to convert a folder without creating or
+editing a saved library, so that a one-off task stays a one-off.*
+- The home screen offers Quick convert alongside saved libraries.
+- Quick convert asks for source, destination and preset, then uses the normal scan/review/run flow.
+- It never overwrites the last library; after a successful run the user may save it as a library.
+
+**US-29 — Reuse encoding recipes and map by media.** *As an encoding tinkerer, I want named presets and
+ordered rules such as “480p → mobile, 1080p → TV”, so that one library can serve several devices.*
+- Presets are reusable across libraries and reference installed HandBrake presets or FFmpeg arguments.
+- Mapping rules are evaluated top to bottom; the first match wins and the fallback is the library default.
+- Rules can use folder/path, filename, file size, file type and media properties.
 
 ### I8 — Understand a file
 
@@ -217,7 +230,7 @@ all already converted); destination unwritable → inline error before the run s
 
 ### F2 — Repeat conversion on an existing library *(P1/P2)*
 
-1. Launch → previous profile is restored and shown in the header.
+1. Launch → home screen lists the saved libraries; the last-used library is available to reopen.
 2. Scan → only genuinely new/converted-missing files are queued; the summary proves the filtering worked.
 3. Run → same monitoring as F1.
 4. Optional: replace/delete originals if configured; otherwise nothing destructive happens.
@@ -239,19 +252,21 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 3. Open the log for that item; read the tool output.
 4. Choose retry (re-queue just those) or skip and move on.
 
-### F5 — Multiple profiles *(P2)*
+### F5 — Multiple libraries *(P2)*
 
-1. Settings → Profiles → create "Movies", configure folders/presets.
-2. Duplicate to "TV", change paths and preset, save.
-3. Switch from the header; the run screen updates immediately; scanning is scoped to the active profile.
+1. Settings → Libraries → create "Movies", configure folders and filters.
+2. Duplicate to "TV", change paths, default preset and mapping rules, save.
+3. Open either library from the home screen; the run screen updates immediately and scanning is scoped
+   to that library.
 
-### F6 — Custom preset & per-folder mapping *(P3)*
+### F6 — Reusable presets & mapping rules *(P3)*
 
-1. Encoding settings → switch from standard preset to custom.
-2. Paste or import preset JSON; validation feedback appears inline.
-3. Assign a preset and optional suffix per source row in the folder table.
+1. Settings → Presets → create a HandBrake or FFmpeg recipe.
+2. Choose a library default preset from the compatible presets.
+3. Add mapping rules in order (folder/path, media property, filename, size or type) and assign a preset
+   to each.
 4. `nvenc` in a preset raises a concurrency warning.
-5. Preview confirms the resolved preset per file before running.
+5. Preview confirms the resolved preset per file before running; the queue shows which rule selected it.
 
 ### F7 — Post-run review *(P1)*
 
@@ -270,6 +285,25 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 1. Minimise; tray reflects running/idle/error.
 2. Error state is noticeable; acknowledging returns it to idle.
 3. On a new version, a dismissible changelog appears once.
+
+### F10 — One-off conversion *(P1)*
+
+1. Launch → home screen with Quick convert and saved libraries.
+2. Start a blank quick conversion, or press **Use as quick run** on a library to prefill its folders,
+   preset, mapping rules and scan filters.
+3. Adjust folders, preset, mapping rules and filters in the quick setup page, then continue to the
+   normal scan/review screen.
+4. Run and review as usual; the saved libraries and last active library are untouched.
+5. Optionally save the quick job as a library for next time.
+
+### F11 — Library with mapping rules *(P3)*
+
+1. Open a library in settings; choose encoder and container.
+2. Add ordered rules (for example resolution/height ranges) and pick a preset for each. The locked
+   default preset at the bottom handles files that match no rule.
+3. Scan; the queue shows the resolved preset and the rule that selected it.
+4. Change a rule or preset and rescan; the previous queue is discarded because it no longer describes
+   the current configuration.
 
 ## Non-goals (deliberately dropped)
 
@@ -296,6 +330,6 @@ Implication for design: the app must be **good at the manual run**, because it i
 | I4 | US-11–15 | F3 | S19, S20, S24 |
 | I5 | US-16–18 | F3, F4 | S19, S21, S31 |
 | I6 | US-19–20 | F1, F7 | S18, S21 |
-| I7 | US-21–23 | F2, F5 | S23, S13, S04 |
+| I7 | US-21–23, US-28–29 | F2, F5, F10, F11 | S23, S13, S04 |
 | I8 | US-24 | F8 | S27 |
 | Operational | US-25–27 | F9 | S06, S09, S10 |

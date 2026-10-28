@@ -19,6 +19,9 @@ export interface FilterEvaluationContext {
   extension: string;
   sizeBytes?: number;
   outputState: OutputState;
+  /** Library folder id and source-relative path, used by mapping rules. */
+  folderId?: string;
+  relativePath?: string;
 }
 
 export interface FilterEvaluationOptions {
@@ -69,6 +72,12 @@ function conditionText(rule: FilterRule): string {
     }
     case 'outputState':
       return `${negate}output is ${rule.operator === 'is' ? '' : 'not '}${String(rule.value)}`;
+    case 'folder': {
+      const value = rule.value as { folderId?: string; subpath?: string } | null;
+      return `${negate}folder ${rule.operator === 'isUnder' ? 'is under' : 'is'} ${
+        value?.folderId ?? ''
+      }${value?.subpath ? ` / ${value.subpath}` : ''}`;
+    }
     case 'mediaProperty': {
       const value = rule.value as { key?: string; value?: string } | null;
       const operator =
@@ -172,6 +181,35 @@ function evaluateOutputState(
   return { passed, observed: context.outputState };
 }
 
+function normalizeRelativePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
+function evaluateFolder(
+  rule: FilterRule,
+  context: FilterEvaluationContext,
+): { passed: boolean; observed: string } {
+  const value = rule.value as
+    | { folderId?: string; subpath?: string }
+    | null;
+  const folderId = value?.folderId ?? '';
+  const subpath = normalizeRelativePath(value?.subpath ?? '');
+  const relative = normalizeRelativePath(context.relativePath ?? '');
+  const folderMatches = Boolean(context.folderId) && context.folderId === folderId;
+  const pathMatches =
+    subpath.length === 0
+      ? true
+      : rule.operator === 'isUnder'
+        ? relative === subpath || relative.startsWith(`${subpath}/`)
+        : relative === subpath;
+  return {
+    passed: folderMatches && pathMatches,
+    observed: `${context.folderId ?? 'no folder'}${
+      relative ? ` / ${relative}` : ''
+    }`,
+  };
+}
+
 function propertyValues(probe: RawProbe, key: string): string[] {
   return (probe.streams ?? [])
     .map((stream) => stream[key])
@@ -247,6 +285,9 @@ async function evaluateRule(
       break;
     case 'outputState':
       base = evaluateOutputState(rule, context);
+      break;
+    case 'folder':
+      base = evaluateFolder(rule, context);
       break;
     case 'mediaProperty': {
       const probe = await getProbe();

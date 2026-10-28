@@ -21,6 +21,13 @@ const Title = styled.h1`
   margin: 0;
 `;
 
+const PageName = styled.span`
+  color: var(--hb-textMuted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
 const Spacer = styled.div`
   flex: 1;
 `;
@@ -33,15 +40,21 @@ const Main = styled.main`
 
 interface AppShellProps {
   status: AppStatus;
-  profileName?: string;
+  pageName?: string;
+  backLabel?: string;
+  onBack?: () => void;
   onOpenSettings: () => void;
+  showSettings?: boolean;
   children: React.ReactNode;
 }
 
 export const AppShell: React.FC<PropsWithChildren<AppShellProps>> = ({
   status,
-  profileName,
+  pageName,
+  backLabel = 'Back',
+  onBack,
   onOpenSettings,
+  showSettings = true,
   children,
 }) => {
   const { formatMessage } = useIntl();
@@ -49,15 +62,20 @@ export const AppShell: React.FC<PropsWithChildren<AppShellProps>> = ({
   return (
     <>
       <Header>
-        <Title>HBBatchBeast</Title>
-        {profileName && (
-          <span style={{ color: 'var(--hb-textMuted)' }}>{profileName}</span>
+        {onBack && (
+          <Button compact variant="ghost" onClick={onBack}>
+            ← {backLabel}
+          </Button>
         )}
+        <Title>HBBatchBeast</Title>
+        {pageName && <PageName>{pageName}</PageName>}
         <Spacer />
         <StatusPill status={status} />
-        <Button compact variant="ghost" onClick={onOpenSettings}>
-          {formatMessage(shellMessages.settings)}
-        </Button>
+        {showSettings && (
+          <Button compact variant="ghost" onClick={onOpenSettings}>
+            {formatMessage(shellMessages.settings)}
+          </Button>
+        )}
       </Header>
       <Main>{children}</Main>
     </>

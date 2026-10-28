@@ -10,6 +10,7 @@ import {
   RunBatchOperationProps,
   RunBatchOperationResult,
 } from './types';
+import type { AppConfigV2 } from './library';
 import type { RunState } from '../backend/run/runManager';
 
 import {
@@ -44,10 +45,10 @@ export enum ASYNC_CHANNEL {
 export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
   [PROMISE_CHANNEL.LoadConfiguration]: {
     props: void;
-    result: GlobalAppConfig;
+    result: AppConfigV2;
   };
   [PROMISE_CHANNEL.SaveConfiguration]: {
-    props: GlobalAppConfig;
+    props: AppConfigV2;
     result: void;
   };
   [PROMISE_CHANNEL.GetRunState]: {

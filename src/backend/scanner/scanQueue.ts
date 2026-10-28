@@ -2,13 +2,14 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileTypeGate } from '../../common/filterExpression';
 import type { FilterTrace } from '../../common/filterExpression';
+import type { PresetTrace } from '../../common/library';
 import {
   ExclusionCode,
   QueueBuildConfig,
   QueueBuildResult,
   ScanExclusion,
 } from '../processes/protocol';
-import { runFfprobe } from '../helpers/ffprobe';
+import { runFfprobe, type RawProbe } from '../helpers/ffprobe';
 import {
   FilterEvaluationContext,
   evaluateFilterExpression,
@@ -17,6 +18,7 @@ import {
   OutputState,
 } from './filterEvaluation';
 import { outputRelativePath } from './destination';
+import { resolvePresetForFile } from './presetResolution';
 
 export interface ScanQueueCallbacks {
   onProgress?: (phase: 'discovered' | 'queued', count: number) => void;
@@ -31,13 +33,16 @@ interface WalkedFile {
   destination: string;
   destinationFinal: string | null;
   isSidecar: boolean;
+  /** Fallback preset from the library/source row. */
   preset: string;
+  folderId: string;
 }
 
 interface Candidate extends WalkedFile {
   /** Why the scanner will not convert this file; null when it will. */
   exclusion: ScanExclusion | null;
   trace: QueueBuildResult['traces'][number];
+  presetTrace?: PresetTrace;
   /** True when the destination had no usable output yet. */
   unconverted: boolean;
 }
@@ -73,6 +78,7 @@ export async function scanQueue(
       : undefined;
     const suffix = config.fileSuffixes[index] ?? '';
     const preset = config.presets[index] ?? '';
+    const folderId = config.folderIds?.[index] ?? `source-${index}`;
 
     const walk = async (directory: string): Promise<void> => {
       let entries;
@@ -143,6 +149,7 @@ export async function scanQueue(
           destinationFinal,
           isSidecar,
           preset,
+          folderId,
         });
         progress('discovered', walked.length);
       }
@@ -193,6 +200,7 @@ export async function scanQueue(
     destinations: queue.map((candidate) => candidate.destination),
     destinationsFinal: queue.map((candidate) => candidate.destinationFinal),
     traces: queue.map((candidate) => candidate.trace),
+    presetTraces: queue.map((candidate) => candidate.presetTrace ?? null),
     typeFiltered,
     notExists: queue.filter((candidate) => candidate.unconverted).length,
   };
@@ -226,6 +234,22 @@ async function evaluateCandidate(
         : 'empty';
 
   let trace: FilterTrace;
+  let evaluationContext: FilterEvaluationContext | undefined;
+  let probePromise: Promise<RawProbe | undefined> | undefined;
+  const probe = (): Promise<RawProbe | undefined> => {
+    if (!probePromise) {
+      probePromise = runFfprobe(file.source).catch((error): undefined => {
+        log(
+          `ffprobe failed for "${file.source}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return undefined;
+      });
+    }
+    return probePromise;
+  };
+
   if (file.isSidecar) {
     trace = skippedFilterTrace(
       config.filterExpression,
@@ -233,22 +257,16 @@ async function evaluateCandidate(
     );
   } else {
     const sourceStats = await fs.stat(file.source).catch((): undefined => undefined);
-    const context: FilterEvaluationContext = {
+    evaluationContext = {
       fileName: path.basename(file.source),
       extension: file.extension,
+      folderId: file.folderId,
+      relativePath: file.relative,
       ...(sourceStats ? { sizeBytes: sourceStats.size } : {}),
       outputState,
     };
-    trace = await evaluateFilterExpression(config.filterExpression, context, {
-      probe: () =>
-        runFfprobe(file.source).catch((error): undefined => {
-          log(
-            `ffprobe failed for "${file.source}": ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return undefined;
-        }),
+    trace = await evaluateFilterExpression(config.filterExpression, evaluationContext, {
+      probe,
     });
   }
 
@@ -300,10 +318,30 @@ async function evaluateCandidate(
     };
   }
 
+  let preset = file.preset;
+  let presetTrace: PresetTrace | undefined;
+  const hasMapping =
+    (config.mappingRules?.length ?? 0) > 0 ||
+    (config.presetCatalog?.length ?? 0) > 0;
+  if (!exclusion && !file.isSidecar && evaluationContext && hasMapping) {
+    const resolved = await resolvePresetForFile({
+      rules: config.mappingRules ?? [],
+      catalog: config.presetCatalog ?? [],
+      defaultPresetId: config.defaultPresetId ?? '',
+      defaultArgument: config.defaultPreset ?? file.preset,
+      context: evaluationContext,
+      probe,
+    });
+    preset = resolved.argument;
+    presetTrace = resolved.trace;
+  }
+
   return {
     ...file,
+    preset,
     exclusion,
     trace,
+    ...(presetTrace ? { presetTrace } : {}),
     unconverted:
       outputState === 'empty' ||
       outputState === 'untrusted' ||

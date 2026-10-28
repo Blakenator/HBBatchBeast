@@ -8,11 +8,12 @@
 
 ## 1. TL;DR for the next agent
 
-The app at the repo root is the only app. It loads and saves profiles, scans source folders through the
-supervised `queueBuild` child, converts through a supervised worker pool, reports progress and results in the
-UI, and packages as a Linux app plus a `.deb`. `src/backend` owns IPC, child lifecycle and run state;
-`src/frontend` is the React UI (design tokens, run screen, queue table, settings drawer, profiles,
-diagnostics). `tests/` holds 50 unit tests plus one opt-in real-conversion integration test.
+The app at the repo root is the only app. It loads and saves libraries, reusable presets and mapping rules,
+scans source folders through the supervised `queueBuild` child, converts through a supervised worker pool,
+reports progress and results in the UI, and packages as a Linux app plus a `.deb`. `src/backend` owns IPC,
+child lifecycle and run state; `src/frontend` is the React UI (design tokens, launcher, run screen, queue
+table, settings drawer, libraries, presets, diagnostics). `tests/` holds 300+ unit tests plus one opt-in
+real-conversion integration test.
 
 **What is verified** (§2): `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm package`, a deb build, and the
 packaged binary driven over the DevTools protocol — scan, real conversion, pause/resume/stop wiring,
@@ -41,6 +42,26 @@ that sequenced this lives with the session, not in the repo.
 **Deliberately dropped, do not resurrect without a decision**: remote monitoring/web view and API keys,
 scheduling (periodic re-scan, daily windows, folder watching), health check/repair, email settings, h265
 benchmarking, Docker, Travis.
+
+## 1a. Library/preset model
+
+The persisted conversion model is now three first-class concepts:
+
+- **Library** (`src/common/library.ts`): folder pairs, scan filters, encoder, container, default preset,
+  ordered mapping rules and run defaults.
+- **Conversion preset**: a reusable HandBrake preset/arguments or FFmpeg input/output argument pair.
+- **Mapping rule**: an ordered first-match condition tree (folder/path, media property, filename, file size,
+  file type) that selects a preset. The default preset is rendered as a locked, un-deletable rule at the
+  bottom of the stack.
+
+Profiles are retired. The old v1 `configs[]` file is migrated on load to `schema_version: 2` and a
+`.v1.bak` copy is written before replacement. The legacy `BatchTabConfig`/`GlobalAppConfig` types remain as a
+runtime adapter only (`libraryToRuntimeConfig`) for the scanner and worker. The home screen offers a Quick
+conversion setup page (folders, preset, mapping rules and filters); it never overwrites the selected library
+and can be saved as a library after a run. A library can prefill that page with **Use as quick run**. Settings
+is a persistent page with Global/Libraries/Presets tabs, reached from the header back button. Scan-side
+preset resolution lives in `src/backend/scanner/presetResolution.ts`; the queue returns a preset trace
+alongside the existing filter trace.
 
 ---
 
@@ -540,7 +561,7 @@ These are all in the migrated code, not legacy-only issues.
 | D23 | 🟠 Medium | [buildQueueBuildConfig.ts](./src/backend/helpers/buildQueueBuildConfig.ts) | `queueBuild` concatenates the container onto the file name, so a profile storing `mkv` instead of `.mkv` produced `Episode 01mkv`. **Fixed in phase 5**: the container is normalised to a dotted extension (test added). |
 | D24 | 🟠 Medium | [RunScreen.tsx](./src/frontend/run/RunScreen.tsx) | The status pill read the last *progress* frame, which still says `running`, so a finished run showed "Running" forever. **Fixed in phase 5**: the terminal payload wins. |
 | D25 | 🟡 Low | [RunScreen.tsx](./src/frontend/run/RunScreen.tsx) | Switching profile kept the previous profile's queue and run rows on screen, so Start could have run files from another profile. **Fixed in phase 5**: queue and run state are keyed to a signature of the active profile's queue-relevant settings. |
-| D26 | 🟡 Low | [ProfileBar.tsx](./src/frontend/settings/profile/ProfileBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5**: new profiles seed the legacy default list, and an empty scan result now explains whether nothing matched or everything was already converted. |
+| D26 | 🟡 Low | [LibraryBar.tsx](./src/frontend/settings/library/LibraryBar.tsx) | A newly created profile had an empty `included_file_types`, and an empty list matches no files, so new profiles scanned nothing with no explanation. **Fixed in phase 5 and carried into libraries**: new libraries seed the default file-type list/default preset, and an empty scan result now explains whether nothing matched or everything was already converted. |
 | D27 | 🟡 Low | [Panel.tsx](./src/frontend/ui/Panel.tsx), [QueueTable.tsx](./src/frontend/run/QueueTable.tsx) | Long comma-separated filter values overflowed the panel grid horizontally, and the RTL ellipsis trick dropped the leading `/` from queue paths. **Fixed in phase 5**: grid columns can shrink below content, and paths render as directory + file name. |
 | D28 | 🟡 Low | `src/frontend/ui/Button.tsx` | Bootstrap's `success`/`danger` buttons hard-code white labels, which fails contrast against the bright dark-theme tokens. **Fixed in phase 5**: a token-based `Button` supplies both background and label colour per theme. |
 | D29 | 🟠 Medium | [schema.ts](./src/frontend/settings/schema.ts) | `low_process_priority_toggle` was persisted but unused. **Fixed in the worker overhaul**: the setting reaches `WorkerItemConfig.lowPriority` and the runner calls `os.setPriority` on the spawned encoder (POSIX nice 10, Windows below-normal). |

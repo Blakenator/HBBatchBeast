@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { GlobalAppConfig, RunBatchOperationResult } from '../../common';
+import { AppConfigV2, RunBatchOperationResult } from '../../common';
 import { AppError } from '@superflag/super-ipc-core';
 
 interface SimpleStore<T> {
@@ -42,4 +42,4 @@ export const {
   useValue: useGlobalConfig,
   useValueRequired: useGlobalConfigRequired,
   useSetter: useSetGlobalConfigDirect,
-} = createSimpleStore<GlobalAppConfig | undefined>();
+} = createSimpleStore<AppConfigV2 | undefined>();

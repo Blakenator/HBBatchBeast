@@ -1,17 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Offcanvas } from 'react-bootstrap';
+import { Alert } from 'react-bootstrap';
 import { ToastContainer } from 'react-toastify';
 import { useIntl } from 'react-intl';
 import { useBackend } from '../helpers';
-import { PROMISE_CHANNEL, TrayStatus } from '../../common';
+import {
+  AppConfigV2,
+  Library,
+  PROMISE_CHANNEL,
+  TrayStatus,
+  createQuickLibrary,
+} from '../../common';
 import { VersionWarning } from '../versionWarning/VersionWarning';
 import { SettingsForm } from '../settings/SettingsForm';
 import { useGlobalConfig, useSetGlobalConfigDirect } from '../core/stores';
 import { AppShell } from '../ui/AppShell';
 import { AppStatus } from '../ui/StatusPill';
-import { Button } from '../ui/Button';
 import { RunScreen } from '../run/RunScreen';
+import { LauncherPage } from './LauncherPage';
+import { QuickConvertPage } from './QuickConvertPage';
 import { homeMessages } from './messages';
+
+type View = 'home' | 'quick' | 'run' | 'settings';
 
 export const HomePage: React.FC = () => {
   const { formatMessage } = useIntl();
@@ -21,7 +30,12 @@ export const HomePage: React.FC = () => {
   const setGlobalConfig = useSetGlobalConfigDirect();
   const globalConfig = useGlobalConfig();
   const [status, setStatus] = useState<AppStatus>('idle');
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<View>('home');
+  const [settingsReturn, setSettingsReturn] = useState<Exclude<View, 'settings'>>(
+    'home',
+  );
+  const [activeLibraryId, setActiveLibraryId] = useState<string | undefined>();
+  const [quickLibrary, setQuickLibrary] = useState<Library | null>(null);
   const trayStatus = useBackend({
     channel: PROMISE_CHANNEL.SetTrayStatus,
     skip: true,
@@ -45,10 +59,19 @@ export const HomePage: React.FC = () => {
   }, [status]);
 
   // Only mirror a *new* fetch result into the store: mirroring on every render
-  // would undo in-memory edits made by the settings drawer and profile bar.
+  // would undo in-memory edits made by the settings view.
   useEffect(() => {
     if (data) setGlobalConfig(data);
   }, [data, setGlobalConfig]);
+
+  // Switching the selected library in settings should also switch the library
+  // the run screen is showing (quick-convert state is independent).
+  const selectedFromStore = globalConfig?.selected_library;
+  useEffect(() => {
+    if (view === 'run' && !quickLibrary && selectedFromStore) {
+      setActiveLibraryId(selectedFromStore);
+    }
+  }, [selectedFromStore, view, quickLibrary]);
 
   if (!globalConfig) {
     return (
@@ -63,8 +86,99 @@ export const HomePage: React.FC = () => {
     );
   }
 
-  const activeProfile =
-    globalConfig.configs[globalConfig.selected_config]?.name ?? 'Default';
+  const persist = (next: AppConfigV2) => {
+    setGlobalConfig(next);
+    void saveConfig.refetch(next);
+  };
+
+  const library =
+    quickLibrary ??
+    globalConfig.libraries.find((item) => item.id === activeLibraryId) ??
+    globalConfig.libraries.find(
+      (item) => item.id === globalConfig.selected_library,
+    ) ??
+    globalConfig.libraries[0];
+
+  const openSettings = () => {
+    setSettingsReturn(view === 'settings' ? 'home' : view);
+    setView('settings');
+  };
+
+  const openLibrary = (libraryId: string) => {
+    setQuickLibrary(null);
+    setActiveLibraryId(libraryId);
+    if (globalConfig.selected_library !== libraryId) {
+      persist({ ...globalConfig, selected_library: libraryId });
+    }
+    setView('run');
+  };
+
+  const startQuickConvert = () => {
+    setQuickLibrary(createQuickLibrary(globalConfig.presets));
+    setActiveLibraryId(undefined);
+    setView('quick');
+  };
+
+  const startQuickFromLibrary = (source: Library) => {
+    setQuickLibrary(createQuickLibrary(globalConfig.presets, source));
+    setActiveLibraryId(undefined);
+    setView('quick');
+  };
+
+  const cancelQuickConvert = () => {
+    setQuickLibrary(null);
+    setView('home');
+  };
+
+  const continueQuickConvert = (next: Library) => {
+    setQuickLibrary(next);
+    setView('run');
+  };
+
+  const canGoHome =
+    status !== 'scanning' &&
+    status !== 'running' &&
+    status !== 'paused' &&
+    status !== 'stopping';
+
+  const saveQuickLibrary = (next: Library) => {
+    const saved = {
+      ...next,
+      name: next.name.trim() || 'Quick conversion',
+    };
+    persist({
+      ...globalConfig,
+      libraries: [...globalConfig.libraries, saved],
+      selected_library: saved.id,
+    });
+    setQuickLibrary(null);
+    setActiveLibraryId(saved.id);
+  };
+
+  const back = () => {
+    if (view === 'settings') {
+      setView(settingsReturn);
+      return;
+    }
+    if (view === 'quick') {
+      setQuickLibrary(null);
+      setView('home');
+      return;
+    }
+    if (view === 'run' && canGoHome) setView('home');
+  };
+
+  const backLabel = view === 'settings' ? 'Back' : 'Home';
+  const pageName =
+    view === 'settings'
+      ? 'Settings'
+      : view === 'quick'
+        ? 'Quick conversion'
+        : view === 'run'
+          ? library?.name
+          : undefined;
+  const showBack =
+    view === 'settings' || view === 'quick' || (view === 'run' && canGoHome);
 
   return (
     <>
@@ -79,43 +193,53 @@ export const HomePage: React.FC = () => {
 
       <AppShell
         status={status}
-        profileName={activeProfile}
-        onOpenSettings={() => setSettingsOpen(true)}
+        pageName={pageName}
+        onBack={showBack ? back : undefined}
+        backLabel={backLabel}
+        onOpenSettings={openSettings}
+        showSettings={view !== 'settings'}
       >
         <VersionWarning
           oldVersion={data?.version_message}
           onAcknowledged={(version) => {
             if (!globalConfig || globalConfig.version_message === version) return;
-            const next = { ...globalConfig, version_message: version };
-            setGlobalConfig(next);
-            void saveConfig.refetch(next);
+            persist({ ...globalConfig, version_message: version });
           }}
         />
-        <RunScreen
-          config={globalConfig}
-          onStatusChange={setStatus}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-      </AppShell>
 
-      <Offcanvas
-        show={settingsOpen}
-        onHide={() => setSettingsOpen(false)}
-        placement="end"
-        style={{ width: 'min(720px, 100vw)' }}
-      >
-        <Offcanvas.Header closeButton>
-          <Offcanvas.Title>{formatMessage(homeMessages.settings)}</Offcanvas.Title>
-        </Offcanvas.Header>
-        <Offcanvas.Body>
+        {view === 'settings' ? (
           <SettingsForm config={globalConfig} />
-        </Offcanvas.Body>
-        <div style={{ padding: 'var(--hb-space-lg)', borderTop: '1px solid var(--hb-border)' }}>
-          <Button variant="secondary" onClick={() => setSettingsOpen(false)}>
-            {formatMessage(homeMessages.close)}
-          </Button>
-        </div>
-      </Offcanvas>
+        ) : view === 'quick' && quickLibrary ? (
+          <QuickConvertPage
+            key={quickLibrary.id}
+            config={globalConfig}
+            initialLibrary={quickLibrary}
+            onCancel={cancelQuickConvert}
+            onContinue={continueQuickConvert}
+          />
+        ) : view === 'run' && library ? (
+          <RunScreen
+            key={library.id}
+            config={globalConfig}
+            library={library}
+            isQuick={library === quickLibrary}
+            onSaveLibrary={saveQuickLibrary}
+            onEditQuick={
+              library === quickLibrary ? () => setView('quick') : undefined
+            }
+            onStatusChange={setStatus}
+            onOpenSettings={openSettings}
+          />
+        ) : (
+          <LauncherPage
+            config={globalConfig}
+            onOpenLibrary={openLibrary}
+            onQuickConvert={startQuickConvert}
+            onQuickFromLibrary={startQuickFromLibrary}
+            onOpenSettings={openSettings}
+          />
+        )}
+      </AppShell>
     </>
   );
 };

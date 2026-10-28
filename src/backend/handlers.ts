@@ -14,11 +14,12 @@ import {
   ASYNC_CHANNEL,
   BackendAsyncApi,
   BackendPromiseApi,
+  AppConfigV2,
   BatchOperationMode,
   BatchTabConfig,
-  DEFAULT_GLOBAL_SETTINGS,
   GlobalAppConfig,
-  migrateGlobalSettings,
+  createDefaultAppConfig,
+  migrateAppConfig,
   parseMappedRows,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
@@ -81,6 +82,7 @@ export function mapQueueBuildResult(
             : ('encode' as const),
         excludedReason: exclusion?.reason,
         filterTrace: payload.traces[index],
+        presetTrace: payload.presetTraces?.[index] ?? undefined,
         extraActions: {
           copiedFromFilter,
           skippedFromFilter,
@@ -101,6 +103,14 @@ let lastRunState: RunState | null = null;
 
 function currentRunState(): RunState | null {
   return activeRun?.getState() ?? lastRunState;
+}
+
+function legacyPresetValue(batch?: Partial<BatchTabConfig>): string {
+  const customRows = parseMappedRows(batch?.custom_preset_string);
+  const hasCustomRows = customRows.some((row) => row.trim().length > 0);
+  return (hasCustomRows ? customRows : parseMappedRows(batch?.preset))
+    .filter((row) => !row.startsWith('-') || /^-Z\s/i.test(row))
+    .join('\n');
 }
 
 function workerCountFor(config: GlobalAppConfig): number {
@@ -128,9 +138,15 @@ export const BackendHandlers: BackendSyncHandlersType<
     if (fs.existsSync(configPath)) {
       try {
         console.log('Loading configuration file');
-        return migrateGlobalSettings(
-          JSON.parse(fs.readFileSync(configPath, 'utf8')) as GlobalAppConfig,
-        );
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
+        const migrated = migrateAppConfig(raw);
+        if (migrated.changed) {
+          // Keep the v1 file next to the new one so a failed migration is
+          // recoverable without guessing at the original profile data.
+          fs.copyFileSync(configPath, `${configPath}.v1.bak`);
+          saveAppConfig(configPath, migrated.config);
+        }
+        return migrated.config;
       } catch {
         console.log('Unable to load configuration file, archiving old version');
         fs.renameSync(configPath, configPath + '.old');
@@ -138,21 +154,8 @@ export const BackendHandlers: BackendSyncHandlersType<
     }
 
     console.log('Initializing new config file');
-    const config: GlobalAppConfig = {
-      lang: 'en',
-      app_settings: { ...DEFAULT_GLOBAL_SETTINGS },
-      selected_config: 0,
-      version_message: packageJson.version,
-      configs: [
-        {
-          tab_batch: {},
-          name: 'Default',
-        },
-      ],
-    };
-
+    const config: AppConfigV2 = createDefaultAppConfig(packageJson.version);
     saveAppConfig(configPath, config);
-
     return config;
   },
   [PROMISE_CHANNEL.SaveConfiguration]: ({ app, args: config }) => {
@@ -213,13 +216,14 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
   BackendAsyncApi
 > = {
   [ASYNC_CHANNEL.RunBatchOperation]: async ({
-    args: { config, operationMode },
+    args: { config, operationMode, library, presets },
     handlers: { onInit, onProgress, onComplete, onError },
   }) => {
     const currentConfig = config.configs[config.selected_config];
     const payload = buildQueueBuildConfig({
       config,
       operationMode: operationMode ?? BatchOperationMode.ScanAndConvert,
+      ...(library ? { library, presets } : {}),
     });
 
     const progressSnapshot: RunBatchOperationResult = {
@@ -268,19 +272,27 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     });
 
     try {
-      const batch = currentConfig?.tab_batch;
-      if (batch && batch.FFmpeg_toggle !== 1) {
+      const libraryEncoder =
+        library?.encoder ??
+        (currentConfig?.tab_batch?.FFmpeg_toggle === 1 ? 'ffmpeg' : 'handbrake');
+      if (libraryEncoder === 'handbrake') {
         // Rows can be preset names (from the picker) or raw arguments; only
         // preset rows can be checked against the installed preset list.
-        const customRows = parseMappedRows(batch.custom_preset_string);
-        const hasCustomRows = customRows.some(
-          (row) => row.trim().length > 0,
-        );
-        const presetValue = (
-          hasCustomRows ? customRows : parseMappedRows(batch.preset)
-        )
-          .filter((row) => !row.startsWith('-') || /^-Z\s/i.test(row))
-          .join('\n');
+        const usedPresetIds = library
+          ? new Set([
+              library.defaultPresetId,
+              ...library.mappingRules.map((rule) => rule.presetId),
+            ])
+          : undefined;
+        const presetValue = library
+          ? (presets ?? [])
+              .filter(
+                (preset) => !usedPresetIds || usedPresetIds.has(preset.id),
+              )
+              .map((preset) => preset.handbrake?.preset?.trim() ?? '')
+              .filter(Boolean)
+              .join('\n')
+          : legacyPresetValue(currentConfig?.tab_batch);
         const presetScan = await listHandBrakePresets();
         if (presetScan.available) {
           const unavailable = findUnavailableHandBrakePresets(

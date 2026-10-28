@@ -1,4 +1,5 @@
 import type { FilterExpression, FilterTrace } from './filterExpression';
+import type { ConversionPreset, Library, PresetTrace } from './library';
 
 export enum BackendResultMode {
   Init = 'INIT',
@@ -189,7 +190,11 @@ export interface ConversionItem {
 
 export interface RunBatchOperationProps {
   operationMode?: BatchOperationMode;
+  /** Legacy/runtime adapter; derived from a library for library runs. */
   config: GlobalAppConfig;
+  /** Library and its preset catalog, when scanning a library-based run. */
+  library?: Library;
+  presets?: ConversionPreset[];
 }
 
 export interface RunBatchOperationResult {
@@ -209,6 +214,8 @@ export interface RunBatchOperationResult {
     excludedReason?: string;
     /** Per-stage filter decision, shown in the queue trace popover. */
     filterTrace?: FilterTrace;
+    /** Which mapping rule chose the preset. */
+    presetTrace?: PresetTrace;
     extraActions: {
       copiedFromFilter?: boolean;
       skippedFromFilter?: boolean;

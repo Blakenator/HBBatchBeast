@@ -5,11 +5,15 @@ import { AppError } from '@superflag/super-ipc-core';
 import {
   BatchOperationMode,
   BatchTabConfig,
+  ConversionPreset,
+  Library,
   RunBatchOperationProps,
   outputContainerExtension,
   parseMappedRows,
+  presetCatalog,
   resolveFilterExpression,
   validateFilterExpression,
+  validateLibrary,
 } from '../../common';
 import { QueueBuildConfig } from '../processes/protocol';
 
@@ -36,6 +40,93 @@ function toPresetArgument(preset: string): string {
   return preset.startsWith('-') ? preset : `-Z "${preset}"`;
 }
 
+function buildLibraryQueueConfig(
+  library: Library,
+  presets: ConversionPreset[],
+  operationMode: BatchOperationMode,
+  logDirectory: string,
+  journalPath: string,
+): QueueBuildConfig {
+  const problems = validateLibrary(library, presets);
+  if (problems.length > 0) {
+    throw new AppError('Library configuration is invalid', {
+      context: { problems },
+    });
+  }
+  const sources = library.folders.map((folder) => folder.source.trim());
+  const destinations = library.folders.map((folder) =>
+    folder.destination.trim(),
+  );
+  if (sources.length === 0) {
+    throw new AppError('At least one source folder is required', {
+      context: { operationMode },
+    });
+  }
+  const incomplete = library.folders.findIndex(
+    (folder) => !folder.source.trim() || !folder.destination.trim(),
+  );
+  if (incomplete !== -1) {
+    throw new AppError('Each source folder needs a destination folder', {
+      context: { row: incomplete + 1 },
+    });
+  }
+  const useTempFolder = library.defaults.temp_toggle === 1;
+  const tempDestinations = useTempFolder
+    ? library.folders.map((folder) => (folder.temp ?? '').trim())
+    : [];
+  if (useTempFolder && tempDestinations.some((temp) => !temp)) {
+    throw new AppError('Each source folder needs a temporary folder', {
+      context: { operationMode },
+    });
+  }
+
+  const catalog = presetCatalog(presets, library.encoder);
+  const defaultPreset = catalog.find(
+    (preset) => preset.id === library.defaultPresetId,
+  );
+  if (!defaultPreset) {
+    throw new AppError('Choose a default preset for this library', {
+      context: { library: library.name, encoder: library.encoder },
+    });
+  }
+
+  const filterExpression = library.filters;
+  const expressionProblems = validateFilterExpression(filterExpression);
+  if (expressionProblems.length > 0) {
+    throw new AppError('Filter rules are invalid', {
+      context: { problems: expressionProblems },
+    });
+  }
+
+  const defaults = library.defaults;
+  return {
+    sources,
+    folderIds: library.folders.map((folder) => folder.id),
+    destinations,
+    tempDestinations,
+    useTempFolder,
+    filterExpression,
+    copyFilteredFiles: defaults.copy_filtered_files_toggle === 1,
+    copySrtFiles: defaults.copy_srt_files_toggle === 1,
+    container: outputContainerExtension(library.container),
+    mode: operationMode,
+    presets: sources.map(() => defaultPreset.argument),
+    presetCatalog: catalog,
+    mappingRules: library.mappingRules,
+    defaultPresetId: library.defaultPresetId,
+    defaultPreset: defaultPreset.argument,
+    replaceIfSmaller:
+      defaults.replace_original_file_if_converted_is_smaller_toggle === 1,
+    fileSuffixes: library.folders.map((folder) => folder.suffix ?? ''),
+    removeApostrophes: defaults.remove_filename_apostrophes === 1,
+    replaceAlways:
+      defaults.replace_original_file_always_toggle === 1,
+    reverseQueue: defaults.reverse_file_queue === 1,
+    logDirectory,
+    untrustedOutputs: unfinishedOutputs(journalPath),
+  };
+}
+
 const SUPPORTED_MODES: BatchOperationMode[] = [
   BatchOperationMode.ScanOnly,
   BatchOperationMode.ScanAndConvert,
@@ -50,6 +141,10 @@ export interface BuildQueueBuildConfigOptions extends RunBatchOperationProps {
   logDirectory?: string;
   /** Run journal used to find outputs from interrupted/failed items. */
   journalPath?: string;
+  /** Library-based run; when set, the library is the source of truth. */
+  library?: Library;
+  /** Full preset catalog for a library run. */
+  presets?: ConversionPreset[];
 }
 
 interface JournalItem {
@@ -96,6 +191,8 @@ function unfinishedOutputs(journalPath: string): string[] {
 export function buildQueueBuildConfig({
   config,
   operationMode,
+  library,
+  presets: libraryPresets = [],
   logDirectory = defaultLogDirectory(),
   journalPath = path.join(
     os.homedir(),
@@ -106,6 +203,16 @@ export function buildQueueBuildConfig({
     throw new AppError('Unsupported batch operation mode', {
       context: { operationMode },
     });
+  }
+
+  if (library) {
+    return buildLibraryQueueConfig(
+      library,
+      libraryPresets,
+      operationMode,
+      logDirectory,
+      journalPath,
+    );
   }
 
   const currentConfig = config.configs[config.selected_config];

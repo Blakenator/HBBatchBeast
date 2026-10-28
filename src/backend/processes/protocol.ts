@@ -100,9 +100,37 @@ const filterTraceSchema = z
   })
   .strict();
 
+const presetCatalogEntrySchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    argument: z.string().min(1),
+  })
+  .strict();
+
+const presetRuleSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().optional(),
+    presetId: z.string().min(1),
+    condition: filterExpressionSchema,
+  })
+  .strict();
+
+const presetTraceSchema = z
+  .object({
+    presetId: z.string(),
+    presetName: z.string(),
+    ruleId: z.string().optional(),
+    ruleName: z.string().optional(),
+  })
+  .strict();
+
 const queueBuildConfigSchema = z
   .object({
     sources: z.array(z.string().min(1)).min(1),
+    /** Library folder ids aligned with sources, used by folder mapping rules. */
+    folderIds: z.array(z.string()).optional(),
     destinations: z.array(z.string().min(1)),
     tempDestinations: z.array(z.string()),
     useTempFolder: z.boolean(),
@@ -112,6 +140,11 @@ const queueBuildConfigSchema = z
     container: z.string().min(1),
     mode: z.enum(BATCH_OPERATION_MODES),
     presets: z.array(z.string()),
+    /** Library-based mapping; omitted for legacy payloads. */
+    presetCatalog: z.array(presetCatalogEntrySchema).optional(),
+    mappingRules: z.array(presetRuleSchema).optional(),
+    defaultPreset: z.string().optional(),
+    defaultPresetId: z.string().optional(),
     replaceIfSmaller: z.boolean(),
     fileSuffixes: z.array(z.string()),
     removeApostrophes: z.boolean(),
@@ -164,6 +197,8 @@ const queueBuildResultSchema = z
     destinations: z.array(z.string().nullable()),
     destinationsFinal: z.array(z.string().nullable()),
     traces: z.array(filterTraceSchema),
+    /** Which rule selected each file's preset, when mapping rules were used. */
+    presetTraces: z.array(presetTraceSchema.nullable()).optional(),
     /** Files ignored before evaluation because their type cannot match. */
     typeFiltered: z.number().int().nonnegative(),
     notExists: z.number().int().nonnegative(),

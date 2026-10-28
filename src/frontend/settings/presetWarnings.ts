@@ -1,7 +1,16 @@
-import { BatchTabConfig, parseMappedRows } from '../../common';
+import {
+  BatchTabConfig,
+  ConversionPreset,
+  parseMappedRows,
+  presetArgument,
+} from '../../common';
 
 const HARDWARE_ENCODER_PATTERN =
   /(?:^|[^a-z0-9])(?:nvenc|qsv|quick[\s_-]*sync|videotoolbox|vaapi|amf|vce)(?=$|[^a-z0-9])/i;
+
+export function usesHardwarePreset(preset: ConversionPreset): boolean {
+  return HARDWARE_ENCODER_PATTERN.test(presetArgument(preset));
+}
 
 export function usesHardwareEncoder(
   batch: Partial<BatchTabConfig>,

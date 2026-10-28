@@ -1,13 +1,13 @@
 import { createMessages } from '../../core/utils';
 
-export const profileMessages = createMessages({
-  active: { defaultMessage: 'Active profile' },
-  add: { defaultMessage: 'New' },
+export const libraryMessages = createMessages({
+  active: { defaultMessage: 'Active library' },
+  add: { defaultMessage: 'New library' },
   duplicate: { defaultMessage: 'Duplicate' },
   rename: { defaultMessage: 'Rename' },
   remove: { defaultMessage: 'Delete' },
-  name: { defaultMessage: 'Profile name' },
+  name: { defaultMessage: 'Library name' },
   save: { defaultMessage: 'Save' },
   cancel: { defaultMessage: 'Cancel' },
-  cannotDeleteLast: { defaultMessage: 'Keep at least one profile' },
+  cannotDeleteLast: { defaultMessage: 'Keep at least one library' },
 });

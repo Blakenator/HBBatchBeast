@@ -16,6 +16,7 @@ export const FILTER_FIELDS = [
   'fileSize',
   'outputState',
   'mediaProperty',
+  'folder',
 ] as const;
 
 export type FilterField = (typeof FILTER_FIELDS)[number];
@@ -35,6 +36,7 @@ export const FILTER_OPERATORS = [
   'contains',
   'gt',
   'lt',
+  'isUnder',
 ] as const;
 
 export type FilterOperator = (typeof FILTER_OPERATORS)[number];
@@ -45,6 +47,7 @@ export const FILTER_FIELD_OPERATORS: Record<FilterField, FilterOperator[]> = {
   fileSize: ['atLeast', 'atMost', 'between'],
   outputState: ['is', 'isNot'],
   mediaProperty: ['equals', 'notEquals', 'contains', 'gt', 'lt'],
+  folder: ['is', 'isUnder'],
 };
 
 export type Combinator = 'and' | 'or';
@@ -413,6 +416,21 @@ function validateRule(rule: FilterRule): string[] {
   if (rule.field === 'outputState') {
     if (rule.value !== 'converted') {
       issues.push('Output state must be "converted".');
+    }
+    return issues;
+  }
+
+  if (rule.field === 'folder') {
+    const value = rule.value as { folderId?: unknown; subpath?: unknown } | null;
+    if (!value || typeof value !== 'object') {
+      issues.push('Folder condition needs a library folder.');
+      return issues;
+    }
+    if (typeof value.folderId !== 'string' || !value.folderId.trim()) {
+      issues.push('Folder condition needs a library folder.');
+    }
+    if (value.subpath !== undefined && typeof value.subpath !== 'string') {
+      issues.push('Folder subpath must be text.');
     }
     return issues;
   }
