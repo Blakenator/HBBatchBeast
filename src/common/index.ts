@@ -4,6 +4,7 @@ export * from './defaults';
 export * from './appSettings';
 export * from './configValues';
 export * from './outputPaths';
+export * from './pathUtils';
 export * from './filterExpression';
 export * from './library';
 export * from './configMigration';

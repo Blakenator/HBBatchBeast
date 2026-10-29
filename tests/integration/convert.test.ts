@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GlobalAppConfig } from '../../src/common';
-import { createLogFolders } from '../../src/backend/helpers';
+import { appPaths, ensureAppFolders } from '../../src/backend/helpers';
 import { createRunManager } from '../../src/backend/run/runService';
 import { buildWorkerItemConfig } from '../../src/backend/run/buildWorkerItemConfig';
 
@@ -29,7 +29,11 @@ integration('conversion integration', () => {
     fs.mkdirSync(sourceDir, { recursive: true });
     fs.mkdirSync(destinationDir, { recursive: true });
 
-    createLogFolders(home);
+    const paths = appPaths({
+      userDataPath: path.join(home, 'userData'),
+      logsPath: path.join(home, 'logs'),
+    });
+    ensureAppFolders(paths);
 
     const sourcePath = path.join(sourceDir, 'sample.mp4');
     fs.copyFileSync(sample, sourcePath);
@@ -48,7 +52,7 @@ integration('conversion integration', () => {
       ],
     };
 
-    const manager = createRunManager(home, {
+    const manager = createRunManager(paths, {
       workerCount: 1,
       entryBaseDir: buildDir,
       buildItemConfig: (item, index) =>

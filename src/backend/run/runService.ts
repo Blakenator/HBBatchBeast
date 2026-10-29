@@ -1,8 +1,7 @@
-import path from 'path';
 import { AppError } from '@superflag/super-ipc-core';
 import { ChildSupervisor } from '../processes/childSupervisor';
 import { resolveChildEntry } from '../processes/childEntries';
-import { defaultLogDirectory } from '../helpers/buildQueueBuildConfig';
+import { AppPaths } from '../helpers/appPaths';
 import {
   cancelItemCommand,
   configureCommand,
@@ -30,13 +29,6 @@ export interface RunServiceOptions {
   entryBaseDir?: string;
   /** Where the worker writes its command/conversion/error logs. */
   logDirectory?: string;
-}
-
-export function defaultJournalPath(homePath: string): string {
-  return path.join(
-    homePath,
-    'Documents/HBBatchBeast/Config/run-journal.json',
-  );
 }
 
 function createWorkerHandle(
@@ -130,20 +122,20 @@ function createWorkerHandle(
  * the instance until the run reports a terminal state.
  */
 export function createRunManager(
-  homePath: string,
+  paths: AppPaths,
   options: RunServiceOptions,
 ): RunManager {
   if (options.workerCount < 1) {
     throw new AppError('Worker count must be at least 1');
   }
 
-  const logDirectory = options.logDirectory ?? defaultLogDirectory(homePath);
+  const logDirectory = options.logDirectory ?? paths.logDir;
 
   return new RunManager({
     workerCount: options.workerCount,
     onState: options.onState,
     onConsole: options.onConsole,
-    journalPath: options.journalPath ?? defaultJournalPath(homePath),
+    journalPath: options.journalPath ?? paths.journalPath,
     buildItemConfig: options.buildItemConfig,
     createWorker: (workerNumber, handlers) =>
       createWorkerHandle(workerNumber, handlers, logDirectory, options.entryBaseDir),

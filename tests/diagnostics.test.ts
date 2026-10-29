@@ -1,29 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import {
+  AppPaths,
+  appPaths,
+  ensureAppFolders,
+} from '../src/backend/helpers';
 import {
   assertOpenablePath,
   clearCaches,
   clearRunJournal,
   collectDiagnostics,
-  diagnosticsPaths,
 } from '../src/backend/helpers/diagnostics';
-import { createLogFolders } from '../src/backend/helpers';
 
-function makeHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-diag-'));
-  createLogFolders(home);
-  return home;
-}
+let root: string;
+let paths: AppPaths;
+
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-diag-'));
+  paths = appPaths({
+    userDataPath: path.join(root, 'userData'),
+    logsPath: path.join(root, 'logs'),
+  });
+  ensureAppFolders(paths);
+});
+
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 describe('diagnostics helpers', () => {
   it('lists log files with sizes and marks cache files', () => {
-    const home = makeHome();
-    const paths = diagnosticsPaths(home);
     fs.writeFileSync(path.join(paths.logDir, 'ErrorLog.txt'), 'x'.repeat(2048));
 
-    const info = collectDiagnostics(home);
+    const info = collectDiagnostics(paths);
 
     const errorLog = info.logs.find((log) => log.name === 'ErrorLog.txt');
     expect(errorLog?.size).toBe(2048);
@@ -35,23 +46,19 @@ describe('diagnostics helpers', () => {
   });
 
   it('reports the journal status so finished runs are not called interrupted', () => {
-    const home = makeHome();
-    const paths = diagnosticsPaths(home);
     fs.writeFileSync(
       paths.journalPath,
       JSON.stringify({ status: 'completed', items: [] }),
     );
 
-    expect(collectDiagnostics(home).journalStatus).toBe('completed');
-    expect(collectDiagnostics(home).journalExists).toBe(true);
+    expect(collectDiagnostics(paths).journalStatus).toBe('completed');
+    expect(collectDiagnostics(paths).journalExists).toBe(true);
   });
 
   it('clears caches but leaves the placeholder files behind', () => {
-    const home = makeHome();
-    const paths = diagnosticsPaths(home);
     fs.writeFileSync(path.join(paths.logDir, 'healthyFileList.txt'), 'a\nb\n');
 
-    const cleared = clearCaches(home);
+    const cleared = clearCaches(paths);
 
     expect(cleared).toContain('healthyFileList.txt');
     expect(
@@ -60,23 +67,18 @@ describe('diagnostics helpers', () => {
   });
 
   it('removes the run journal on request', () => {
-    const home = makeHome();
-    const paths = diagnosticsPaths(home);
     fs.writeFileSync(paths.journalPath, '{}');
 
-    clearRunJournal(home);
+    clearRunJournal(paths);
 
     expect(fs.existsSync(paths.journalPath)).toBe(false);
   });
 
   it('refuses to open paths outside the app folders', () => {
-    const home = makeHome();
-    const paths = diagnosticsPaths(home);
-
-    expect(assertOpenablePath(home, path.join(paths.logDir, 'ErrorLog.txt'))).toBe(
-      path.join(paths.logDir, 'ErrorLog.txt'),
-    );
-    expect(() => assertOpenablePath(home, '/etc/passwd')).toThrow();
-    expect(() => assertOpenablePath(home, path.join(home, 'Documents'))).toThrow();
+    expect(
+      assertOpenablePath(paths, path.join(paths.logDir, 'ErrorLog.txt')),
+    ).toBe(path.join(paths.logDir, 'ErrorLog.txt'));
+    expect(() => assertOpenablePath(paths, path.join(root, 'outside.txt'))).toThrow();
+    expect(() => assertOpenablePath(paths, root)).toThrow();
   });
 });

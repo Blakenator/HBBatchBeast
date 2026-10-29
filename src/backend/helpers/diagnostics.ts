@@ -2,19 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { DiagnosticsInfo } from '../../common';
 import { AppError } from '@superflag/super-ipc-core';
+import { AppPaths } from './appPaths';
 
 /** Files the app treats as disposable caches and may delete on request. */
 const CACHE_FILES = ['healthyFileList.txt', 'originalFileReplacedList.txt'];
-
-export function diagnosticsPaths(homePath: string) {
-  const root = path.join(homePath, 'Documents', 'HBBatchBeast');
-  return {
-    root,
-    logDir: path.join(root, 'Logs'),
-    configDir: path.join(root, 'Config'),
-    journalPath: path.join(root, 'Config', 'run-journal.json'),
-  };
-}
 
 function describe(filePath: string) {
   try {
@@ -25,9 +16,7 @@ function describe(filePath: string) {
   }
 }
 
-export function collectDiagnostics(homePath: string): DiagnosticsInfo {
-  const paths = diagnosticsPaths(homePath);
-
+export function collectDiagnostics(paths: AppPaths): DiagnosticsInfo {
   const logs: DiagnosticsInfo['logs'] = [];
   if (fs.existsSync(paths.logDir)) {
     for (const entry of fs.readdirSync(paths.logDir, { withFileTypes: true })) {
@@ -68,8 +57,7 @@ export function collectDiagnostics(homePath: string): DiagnosticsInfo {
   };
 }
 
-export function clearCaches(homePath: string): string[] {
-  const paths = diagnosticsPaths(homePath);
+export function clearCaches(paths: AppPaths): string[] {
   const cleared: string[] = [];
   for (const name of CACHE_FILES) {
     const filePath = path.join(paths.logDir, name);
@@ -82,8 +70,7 @@ export function clearCaches(homePath: string): string[] {
   return cleared;
 }
 
-export function clearRunJournal(homePath: string): void {
-  const paths = diagnosticsPaths(homePath);
+export function clearRunJournal(paths: AppPaths): void {
   fs.rmSync(paths.journalPath, { force: true });
 }
 
@@ -91,8 +78,7 @@ export function clearRunJournal(homePath: string): void {
  * The renderer may only open folders it was told about, so a compromised
  * renderer cannot shell-open arbitrary paths.
  */
-export function assertOpenablePath(homePath: string, target: string): string {
-  const paths = diagnosticsPaths(homePath);
+export function assertOpenablePath(paths: AppPaths, target: string): string {
   const resolved = path.resolve(target);
   const inside = (dir: string) => {
     const base = path.resolve(dir);

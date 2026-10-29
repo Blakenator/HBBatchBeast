@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import os from 'os';
+import path from 'path';
 import { GlobalAppConfig } from '../src/common';
 import { buildWorkerItemConfig } from '../src/backend/run/buildWorkerItemConfig';
 
@@ -198,5 +200,32 @@ describe('buildWorkerItemConfig', () => {
     expect(config.finalPath).toBe('/src/a.mkv');
     expect(config.tempOutput).toBe(false);
     expect(config.skipReason).toBeTruthy();
+  });
+
+  it('uses the resolved HandBrake executable when one is supplied', () => {
+    const config = buildWorkerItemConfig(
+      makeConfig(),
+      item,
+      0,
+      'darwin',
+      [],
+      '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI',
+    );
+
+    expect(config.encoder.executable).toBe(
+      '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI',
+    );
+  });
+
+  it('expands a leading ~ in the custom batch path', () => {
+    const config = buildWorkerItemConfig(
+      makeConfig({ advanced: { custom_bat_path: '~/bin/convert.sh' } }),
+      item,
+      0,
+    );
+
+    expect(config.customBatPath).toBe(
+      path.join(os.homedir(), 'bin', 'convert.sh'),
+    );
   });
 });

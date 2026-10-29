@@ -1,5 +1,6 @@
+import os from 'os';
 import { BrowserWindow, dialog } from 'electron';
-import { PathPickerRequest, PathPickerResult } from '../../common';
+import { PathPickerRequest, PathPickerResult, expandHomePath } from '../../common';
 
 /**
  * Opens the OS picker for a folder or file. Returns an empty list when the
@@ -20,7 +21,9 @@ export async function pickPath({
 
   const options: Electron.OpenDialogOptions = {
     title,
-    defaultPath: defaultPath || undefined,
+    defaultPath: defaultPath
+      ? expandHomePath(defaultPath, os.homedir())
+      : undefined,
     properties,
     filters: kind === 'file' ? filters : undefined,
   };

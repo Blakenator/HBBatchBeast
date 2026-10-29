@@ -1,15 +1,20 @@
 import {
+  AppPaths,
+  appPaths,
   buildQueueBuildConfig,
-  createLogFolders,
+  ensureAppFolders,
   findUnavailableHandBrakePresets,
+  legacyAppPaths,
   listHandBrakePresets,
+  migrateLegacyData,
   openFolder,
   pickPath,
+  resolveHandBrakeExecutable,
   saveAppConfig,
+  userPresetFiles,
 } from './helpers';
 import fs from 'fs';
-import path from 'path';
-import { shell } from 'electron';
+import { dialog, shell } from 'electron';
 import {
   ASYNC_CHANNEL,
   BackendAsyncApi,
@@ -93,8 +98,30 @@ export function mapQueueBuildResult(
   };
 }
 
-function ensureLogFolders(app: Electron.App) {
-  createLogFolders(app.getPath('home'));
+let preparedPaths: AppPaths | null = null;
+
+function prepareAppPaths(app: Electron.App): AppPaths {
+  if (preparedPaths) return preparedPaths;
+  const paths = appPaths({
+    userDataPath: app.getPath('userData'),
+    logsPath: app.getPath('logs'),
+  });
+  const migration = (() => {
+    try {
+      return migrateLegacyData(paths, legacyAppPaths(app.getPath('home')));
+    } catch (error) {
+      console.error('Unable to migrate legacy app data:', error);
+      return { migrated: false, copied: [] };
+    }
+  })();
+  if (migration.migrated) {
+    console.log(
+      `Migrated legacy app data (${migration.copied.length} file(s)) into ${paths.configDir}`,
+    );
+  }
+  ensureAppFolders(paths);
+  preparedPaths = paths;
+  return paths;
 }
 
 /** Only one run may be active at a time; the renderer observes it via GetRunState. */
@@ -129,12 +156,7 @@ export const BackendHandlers: BackendSyncHandlersType<
   BackendPromiseApi
 > = {
   [PROMISE_CHANNEL.LoadConfiguration]: ({ app }) => {
-    const homePath = app.getPath('home');
-    createLogFolders(homePath);
-
-    const configPath = path.resolve(
-      path.join(homePath, '/Documents/HBBatchBeast/Config/Configuration.json'),
-    );
+    const configPath = prepareAppPaths(app).configFile;
     if (fs.existsSync(configPath)) {
       try {
         console.log('Loading configuration file');
@@ -159,29 +181,24 @@ export const BackendHandlers: BackendSyncHandlersType<
     return config;
   },
   [PROMISE_CHANNEL.SaveConfiguration]: ({ app, args: config }) => {
-    const homePath = app.getPath('home');
-    createLogFolders(homePath);
-
-    const configPath = path.resolve(
-      path.join(homePath, '/Documents/HBBatchBeast/Config/Configuration.json'),
-    );
-
-    saveAppConfig(configPath, config);
+    saveAppConfig(prepareAppPaths(app).configFile, config);
   },
   [PROMISE_CHANNEL.GetDiagnostics]: ({ app }) =>
-    collectDiagnostics(app.getPath('home')),
+    collectDiagnostics(prepareAppPaths(app)),
   [PROMISE_CHANNEL.OpenAppPath]: ({ app, args }) => {
-    ensureLogFolders(app);
-    const target = assertOpenablePath(app.getPath('home'), args.path);
-    void shell.openPath(target);
+    const target = assertOpenablePath(prepareAppPaths(app), args.path);
+    void shell.openPath(target).then((error) => {
+      if (!error) return;
+      console.error(`Could not open path "${target}": ${error}`);
+      dialog.showErrorBox('Could not open folder', `${target}\n\n${error}`);
+    });
   },
   [PROMISE_CHANNEL.OpenFolder]: ({ args }) => openFolder(args.path),
-  [PROMISE_CHANNEL.ClearCaches]: ({ app }) => {
-    ensureLogFolders(app);
-    return { cleared: clearCaches(app.getPath('home')) };
-  },
+  [PROMISE_CHANNEL.ClearCaches]: ({ app }) => ({
+    cleared: clearCaches(prepareAppPaths(app)),
+  }),
   [PROMISE_CHANNEL.ClearRunJournal]: ({ app }) => {
-    clearRunJournal(app.getPath('home'));
+    clearRunJournal(prepareAppPaths(app));
   },
   [PROMISE_CHANNEL.ProbeMedia]: ({ args }) => probeMedia(args.path),
   [PROMISE_CHANNEL.PickPath]: ({ args }) => pickPath(args),
@@ -216,6 +233,7 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
   BackendAsyncApi
 > = {
   [ASYNC_CHANNEL.RunBatchOperation]: async ({
+    app,
     args: { config, operationMode, library, presets },
     handlers: { onInit, onProgress, onComplete, onError },
   }) => {
@@ -223,6 +241,7 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     const payload = buildQueueBuildConfig({
       config,
       operationMode: operationMode ?? BatchOperationMode.ScanAndConvert,
+      appPaths: prepareAppPaths(app),
       ...(library ? { library, presets } : {}),
     });
 
@@ -340,10 +359,18 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
       settle = resolve;
     });
 
-    const manager = createRunManager(app.getPath('home'), {
+    const handBrakeExecutable = resolveHandBrakeExecutable();
+    const manager = createRunManager(prepareAppPaths(app), {
       workerCount: workerCountFor(config),
       buildItemConfig: (item, index) =>
-        buildWorkerItemConfig(config, item, index),
+        buildWorkerItemConfig(
+          config,
+          item,
+          index,
+          process.platform,
+          userPresetFiles(),
+          handBrakeExecutable,
+        ),
       onState: (state) => {
         lastRunState = state;
         if (state.status === 'completed' || state.status === 'interrupted') {

@@ -2,6 +2,7 @@ import {
   joinOutputPath,
   outputContainerExtension,
   outputRelativePath,
+  pathComparisonKey,
 } from '../../common';
 
 /** Illustrative path shown under a row until a scan reveals real files. */
@@ -40,12 +41,6 @@ export function folderRowPreview({
   return { sample, output: joinOutputPath(destination, relative) };
 }
 
-/** Compares destinations the way the OS would: case-insensitive on Windows. */
-function destinationKey(destination: string): string {
-  const trimmed = destination.trim().replace(/[\\/]+$/, '');
-  return trimmed.includes('\\') ? trimmed.toLowerCase() : trimmed;
-}
-
 /**
  * Maps each row index to the other rows (0-based) sharing its destination.
  * Rows without a destination are ignored.
@@ -55,7 +50,7 @@ export function sharedDestinationRows(
 ): Map<number, number[]> {
   const groups = new Map<string, number[]>();
   destinations.forEach((destination, index) => {
-    const key = destinationKey(destination);
+    const key = pathComparisonKey(destination);
     if (!key) return;
     groups.set(key, [...(groups.get(key) ?? []), index]);
   });

@@ -14,8 +14,12 @@ the repository root.
 ## Requirements
 
 - **Node.js 22+** and **pnpm 10** (development only).
-- **HandBrakeCLI** on `PATH` (`apt install handbrake-cli`, `brew install handbrake`). Windows builds
-  expect `HandBrakeCLI.exe` on `PATH` as well.
+- **HandBrakeCLI**. The app looks on `PATH` first and then in the platform's common
+  install locations: `Program Files\HandBrake` and `%LOCALAPPDATA%\Programs\HandBrake` on Windows,
+  `/Applications/HandBrake.app/Contents/MacOS` and Homebrew on macOS, and `/usr/bin`,
+  `/usr/local/bin` and Snap on Linux. User presets are imported from the platform HandBrake config
+  location (`%APPDATA%\HandBrake`, `~/Library/Application Support/HandBrake`, `~/.config/ghb`, and the
+  Flatpak/Snap equivalents).
 - **FFmpeg** on `PATH` (only needed for the FFmpeg encoder mode).
 - ffprobe is bundled through `ffprobe-static`, so media inspection works without a system install.
 
@@ -62,11 +66,24 @@ library run you left).
 
 ### Where files live
 
-| Path | Purpose |
+Config, presets and run state live in Electron's `userData` directory; logs live in Electron's
+`logs` directory. The exact paths follow the OS conventions:
+
+| Location | Purpose |
 | --- | --- |
-| `~/Documents/HBBatchBeast/Config/Configuration.json` | libraries, presets and app settings (a `.v1.bak` copy is written on first migration from the profile format) |
-| `~/Documents/HBBatchBeast/Config/run-journal.json` | state of the last run, used to report an interrupted run |
-| `~/Documents/HBBatchBeast/Logs/` | master, error, conversion and scan logs plus filter caches |
+| `<userData>/Configuration.json` | libraries, presets and app settings (a `.v1.bak` copy is written on first migration from the profile format) |
+| `<userData>/run-journal.json` | state of the last run, used to report an interrupted run |
+| `<logs>/` | master, error, conversion and scan logs plus filter caches |
+
+| OS | `userData` | `logs` |
+| --- | --- | --- |
+| Windows | `%APPDATA%\HBBatchBeast` | `%APPDATA%\HBBatchBeast\logs` |
+| macOS | `~/Library/Application Support/HBBatchBeast` | `~/Library/Logs/HBBatchBeast` |
+| Linux | `$XDG_CONFIG_HOME/HBBatchBeast` (or `~/.config/HBBatchBeast`) | `$XDG_CONFIG_HOME/HBBatchBeast/logs` |
+
+On first launch after upgrading from a build that used `~/Documents/HBBatchBeast`, the existing
+config, run journal and logs are copied into these locations. The old files are left untouched, so
+downgrading remains safe.
 
 **Logs & diagnostics** in Settings lists those logs, opens the folders, clears the filter caches and
 clears a recovered run journal.

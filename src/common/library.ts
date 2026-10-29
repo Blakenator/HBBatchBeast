@@ -24,6 +24,7 @@ import {
 import { DEFAULT_GLOBAL_SETTINGS } from './appSettings';
 import { HANDBRAKE_CONTAINERS } from './configValues';
 import { outputContainerExtension } from './outputPaths';
+import { isPathInside } from './pathUtils';
 import type {
   BatchTabConfig,
   GlobalAppConfig,
@@ -462,18 +463,6 @@ export function validateLibrary(
   }
 
   return problems;
-}
-
-export function isPathInside(child: string, parent: string): boolean {
-  const normalize = (value: string) => value.replace(/[\\/]+$/, '');
-  const childPath = normalize(child);
-  const parentPath = normalize(parent);
-  if (!parentPath) return false;
-  return (
-    childPath === parentPath ||
-    childPath.startsWith(`${parentPath}/`) ||
-    childPath.startsWith(`${parentPath}\\`)
-  );
 }
 
 /** Presets referenced by a library's default or mapping rules. */

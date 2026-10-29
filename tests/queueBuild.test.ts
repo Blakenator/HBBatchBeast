@@ -3,7 +3,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createLogFolders } from '../src/backend/helpers';
+import {
+  AppPaths,
+  appPaths,
+  ensureAppFolders,
+} from '../src/backend/helpers';
 import { buildQueueBuildConfig } from '../src/backend/helpers/buildQueueBuildConfig';
 import { ChildSupervisor } from '../src/backend/processes/childSupervisor';
 import { QueueBuildResult } from '../src/backend/processes/protocol';
@@ -15,6 +19,7 @@ const queueBuildPath = fileURLToPath(
 
 let root: string;
 let home: string;
+let paths: AppPaths;
 let sourceDir: string;
 let destinationDir: string;
 let supervisor: ChildSupervisor | undefined;
@@ -22,11 +27,15 @@ let supervisor: ChildSupervisor | undefined;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbb-queue-'));
   home = path.join(root, 'home');
+  paths = appPaths({
+    userDataPath: path.join(home, 'userData'),
+    logsPath: path.join(home, 'logs'),
+  });
   sourceDir = path.join(root, 'source');
   destinationDir = path.join(root, 'destination');
   fs.mkdirSync(path.join(sourceDir, 'nested'), { recursive: true });
   fs.mkdirSync(destinationDir, { recursive: true });
-  createLogFolders(home);
+  ensureAppFolders(paths);
 });
 
 afterEach(async () => {
@@ -62,7 +71,8 @@ async function runScan(
   const payload = buildQueueBuildConfig({
     config: makeConfig(batch),
     operationMode: BatchOperationMode.ScanOnly,
-    logDirectory: path.join(home, 'Documents/HBBatchBeast/Logs'),
+    appPaths: paths,
+    logDirectory: paths.logDir,
   });
 
   let complete: (result: QueueBuildResult) => void;
@@ -278,7 +288,7 @@ describe('queueBuild contract', () => {
     writeFile('b.mp4');
     const replacedPath = path.join(sourceDir, 'a.mp4');
     fs.appendFileSync(
-      path.join(home, 'Documents/HBBatchBeast/Logs/originalFileReplacedList.txt'),
+      path.join(paths.logDir, 'originalFileReplacedList.txt'),
       `${replacedPath}\n`,
     );
 

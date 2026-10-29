@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import os from 'os';
+import path from 'path';
 import {
   APP_CONFIG_SCHEMA_VERSION,
   AppConfigV2,
@@ -9,7 +11,12 @@ import {
   defaultFilterExpression,
   libraryToRuntimeConfig,
 } from '../src/common';
-import { buildQueueBuildConfig } from '../src/backend/helpers';
+import { appPaths, buildQueueBuildConfig } from '../src/backend/helpers';
+
+const testPaths = appPaths({
+  userDataPath: path.join(os.tmpdir(), 'hbb-library-userdata'),
+  logsPath: path.join(os.tmpdir(), 'hbb-library-logs'),
+});
 
 const library: Library = {
   id: 'library-1',
@@ -82,6 +89,7 @@ describe('buildQueueBuildConfig for libraries', () => {
       library,
       presets,
       operationMode: BatchOperationMode.ScanOnly,
+      appPaths: testPaths,
     });
 
     expect(payload.sources).toEqual(['/media/movies']);
@@ -111,6 +119,7 @@ describe('buildQueueBuildConfig for libraries', () => {
         library: invalid,
         presets,
         operationMode: BatchOperationMode.ScanOnly,
+        appPaths: testPaths,
       }),
     ).toThrow(/Library configuration is invalid/);
   });

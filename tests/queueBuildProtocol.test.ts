@@ -45,7 +45,7 @@ const config = {
   removeApostrophes: false,
   replaceAlways: false,
   reverseQueue: false,
-  logDirectory: '/home/user/Documents/HBBatchBeast/Logs',
+  logDirectory: '/home/user/.config/HBBatchBeast/logs',
   untrustedOutputs: [],
 };
 

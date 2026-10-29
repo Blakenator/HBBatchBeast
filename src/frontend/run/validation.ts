@@ -1,23 +1,12 @@
 import {
   BatchTabConfig,
   HANDBRAKE_CONTAINERS,
+  isPathInside,
   normalizeContainerExtension,
   parseMappedRows,
   resolveFilterExpression,
   validateFilterExpression,
 } from '../../common';
-
-const trimTrailingSeparators = (value: string) => value.replace(/[\\/]+$/, '');
-
-export function isInside(child: string, parent: string): boolean {
-  const childPath = trimTrailingSeparators(child);
-  const parentPath = trimTrailingSeparators(parent);
-  return (
-    childPath === parentPath ||
-    childPath.startsWith(`${parentPath}/`) ||
-    childPath.startsWith(`${parentPath}\\`)
-  );
-}
 
 /** Blocking problems that must be fixed before a run may start. */
 export function validateBatchConfig(
@@ -51,7 +40,7 @@ export function validateBatchConfig(
       problems.push(`Row ${index + 1}: add a destination folder for ${source}.`);
     } else if (!source && destination) {
       problems.push(`Row ${index + 1}: add a source folder for ${destination}.`);
-    } else if (source && destination && isInside(destination, source)) {
+    } else if (source && destination && isPathInside(destination, source)) {
       problems.push(
         `Row ${index + 1}: destination ${destination} is inside source ${source}; choose a folder outside it.`,
       );

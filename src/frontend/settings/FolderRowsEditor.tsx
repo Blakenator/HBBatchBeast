@@ -2,10 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
-import { parseMappedRows, serializeMappedRows } from '../../common';
+import {
+  isPathInside,
+  parseMappedRows,
+  serializeMappedRows,
+} from '../../common';
 import { Button, IconButton } from '../ui/Button';
 import { OpenFolderButton } from '../ui/OpenFolderButton';
-import { isInside } from '../run/validation';
 import { BrowseButton } from './PathInput';
 import { Help, InlineNote } from './FieldLayout';
 import { folderRowPreview, sharedDestinationRows } from './folderRowPreview';
@@ -248,7 +251,7 @@ export const FolderRowsEditor: React.FC<FolderRowsEditorProps> = ({
     if (!row.destination) {
       return formatMessage(settingsMessages.missingDestination);
     }
-    if (isInside(row.destination, row.source)) {
+    if (isPathInside(row.destination, row.source)) {
       return formatMessage(settingsMessages.destinationInsideSource);
     }
     if (tempEnabled && !row.temp) {

@@ -11,20 +11,95 @@ import {
 import { processBudgetReached } from '../../main/processBudget';
 
 /**
- * HandBrake writes `--preset-list` to stderr on current releases and stdout on
- * older ones, so callers parse the concatenation of both streams.
+ * Where HandBrake may be installed. Callers can inject the platform, env and
+ * home so discovery stays testable.
  */
-function executableCandidates(): string[] {
-  if (process.platform === 'win32') {
-    return ['HandBrakeCLI.exe', 'HandBrakeCLI'];
+export interface HandBrakeResolveOptions {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+  /** Injectable for tests; defaults to `fs.statSync(...).isFile()`. */
+  exists?: (filePath: string) => boolean;
+}
+
+function defaultExists(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
   }
-  return [
-    'HandBrakeCLI',
-    '/usr/local/bin/HandBrakeCLI',
-    '/usr/bin/HandBrakeCLI',
-    '/opt/homebrew/bin/HandBrakeCLI',
-    '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI',
-  ];
+}
+
+/**
+ * Executable names/paths HandBrake may be installed at. Bare names are resolved
+ * through PATH by `execFile`; absolute paths cover the installers that do not
+ * add HandBrakeCLI to PATH (notably the macOS app bundle and Windows Program
+ * Files).
+ */
+export function handBrakeExecutableCandidates(
+  options: HandBrakeResolveOptions = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.home ?? os.homedir();
+  const candidates: string[] = [];
+
+  if (platform === 'win32') {
+    candidates.push('HandBrakeCLI.exe', 'HandBrakeCLI');
+    const programFiles = env.ProgramFiles ?? 'C:\\Program Files';
+    const programFilesX86 = env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
+    const programW6432 = env.ProgramW6432 ?? programFiles;
+    const localAppData = env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+    for (const base of [programFiles, programFilesX86, programW6432]) {
+      candidates.push(path.join(base, 'HandBrake', 'HandBrakeCLI.exe'));
+    }
+    candidates.push(
+      path.join(localAppData, 'Programs', 'HandBrake', 'HandBrakeCLI.exe'),
+      path.join(localAppData, 'HandBrake', 'HandBrakeCLI.exe'),
+    );
+    return [...new Set(candidates)];
+  }
+
+  candidates.push('HandBrakeCLI');
+  if (platform === 'darwin') {
+    candidates.push(
+      '/opt/homebrew/bin/HandBrakeCLI',
+      '/usr/local/bin/HandBrakeCLI',
+      '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI',
+      path.join(
+        home,
+        'Applications',
+        'HandBrake.app',
+        'Contents',
+        'MacOS',
+        'HandBrakeCLI',
+      ),
+    );
+  } else {
+    candidates.push(
+      '/usr/bin/HandBrakeCLI',
+      '/usr/local/bin/HandBrakeCLI',
+      '/bin/HandBrakeCLI',
+      '/snap/bin/handbrake-cli',
+      '/snap/bin/HandBrakeCLI',
+      // Present when the app itself runs inside a Flatpak sandbox.
+      '/app/bin/HandBrakeCLI',
+    );
+  }
+  return [...new Set(candidates)];
+}
+
+/** First existing absolute candidate, otherwise the platform's bare command. */
+export function resolveHandBrakeExecutable(
+  options: HandBrakeResolveOptions = {},
+): string {
+  const exists = options.exists ?? defaultExists;
+  const platform = options.platform ?? process.platform;
+  for (const candidate of handBrakeExecutableCandidates(options)) {
+    const isBareName = !candidate.includes('/') && !candidate.includes('\\');
+    if (!isBareName && exists(candidate)) return candidate;
+  }
+  return platform === 'win32' ? 'HandBrakeCLI.exe' : 'HandBrakeCLI';
 }
 
 /**
@@ -33,28 +108,69 @@ function executableCandidates(): string[] {
  * imported explicitly, so a custom preset would otherwise be missing from the
  * picker — and unusable by `-Z` during a conversion.
  */
-export function userPresetFiles(): string[] {
-  const home = os.homedir();
+export function userPresetFiles(
+  options: HandBrakeResolveOptions = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.home ?? os.homedir();
+  const exists = options.exists ?? defaultExists;
   const candidates: string[] = [];
 
-  if (process.platform === 'win32' && process.env.APPDATA) {
-    candidates.push(path.join(process.env.APPDATA, 'HandBrake', 'presets.json'));
-  } else if (process.platform === 'darwin') {
+  if (platform === 'win32') {
+    const appData = env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    const localAppData = env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+    candidates.push(
+      path.join(appData, 'HandBrake', 'presets.json'),
+      path.join(localAppData, 'HandBrake', 'presets.json'),
+    );
+  } else if (platform === 'darwin') {
     candidates.push(
       path.join(home, 'Library', 'Application Support', 'HandBrake', 'presets.json'),
+      path.join(
+        home,
+        'Library',
+        'Containers',
+        'fr.handbrake.HandBrake',
+        'Data',
+        'Library',
+        'Application Support',
+        'HandBrake',
+        'presets.json',
+      ),
     );
   } else {
-    const configHome = process.env.XDG_CONFIG_HOME ?? path.join(home, '.config');
-    candidates.push(path.join(configHome, 'ghb', 'presets.json'));
+    const configHome = env.XDG_CONFIG_HOME ?? path.join(home, '.config');
+    candidates.push(
+      path.join(configHome, 'ghb', 'presets.json'),
+      // Flatpak
+      path.join(
+        home,
+        '.var',
+        'app',
+        'fr.handbrake.ghb',
+        'config',
+        'ghb',
+        'presets.json',
+      ),
+      // Snap packages
+      path.join(home, 'snap', 'handbrake', 'current', '.config', 'ghb', 'presets.json'),
+      path.join(
+        home,
+        'snap',
+        'handbrake-jz',
+        'current',
+        '.config',
+        'ghb',
+        'presets.json',
+      ),
+    );
+    if (env.SNAP_USER_DATA) {
+      candidates.push(path.join(env.SNAP_USER_DATA, '.config', 'ghb', 'presets.json'));
+    }
   }
 
-  return [...new Set(candidates)].filter((file) => {
-    try {
-      return fs.statSync(file).isFile();
-    } catch {
-      return false;
-    }
-  });
+  return [...new Set(candidates)].filter(exists);
 }
 
 function decodeXml(value: string): string {
@@ -160,6 +276,10 @@ export function findUnavailableHandBrakePresets(
   ];
 }
 
+/**
+ * HandBrake writes `--preset-list` to stderr on current releases and stdout on
+ * older ones, so callers parse the concatenation of both streams.
+ */
 function runPresetList(
   executable: string,
   args: string[] = ['--preset-list'],
@@ -228,7 +348,7 @@ export async function listHandBrakePresets({
   const scan = (async (): Promise<HandBrakePresetScan> => {
     let lastError = '';
 
-    for (const executable of executableCandidates()) {
+    for (const executable of handBrakeExecutableCandidates()) {
       const { error, stdout, stderr } = await runPresetList(executable);
       const builtIn = parseHandBrakePresetList(`${stdout}\n${stderr}`);
       if (builtIn.length === 0) {

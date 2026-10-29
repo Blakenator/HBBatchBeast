@@ -1,6 +1,6 @@
 import React, { createContext, useContext } from 'react';
 import { Form } from 'react-bootstrap';
-import { FolderPair } from '../../common';
+import { FolderPair, pathBasename } from '../../common';
 import { Combobox } from '../ui/Combobox';
 import {
   FilterFieldDefinition,
@@ -19,7 +19,7 @@ export const MappingFolderProvider: React.FC<{
 );
 
 const folderLabel = (folder: FolderPair, index: number): string => {
-  const name = folder.source.split(/[\\/]/).filter(Boolean).pop();
+  const name = pathBasename(folder.source);
   return name ? `${index + 1}. ${name}` : `Folder ${index + 1}`;
 };
 

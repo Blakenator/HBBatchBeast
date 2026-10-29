@@ -1,6 +1,5 @@
 import fs from 'fs';
 import os from 'os';
-import path from 'path';
 import { AppError } from '@superflag/super-ipc-core';
 import {
   BatchOperationMode,
@@ -8,6 +7,7 @@ import {
   ConversionPreset,
   Library,
   RunBatchOperationProps,
+  expandHomePath,
   outputContainerExtension,
   parseMappedRows,
   presetCatalog,
@@ -15,6 +15,7 @@ import {
   validateFilterExpression,
   validateLibrary,
 } from '../../common';
+import { AppPaths } from './appPaths';
 import { QueueBuildConfig } from '../processes/protocol';
 
 /**
@@ -53,9 +54,12 @@ function buildLibraryQueueConfig(
       context: { problems },
     });
   }
-  const sources = library.folders.map((folder) => folder.source.trim());
+  const home = os.homedir();
+  const sources = library.folders.map((folder) =>
+    expandHomePath(folder.source, home),
+  );
   const destinations = library.folders.map((folder) =>
-    folder.destination.trim(),
+    expandHomePath(folder.destination, home),
   );
   if (sources.length === 0) {
     throw new AppError('At least one source folder is required', {
@@ -72,7 +76,7 @@ function buildLibraryQueueConfig(
   }
   const useTempFolder = library.defaults.temp_toggle === 1;
   const tempDestinations = useTempFolder
-    ? library.folders.map((folder) => (folder.temp ?? '').trim())
+    ? library.folders.map((folder) => expandHomePath(folder.temp ?? '', home))
     : [];
   if (useTempFolder && tempDestinations.some((temp) => !temp)) {
     throw new AppError('Each source folder needs a temporary folder', {
@@ -132,12 +136,10 @@ const SUPPORTED_MODES: BatchOperationMode[] = [
   BatchOperationMode.ScanAndConvert,
 ];
 
-export function defaultLogDirectory(homePath: string = os.homedir()): string {
-  return path.join(homePath, 'Documents/HBBatchBeast/Logs');
-}
-
 export interface BuildQueueBuildConfigOptions extends RunBatchOperationProps {
-  /** Overrides the logs directory (tests pass a temp home). */
+  /** Canonical userData/logs locations from Electron. */
+  appPaths: AppPaths;
+  /** Overrides the logs directory (tests pass a temp folder). */
   logDirectory?: string;
   /** Run journal used to find outputs from interrupted/failed items. */
   journalPath?: string;
@@ -191,13 +193,11 @@ function unfinishedOutputs(journalPath: string): string[] {
 export function buildQueueBuildConfig({
   config,
   operationMode,
+  appPaths,
   library,
   presets: libraryPresets = [],
-  logDirectory = defaultLogDirectory(),
-  journalPath = path.join(
-    os.homedir(),
-    'Documents/HBBatchBeast/Config/run-journal.json',
-  ),
+  logDirectory = appPaths.logDir,
+  journalPath = appPaths.journalPath,
 }: BuildQueueBuildConfigOptions): QueueBuildConfig {
   if (!operationMode || !SUPPORTED_MODES.includes(operationMode)) {
     throw new AppError('Unsupported batch operation mode', {
@@ -226,11 +226,18 @@ export function buildQueueBuildConfig({
   const advanced: Partial<BatchTabConfig['advanced']> = batch.advanced ?? {};
   const paths: Partial<BatchTabConfig['path']> = batch.path ?? {};
 
-  const sources = splitLines(paths.source_path);
-  const destinations = splitLines(paths.destination_path);
+  const home = os.homedir();
+  const sources = splitLines(paths.source_path).map((value) =>
+    expandHomePath(value, home),
+  );
+  const destinations = splitLines(paths.destination_path).map((value) =>
+    expandHomePath(value, home),
+  );
   const useTempFolder = paths.temp_toggle === 1;
   const tempDestinations = useTempFolder
-    ? splitLines(paths.temp_destination_path)
+    ? splitLines(paths.temp_destination_path).map((value) =>
+        expandHomePath(value, home),
+      )
     : [];
 
   if (sources.length === 0) {

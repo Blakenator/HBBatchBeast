@@ -3,7 +3,19 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { BatchOperationMode, GlobalAppConfig } from '../src/common';
-import { buildQueueBuildConfig } from '../src/backend/helpers';
+import { appPaths, buildQueueBuildConfig } from '../src/backend/helpers';
+import type { BuildQueueBuildConfigOptions } from '../src/backend/helpers/buildQueueBuildConfig';
+
+const testPaths = appPaths({
+  userDataPath: path.join(os.tmpdir(), 'hbb-test-userdata'),
+  logsPath: path.join(os.tmpdir(), 'hbb-test-logs'),
+});
+
+function build(
+  options: Omit<BuildQueueBuildConfigOptions, 'appPaths'>,
+): ReturnType<typeof buildQueueBuildConfig> {
+  return buildQueueBuildConfig({ appPaths: testPaths, ...options });
+}
 
 function makeConfig(
   batch: GlobalAppConfig['configs'][number]['tab_batch'] = {},
@@ -27,7 +39,7 @@ const twoSources = {
 
 describe('buildQueueBuildConfig', () => {
   it('sends one HandBrake -Z argument per source folder', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
@@ -42,15 +54,15 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('always sends a dotted container extension', () => {
-    const withoutDot = buildQueueBuildConfig({
+    const withoutDot = build({
       config: makeConfig({ ...twoSources, container: 'mkv' }),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    const withDot = buildQueueBuildConfig({
+    const withDot = build({
       config: makeConfig({ ...twoSources, container: '.mkv' }),
       operationMode: BatchOperationMode.ScanOnly,
     });
-    const empty = buildQueueBuildConfig({
+    const empty = build({
       config: makeConfig({ ...twoSources, container: '  ' }),
       operationMode: BatchOperationMode.ScanOnly,
     });
@@ -61,7 +73,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('does not double-wrap presets that are already arguments', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({ ...twoSources, preset: '-Z "HQ 1080p30"' }),
       operationMode: BatchOperationMode.ScanOnly,
     });
@@ -70,7 +82,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('uses custom preset rows when they are present', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         custom_preset_string:
@@ -86,7 +98,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('falls back to the legacy preset field when custom rows are empty', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         custom_preset_string: '\n',
@@ -101,7 +113,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('wraps bare custom HandBrake presets but keeps custom arguments intact', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         FFmpeg_toggle: 0,
@@ -118,7 +130,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('uses custom arguments for FFmpeg', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         FFmpeg_toggle: 1,
@@ -135,7 +147,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('only includes already-converted files when the profile asks for it', () => {
-    const defaults = buildQueueBuildConfig({
+    const defaults = build({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
@@ -147,7 +159,7 @@ describe('buildQueueBuildConfig', () => {
       }),
     );
 
-    const includeConverted = buildQueueBuildConfig({
+    const includeConverted = build({
       config: makeConfig({
         ...twoSources,
         advanced: { include_converted_files_toggle: 1 },
@@ -160,7 +172,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('compiles the flat legacy filters into expression rules', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         advanced: {
@@ -208,7 +220,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('emits one suffix entry per source even when suffixes are disabled (D1)', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
@@ -217,7 +229,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('pads a partial suffix list instead of leaving holes', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         advanced: { file_name_suffix_toggle: 1, file_name_suffix: '_720p' },
@@ -229,7 +241,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('keeps an empty suffix attached to its own row instead of shifting', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         path: {
           source_path: '/media/movies\n/media/tv\n/media/home',
@@ -248,14 +260,14 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('passes temp folders only when the temp toggle is enabled', () => {
-    const disabled = buildQueueBuildConfig({
+    const disabled = build({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
     });
     expect(disabled.tempDestinations).toEqual([]);
     expect(disabled.useTempFolder).toBe(false);
 
-    const enabled = buildQueueBuildConfig({
+    const enabled = build({
       config: makeConfig({
         ...twoSources,
         path: {
@@ -271,7 +283,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('carries the SRT copy toggle', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         advanced: { copy_srt_files_toggle: 1 },
@@ -283,7 +295,7 @@ describe('buildQueueBuildConfig', () => {
   });
 
   it('carries the file-handling toggles across', () => {
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig({
         ...twoSources,
         advanced: {
@@ -335,7 +347,7 @@ describe('buildQueueBuildConfig', () => {
       }),
     );
 
-    const payload = buildQueueBuildConfig({
+    const payload = build({
       config: makeConfig(twoSources),
       operationMode: BatchOperationMode.ScanOnly,
       journalPath,
@@ -351,20 +363,20 @@ describe('buildQueueBuildConfig', () => {
     const config = makeConfig(twoSources);
 
     expect(() =>
-      buildQueueBuildConfig({
+      build({
         config,
         operationMode: 'healthCheck' as BatchOperationMode,
       }),
     ).toThrow(/Unsupported batch operation mode/);
 
-    expect(() => buildQueueBuildConfig({ config })).toThrow(
+    expect(() => build({ config })).toThrow(
       /Unsupported batch operation mode/,
     );
   });
 
   it('rejects a missing selected configuration', () => {
     expect(() =>
-      buildQueueBuildConfig({
+      build({
         config: { ...makeConfig(twoSources), selected_config: 3 },
         operationMode: BatchOperationMode.ScanOnly,
       }),

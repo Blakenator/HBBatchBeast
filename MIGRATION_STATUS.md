@@ -182,9 +182,10 @@ HBBatchBeast/                      # repo root = the app
 - Tray icons and the window icon are read from `resources/icons` when packaged and `src/assets/icons` in
   development (`src/main/paths.ts`); a missing icon logs `Tray icon could not be loaded`.
 - Tray status follows the run status the renderer reports over `SET_TRAY_STATUS`.
-- Config: `~/Documents/HBBatchBeast/Config/Configuration.json` (legacy path preserved).
-- Logs, worker scratch dirs and the filter-cache files are created by `createLogFolders()` on every load/save;
-  the diagnostics panel lists and clears them.
+- Config: Electron `userData/Configuration.json`; legacy
+  `~/Documents/HBBatchBeast/Config/Configuration.json` is copied there on first launch.
+- Logs and the filter-cache files are created by `ensureAppFolders()` in the Electron `logs`
+  directory on every load/save; the diagnostics panel lists and clears them.
 - `GlobalAppConfig = { lang, app_settings, selected_config, version_message, configs: BatchConfig[] }`;
   each config has `tab_batch` plus optional `name`. Legacy `tab_system` worker/log settings are promoted
   from the active profile into shared `app_settings` when loading old configurations. Legacy keys such as `tab_health`,
@@ -609,8 +610,10 @@ These are all in the migrated code, not legacy-only issues.
 
 ### Invariants to preserve
 
-- Config path and JSON shape (users have existing `Configuration.json` files).
-- `~/Documents/HBBatchBeast/{Config,Logs}` layout and log file names — child modules read them directly.
+- `Configuration.json` JSON shape (users have existing files); the location moved to Electron
+  `userData` and the legacy `~/Documents/HBBatchBeast` copy is migrated automatically.
+- Legacy `~/Documents/HBBatchBeast/{Config,Logs}` data is migrated once into Electron `userData` /
+  `logs`; child modules receive those paths through `AppPaths` and must not hardcode the old layout.
 - Child-process entry basenames (`worker1.ts`, `queueBuild.ts`) must keep their Forge build entries so the
   emitted `[name].cjs` still matches `childEntries.ts`; the
   backend forks them by path from `__dirname`.

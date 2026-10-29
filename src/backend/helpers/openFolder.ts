@@ -1,11 +1,13 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { shell } from 'electron';
 import { AppError } from '@superflag/super-ipc-core';
+import { expandHomePath } from '../../common';
 
 /** Resolves a user-supplied folder path and rejects anything that is not an existing directory. */
 export function assertExistingFolder(target: string): string {
-  const trimmed = target?.trim();
+  const trimmed = expandHomePath(target ?? '', os.homedir());
   if (!trimmed) {
     throw new AppError('No folder path was provided');
   }

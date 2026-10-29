@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import path from 'path';
 import {
   findUnavailableHandBrakePresets,
+  handBrakeExecutableCandidates,
   parseHandBrakePresetList,
+  resolveHandBrakeExecutable,
+  userPresetFiles,
 } from '../src/backend/helpers';
 
 const textOutput = `[13:42:06] Compile-time hardening features are enabled
@@ -104,5 +108,169 @@ Custom/
       ),
     ).toEqual([{ name: 'Fast 1080p30', category: 'General' }]);
     expect(parseHandBrakePresetList('')).toEqual([]);
+  });
+});
+
+
+describe('handBrakeExecutableCandidates', () => {
+  it('covers Windows Program Files and local installs', () => {
+    const env = {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+    };
+    const candidates = handBrakeExecutableCandidates({
+      platform: 'win32',
+      env,
+      home: 'C:\\Users\\me',
+    });
+
+    expect(candidates).toContain('HandBrakeCLI.exe');
+    expect(candidates).toContain(
+      path.join('C:\\Program Files', 'HandBrake', 'HandBrakeCLI.exe'),
+    );
+    expect(candidates).toContain(
+      path.join('C:\\Program Files (x86)', 'HandBrake', 'HandBrakeCLI.exe'),
+    );
+    expect(candidates).toContain(
+      path.join(
+        'C:\\Users\\me\\AppData\\Local',
+        'Programs',
+        'HandBrake',
+        'HandBrakeCLI.exe',
+      ),
+    );
+  });
+
+  it('covers the macOS app bundle and Homebrew locations', () => {
+    const candidates = handBrakeExecutableCandidates({
+      platform: 'darwin',
+      home: '/Users/me',
+    });
+
+    expect(candidates).toContain('HandBrakeCLI');
+    expect(candidates).toContain('/opt/homebrew/bin/HandBrakeCLI');
+    expect(candidates).toContain('/usr/local/bin/HandBrakeCLI');
+    expect(candidates).toContain(
+      '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI',
+    );
+    expect(candidates).toContain(
+      path.join(
+        '/Users/me',
+        'Applications',
+        'HandBrake.app',
+        'Contents',
+        'MacOS',
+        'HandBrakeCLI',
+      ),
+    );
+  });
+
+  it('covers Linux system and Snap locations', () => {
+    const candidates = handBrakeExecutableCandidates({ platform: 'linux' });
+
+    expect(candidates).toContain('HandBrakeCLI');
+    expect(candidates).toContain('/usr/bin/HandBrakeCLI');
+    expect(candidates).toContain('/usr/local/bin/HandBrakeCLI');
+    expect(candidates).toContain('/snap/bin/handbrake-cli');
+  });
+});
+
+describe('resolveHandBrakeExecutable', () => {
+  it('returns the first existing absolute candidate', () => {
+    const expected =
+      '/Applications/HandBrake.app/Contents/MacOS/HandBrakeCLI';
+    const resolved = resolveHandBrakeExecutable({
+      platform: 'darwin',
+      home: '/Users/me',
+      exists: (filePath) => filePath === expected,
+    });
+
+    expect(resolved).toBe(expected);
+  });
+
+  it('falls back to the bare platform command', () => {
+    expect(
+      resolveHandBrakeExecutable({
+        platform: 'win32',
+        env: {},
+        home: 'C:\\Users\\me',
+        exists: () => false,
+      }),
+    ).toBe('HandBrakeCLI.exe');
+    expect(
+      resolveHandBrakeExecutable({
+        platform: 'linux',
+        home: '/home/me',
+        exists: () => false,
+      }),
+    ).toBe('HandBrakeCLI');
+  });
+});
+
+describe('userPresetFiles', () => {
+  it('finds the Windows roaming preset file', () => {
+    const expected = path.join(
+      'C:\\Users\\me\\AppData\\Roaming',
+      'HandBrake',
+      'presets.json',
+    );
+    expect(
+      userPresetFiles({
+        platform: 'win32',
+        env: { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' },
+        home: 'C:\\Users\\me',
+        exists: (filePath) => filePath === expected,
+      }),
+    ).toEqual([expected]);
+  });
+
+  it('finds the macOS application-support preset file', () => {
+    const expected = path.join(
+      '/Users/me',
+      'Library',
+      'Application Support',
+      'HandBrake',
+      'presets.json',
+    );
+    expect(
+      userPresetFiles({
+        platform: 'darwin',
+        home: '/Users/me',
+        exists: (filePath) => filePath === expected,
+      }),
+    ).toEqual([expected]);
+  });
+
+  it('finds native, Flatpak and Snap presets on Linux', () => {
+    const native = path.join('/home/me', '.config', 'ghb', 'presets.json');
+    const flatpak = path.join(
+      '/home/me',
+      '.var',
+      'app',
+      'fr.handbrake.ghb',
+      'config',
+      'ghb',
+      'presets.json',
+    );
+    const snap = path.join(
+      '/home/me',
+      'snap',
+      'handbrake',
+      'current',
+      '.config',
+      'ghb',
+      'presets.json',
+    );
+    const existing = new Set([native, flatpak, snap]);
+
+    expect(
+      userPresetFiles({
+        platform: 'linux',
+        env: {},
+        home: '/home/me',
+        exists: (filePath) => existing.has(filePath),
+      }),
+    ).toEqual([native, flatpak, snap]);
   });
 });

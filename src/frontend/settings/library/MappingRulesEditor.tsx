@@ -8,6 +8,7 @@ import {
   PresetRule,
   createEmptyFilterExpression,
   createRuleId,
+  pathBasename,
 } from '../../../common';
 import { Button, IconButton } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
@@ -137,7 +138,7 @@ interface MappingRulesEditorProps {
 }
 
 function folderLabel(folder: FolderPair, index: number): string {
-  const name = folder.source.split(/[\\/]/).filter(Boolean).pop();
+  const name = pathBasename(folder.source);
   return name ? `${index + 1}. ${name}` : `Folder ${index + 1}`;
 }
 

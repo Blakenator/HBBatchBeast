@@ -1,8 +1,10 @@
 import { AppError } from '@superflag/super-ipc-core';
+import os from 'os';
 import {
   BatchTabConfig,
   ConversionItem,
   GlobalAppConfig,
+  expandHomePath,
   isTempMarkerEnabled,
   resolveGlobalSettings,
   withTempMarker,
@@ -15,8 +17,8 @@ function truthy(value: number | undefined): boolean {
 }
 
 function handBrakeCliPath(platform: NodeJS.Platform): string {
-  // The bundled Windows binary sits next to the app resources; elsewhere the
-  // user supplies HandBrakeCLI on PATH.
+  // Fallback when no installed HandBrakeCLI was resolved. On Windows the
+  // command needs its .exe suffix; elsewhere PATH lookup uses the bare name.
   return platform === 'win32' ? 'HandBrakeCLI.exe' : 'HandBrakeCLI';
 }
 
@@ -30,6 +32,7 @@ export function buildWorkerItemConfig(
   index: number,
   platform: NodeJS.Platform = process.platform,
   presetImportFiles: string[] = userPresetFiles(),
+  handBrakeExecutable: string = handBrakeCliPath(platform),
 ): WorkerItemConfig {
   const current = config.configs[config.selected_config];
   if (!current) {
@@ -74,7 +77,7 @@ export function buildWorkerItemConfig(
   const ffmpeg = batch.FFmpeg_toggle === 1;
   const encoder = {
     kind: ffmpeg ? ('ffmpeg' as const) : ('handbrake' as const),
-    executable: ffmpeg ? 'ffmpeg' : handBrakeCliPath(platform),
+    executable: ffmpeg ? 'ffmpeg' : handBrakeExecutable,
     preset: item.preset,
     presetImportFiles: ffmpeg ? [] : presetImportFiles,
   };
@@ -99,7 +102,7 @@ export function buildWorkerItemConfig(
           )
         ? 'smaller'
         : 'never',
-    customBatPath: (advanced.custom_bat_path ?? '').trim(),
+    customBatPath: expandHomePath(advanced.custom_bat_path ?? '', os.homedir()),
     lowPriority: truthy(advanced.low_process_priority_toggle),
     saveWorkerLogs: truthy(globalSettings.save_worker_logs_toggle),
     filters: {
