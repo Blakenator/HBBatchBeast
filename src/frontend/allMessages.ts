@@ -1,7 +1,10 @@
 import { settingsMessages } from './settings/messages';
 import { commonButtonMessages } from './core/messages';
 import { versionWarningMessages } from './versionWarning/messages';
-import { batchOperationResultsMessages } from './home/messages';
+import {
+  batchOperationResultsMessages,
+  homeMessages,
+} from './home/messages';
 import { runMessages } from './run/messages';
 import { filterBuilderMessages } from './ui/filterBuilder/messages';
 import { shellMessages, tokenListMessages } from './ui/messages';
@@ -10,6 +13,7 @@ export const allMessages = {
   settingsMessages,
   commonButtonMessages,
   versionWarningMessages,
+  homeMessages,
   batchOperationResultsMessages,
   runMessages,
   filterBuilderMessages,

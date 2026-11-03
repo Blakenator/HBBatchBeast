@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import { IntlProvider } from 'react-intl';
 import { getDefaultMessages } from '../src/frontend/allMessages';
 import {
@@ -40,76 +46,64 @@ const config: AppConfigV2 = {
   libraries: [library],
 };
 
-function renderLauncher() {
-  const onQuickConvert = vi.fn();
-  const onQuickFromLibrary = vi.fn();
-  const onQuickOrganize = vi.fn();
-  const onQuickOrganizeFromLibrary = vi.fn();
-  const onOpenLibrary = vi.fn();
-  const onOrganizeLibrary = vi.fn();
+function renderLauncher(
+  overrides: Partial<React.ComponentProps<typeof LauncherPage>> = {},
+) {
+  const onChooseMode = vi.fn();
+  const onContinue = vi.fn();
   render(
     <IntlProvider locale="en" messages={getDefaultMessages()} defaultLocale="en">
       <LauncherPage
         config={config}
-        onOpenLibrary={onOpenLibrary}
-        onQuickConvert={onQuickConvert}
-        onQuickFromLibrary={onQuickFromLibrary}
-        onQuickOrganize={onQuickOrganize}
-        onQuickOrganizeFromLibrary={onQuickOrganizeFromLibrary}
-        onOrganizeLibrary={onOrganizeLibrary}
-        onOpenSettings={vi.fn()}
+        lastLibraryByMode={{}}
+        onChooseMode={onChooseMode}
+        onContinue={onContinue}
+        {...overrides}
       />
     </IntlProvider>,
   );
-  return {
-    onQuickConvert,
-    onQuickFromLibrary,
-    onQuickOrganize,
-    onQuickOrganizeFromLibrary,
-    onOpenLibrary,
-    onOrganizeLibrary,
-  };
+  return { onChooseMode, onContinue };
 }
 
+afterEach(cleanup);
+
 describe('LauncherPage', () => {
-  it('opens a library for conversion and organizing', () => {
-    const { onOpenLibrary, onOrganizeLibrary } = renderLauncher();
+  it('offers conversion and organizing as the two doors', () => {
+    const { onChooseMode } = renderLauncher();
+
     fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
-    expect(onOpenLibrary).toHaveBeenCalledWith('library-1');
+    expect(onChooseMode).toHaveBeenCalledWith('convert');
 
     fireEvent.click(screen.getByRole('button', { name: 'Organize' }));
-    expect(onOrganizeLibrary).toHaveBeenCalledWith('library-1');
-    cleanup();
+    expect(onChooseMode).toHaveBeenCalledWith('organize');
   });
 
-  it('starts blank and library-backed quick sessions', () => {
-    const {
-      onQuickConvert,
-      onQuickFromLibrary,
-      onQuickOrganize,
-      onQuickOrganizeFromLibrary,
-    } = renderLauncher();
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Start a quick conversion' }),
-    );
-    expect(onQuickConvert).toHaveBeenCalledTimes(1);
+  it('shows the library count and continues the selected library', () => {
+    const { onContinue } = renderLauncher({
+      lastLibraryByMode: { convert: 'library-1' },
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick convert' }));
-    expect(onQuickFromLibrary).toHaveBeenCalledWith(library);
+    const convertDoor = screen.getByRole('button', { name: 'Convert' });
+    expect(within(convertDoor).getByText('1 library')).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Start quick organize' }),
+      screen.getByRole('button', { name: 'Continue with Films' }),
     );
-    expect(onQuickOrganize).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Quick organize' }));
-    expect(onQuickOrganizeFromLibrary).toHaveBeenCalledWith(library);
-    cleanup();
+    expect(onContinue).toHaveBeenCalledWith('convert', 'library-1');
   });
 
-  it('shows the library type', () => {
+  it('does not put library or preset management on the home surface', () => {
     renderLauncher();
-    expect(screen.getByText('Movies')).toBeTruthy();
-    cleanup();
+    expect(screen.queryByText('Manage libraries')).toBeNull();
+    expect(screen.queryByText('Manage presets')).toBeNull();
+  });
+
+  it('handles an empty library list', () => {
+    renderLauncher({
+      config: { ...config, libraries: [], selected_library: '' },
+    });
+
+    expect(screen.getAllByText('No libraries yet')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Continue with/ })).toBeNull();
   });
 });

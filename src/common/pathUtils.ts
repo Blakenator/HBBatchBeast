@@ -54,6 +54,21 @@ export function pathBasename(value: string): string {
   return parts[parts.length - 1] ?? '';
 }
 
+/** Parent path, preserving the separator style and filesystem root. */
+export function pathDirname(value: string): string {
+  const trimmed = value.trim().replace(/[\\/]+$/, '');
+  const separatorIndex = Math.max(
+    trimmed.lastIndexOf('/'),
+    trimmed.lastIndexOf('\\'),
+  );
+  if (separatorIndex < 0) return '';
+  const separator = trimmed[separatorIndex] ?? '/';
+  const parent = trimmed.slice(0, separatorIndex);
+  if (!parent) return separator;
+  if (/^[a-zA-Z]:$/.test(parent)) return `${parent}${separator}`;
+  return parent;
+}
+
 /**
  * Expands a leading `~` using the supplied home directory. The separator style
  * follows `home`, so Windows callers keep backslashes and POSIX callers keep

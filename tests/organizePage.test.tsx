@@ -265,7 +265,10 @@ describe('OrganizePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
     await screen.findByRole('grid', { name: 'Organize review' });
 
-    fireEvent.click(screen.getByRole('button', { name: /Fix match:/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /More actions for/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fix match' }));
     fireEvent.click(await screen.findByText('The Deep'));
     fireEvent.click(screen.getByRole('button', { name: 'Save match' }));
 

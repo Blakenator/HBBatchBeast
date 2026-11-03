@@ -173,8 +173,9 @@ app, even if the config file was corrupted.*
 
 **US-28 — Convert one folder once.** *As a library owner, I want to convert a folder without creating or
 editing a saved library, so that a one-off task stays a one-off.*
-- The home screen offers Quick convert alongside saved libraries.
-- Quick convert asks for source, destination and preset, then uses the normal scan/review/run flow.
+- The Convert picker offers a one-off conversion row alongside saved libraries.
+- A one-off conversion asks for source, destination and preset, then uses the normal scan/review/run
+  flow.
 - It never overwrites the last library; after a successful run the user may save it as a library.
 
 **US-29 — Reuse encoding recipes and map by media.** *As an encoding tinkerer, I want named presets and
@@ -209,7 +210,7 @@ replace-attempt cache, so that I can diagnose and reset state.*
 **US-28 — Rename without converting.** *As a media collector, I want to rename files into a clean library
 layout without re-encoding them, so that files that are already fine are not touched.*
 - Organize is a peer mode to Convert on the same library; there is no separate library kind. Libraries
-  carry their media type, and quick organize runs on an unsaved copy that can be saved afterwards.
+  carry their media type, and one-off organize runs on an unsaved copy that can be saved afterwards.
 - Nothing moves until the review plan is confirmed; the previous plan can be undone.
 - The review list is sortable, its columns can be resized, reordered and hidden (remembered), and the
   changed part of each new name is highlighted against the old one.
@@ -220,8 +221,15 @@ movie each file is, so that names are correct without manual research.*
   match is persisted per folder; each can be changed with a prefilled search (reusing the failed
   auto-match results) or cleared. A folder can be declared a single show instead, and any subset of
   shows can be ticked for a scoped scan so large libraries can be organized incrementally.
-- TV files use the series matched to their show folder, with season/episode tags and title similarity, a
-  visible confidence and reason, and a manual **Fix match** per file that persists.
+- TV files use the series matched to their show folder. Each file resolves two independent signals —
+  the `SxxEyy` tag and the filename's episode title — with an embedded air date as a tiebreaker.
+  Confidence is a transparent weighted mix, conflicts are labeled, and weak conflicts stay in review
+  instead of being guessed. The review table shows a two-faced `strong`/`weak`/`conflict` badge with
+  a hover/focus breakdown, and **Fix match** ranks episode results with the same evidence and previews
+  the resulting filename for the current selection.
+- Specials always use `S00`/`Season 00`; generated names strip filesystem-invalid characters.
+- Each review row has a `…` menu with **Fix match** and **Open folder**.
+- Rows whose rendered file and folder names are already identical are skipped automatically.
 - Movies use Plex's metadata when a Plex database is available, and TVDB search when it is not.
 - Resolution comes from the file itself, never from the metadata provider.
 
@@ -257,7 +265,8 @@ all already converted); destination unwritable → inline error before the run s
 
 ### F2 — Repeat conversion on an existing library *(P1/P2)*
 
-1. Launch → home screen lists the saved libraries; the last-used library is available to reopen.
+1. Launch → home screen with **Convert** and **Organize** doors; the Convert door offers the
+   last-used library to reopen.
 2. Scan → only genuinely new/converted-missing files are queued; the summary proves the filtering worked.
 3. Run → same monitoring as F1.
 4. Optional: replace/delete originals if configured; otherwise nothing destructive happens.
@@ -283,8 +292,8 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 
 1. Settings → Libraries → create "Movies", configure folders and filters.
 2. Duplicate to "TV", change paths, default preset and mapping rules, save.
-3. Open either library from the home screen; the run screen updates immediately and scanning is scoped
-   to that library.
+3. Open either library from the Convert picker; the run screen updates immediately and scanning is
+   scoped to that library.
 
 ### F6 — Reusable presets & mapping rules *(P3)*
 
@@ -315,9 +324,9 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 
 ### F10 — One-off conversion *(P1)*
 
-1. Launch → home screen with Quick convert and saved libraries.
-2. Start a blank quick conversion, or press **Use as quick run** on a library to prefill its folders,
-   preset, mapping rules and scan filters.
+1. Launch → home screen with **Convert** and **Organize** doors.
+2. Choose **Convert → Set up a one-off conversion**, or use a library row’s overflow menu to prefill
+   the one-off with its folders, preset, mapping rules and scan filters.
 3. Adjust folders, preset, mapping rules and filters in the quick setup page, then continue to the
    normal scan/review screen.
 4. Run and review as usual; the saved libraries and last active library are untouched.
@@ -334,9 +343,9 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 
 ### F12 — Organize files into a library *(P1)*
 
-1. Open **Organize** from a library card, or start **Quick organize** from the home screen (blank) or a
-   library card (seeded, never saved until you choose **Save as library**). Saved organizer defaults
-   are restored.
+1. Choose **Organize** and start a saved library, or choose **Set up a one-off organize**; a library
+   row’s overflow menu seeds the one-off with that library’s folders and organizer defaults (never
+   saved until you choose **Save as library**). Saved organizer defaults are restored.
 2. Pick Movies or TV and add source folders. For TV choose **Detect & match shows**; each show folder is
    listed with cover art and a TVDB match (auto from the folder name) that can be changed or cleared.
    For movies choose Plex or TVDB metadata. The Plex database comes from Settings → Global.

@@ -30,9 +30,12 @@ function createPlexFixture(includeEpisodeTwo = true): void {
     );
     CREATE TABLE metadata_items (
       id INTEGER PRIMARY KEY, library_section_id INTEGER, parent_id INTEGER,
-      metadata_type INTEGER, "index" INTEGER, guid TEXT, title TEXT, year INTEGER, added_at TEXT
+      metadata_type INTEGER, "index" INTEGER, guid TEXT, title TEXT, year INTEGER,
+      originally_available_at TEXT, added_at TEXT
     );
-    CREATE TABLE media_items (id INTEGER PRIMARY KEY, metadata_item_id INTEGER, height INTEGER);
+    CREATE TABLE media_items (
+      id INTEGER PRIMARY KEY, metadata_item_id INTEGER, width INTEGER, height INTEGER
+    );
     CREATE TABLE media_parts (
       id INTEGER PRIMARY KEY, media_item_id INTEGER, file TEXT, directory_id INTEGER,
       deleted_at TEXT, updated_at TEXT
@@ -66,13 +69,13 @@ function createPlexFixture(includeEpisodeTwo = true): void {
       (2, 2, NULL, '', NULL, NULL),
       (200, 2, 2, 'Blue Planet II', NULL, NULL);
     INSERT INTO metadata_items VALUES
-      (10, 1, NULL, 1, 1, 'plex://movie/1', 'Speed Racer', 2008, '2021-01-08 20:14:57'),
-      (40, 2, NULL, 2, 1, 'plex://show/1', 'Blue Planet II', 2017, '2021-01-08 20:14:57'),
-      (41, 2, 40, 3, 1, 'plex://season/1', '', 2017, '2021-01-08 20:14:57'),
-      (42, 2, 41, 4, 1, 'plex://episode/1', 'One Ocean', 2017, '2021-01-08 20:14:57'),
-      (43, 2, 41, 4, 2, 'plex://episode/2', 'The Deep', 2017, '2021-01-08 20:14:57');
+      (10, 1, NULL, 1, 1, 'plex://movie/1', 'Speed Racer', 2008, 1210291200, '2021-01-08 20:14:57'),
+      (40, 2, NULL, 2, 1, 'plex://show/1', 'Blue Planet II', 2017, 1509235200, '2021-01-08 20:14:57'),
+      (41, 2, 40, 3, 1, 'plex://season/1', '', 2017, NULL, '2021-01-08 20:14:57'),
+      (42, 2, 41, 4, 1, 'plex://episode/1', 'One Ocean', 2017, 1509235200, '2021-01-08 20:14:57'),
+      (43, 2, 41, 4, 2, 'plex://episode/2', 'The Deep', 2017, 1509840000, '2021-01-08 20:14:57');
     INSERT INTO media_items VALUES
-      (20, 10, 1080), (50, 42, 2160), (52, 43, 2160);
+      (20, 10, 1920, 1080), (50, 42, 3840, 2160), (52, 43, 3840, 2160);
     INSERT INTO media_parts VALUES
       (30, 20, '${movieSource()}', 100, NULL, NULL),
       (51, 50, '${path.join(root, 'plex', 'TV Shows', 'Blue Planet II', 'E01.mkv')}', 200, NULL, NULL),
@@ -154,6 +157,9 @@ describe('Plex catalog', () => {
     expect(catalog.movies[0]).toMatchObject({
       title: 'Speed Racer',
       year: 2008,
+      width: 1920,
+      height: 1080,
+      airDate: '2008-05-09',
       watchCount: 1,
       directoryId: 100,
     });
@@ -162,6 +168,9 @@ describe('Plex catalog', () => {
       showTitle: 'Blue Planet II',
       seasonNumber: 1,
       episodeNumber: 1,
+      width: 3840,
+      height: 2160,
+      airDate: '2017-10-29',
       watchCount: 2,
     });
     expect(catalog.directories.some((entry) => entry.path === 'Speed Racer')).toBe(true);
@@ -360,8 +369,8 @@ describe('Plex writer', () => {
     const db = new DatabaseSync(dbPath);
     db.exec(`
       INSERT INTO metadata_items VALUES
-        (44, 2, 41, 4, 2, 'plex://episode/3', 'The Deep', 2017, '2021-01-08 20:14:57');
-      INSERT INTO media_items VALUES (54, 44, 2160);
+        (44, 2, 41, 4, 2, 'plex://episode/3', 'The Deep', 2017, NULL, '2021-01-08 20:14:57');
+      INSERT INTO media_items VALUES (54, 44, 3840, 2160);
       INSERT INTO media_parts VALUES (55, 54, '${target}', 200, NULL, NULL);
     `);
     db.close();

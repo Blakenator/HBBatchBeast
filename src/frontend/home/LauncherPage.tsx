@@ -1,213 +1,194 @@
 import React from 'react';
 import styled from 'styled-components';
-import { Alert } from 'react-bootstrap';
-import { AppConfigV2, Library } from '../../common';
+import { useIntl } from 'react-intl';
+import { AppConfigV2 } from '../../common';
 import { Button } from '../ui/Button';
-import { Panel, PanelGrid } from '../ui/Panel';
+import { Icon } from '../ui/Icon';
+import { homeMessages } from './messages';
+import type { HomeMode } from './types';
 
-const Grid = styled.div`
+const Wrap = styled.div`
   display: grid;
-  gap: var(--hb-space-md);
-  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: var(--hb-space-xl);
 `;
 
-const Card = styled.div`
-  display: grid;
-  gap: var(--hb-space-xs);
-  padding: var(--hb-space-md);
-  border: 1px solid var(--hb-border);
-  border-radius: var(--hb-radius-md);
-  background: var(--hb-surface);
-`;
-
-const CardHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: var(--hb-space-xs);
-  min-width: 0;
-`;
-
-const CardTitle = styled.span`
+const Question = styled.h2`
+  margin: 0;
+  font-size: var(--hb-font-lg);
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 `;
 
-const TypeChip = styled.span`
-  flex: 0 0 auto;
-  padding: 0 var(--hb-space-xs);
+const Doors = styled.div`
+  display: grid;
+  gap: var(--hb-space-lg);
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+`;
+
+const DoorCard = styled.section`
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--hb-surface);
   border: 1px solid var(--hb-border);
-  border-radius: 999px;
-  color: var(--hb-textMuted);
-  font-size: var(--hb-font-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  border-radius: var(--hb-radius-lg);
+  overflow: hidden;
 `;
 
-const Muted = styled.span`
-  color: var(--hb-textMuted);
-  font-size: var(--hb-font-xs);
-`;
-
-const CardActions = styled.div`
+const DoorButton = styled.button`
   display: flex;
-  gap: var(--hb-space-xs);
-  flex-wrap: wrap;
-  margin-top: var(--hb-space-xs);
-`;
-
-const QuickActions = styled.div`
-  display: flex;
-  gap: var(--hb-space-xs);
-  align-items: center;
-  flex-wrap: wrap;
-  padding-top: var(--hb-space-xs);
-  border-top: 1px dashed var(--hb-border);
-`;
-
-const Actions = styled.div`
-  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: var(--hb-space-sm);
-  flex-wrap: wrap;
-  margin-top: var(--hb-space-sm);
+  min-height: 200px;
+  padding: var(--hb-space-xl);
+  border: 0;
+  background: transparent;
+  color: var(--hb-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+
+  &:hover {
+    background: var(--hb-surfaceMuted);
+  }
+`;
+
+const DoorTop = styled.span`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-sm);
+`;
+
+const DoorIcon = styled.span`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--hb-radius-md);
+  background: var(--hb-surfaceMuted);
+  color: var(--hb-accent);
+  font-size: 1.25rem;
+`;
+
+const DoorTitle = styled.span`
+  font-size: var(--hb-font-lg);
+  font-weight: 600;
+`;
+
+const DoorBody = styled.span`
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-sm);
+  line-height: 1.45;
+`;
+
+const DoorMeta = styled.span`
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-xs);
+`;
+
+const DoorArrow = styled.span`
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: var(--hb-space-sm);
+  color: var(--hb-accent);
+`;
+
+const DoorFooter = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--hb-space-sm) var(--hb-space-md);
+  border-top: 1px solid var(--hb-border);
 `;
 
 interface LauncherPageProps {
   config: AppConfigV2;
-  onOpenLibrary: (libraryId: string) => void;
-  onQuickConvert: () => void;
-  onQuickFromLibrary: (library: Library) => void;
-  onQuickOrganize: () => void;
-  onQuickOrganizeFromLibrary: (library: Library) => void;
-  onOrganizeLibrary: (libraryId: string) => void;
-  onOpenSettings: () => void;
+  /** Session memory for the “Continue with …” shortcut, per door. */
+  lastLibraryByMode: Partial<Record<HomeMode, string>>;
+  onChooseMode: (mode: HomeMode) => void;
+  onContinue: (mode: HomeMode, libraryId: string) => void;
 }
 
 export const LauncherPage: React.FC<LauncherPageProps> = ({
   config,
-  onOpenLibrary,
-  onQuickConvert,
-  onQuickFromLibrary,
-  onQuickOrganize,
-  onQuickOrganizeFromLibrary,
-  onOrganizeLibrary,
-  onOpenSettings,
+  lastLibraryByMode,
+  onChooseMode,
+  onContinue,
 }) => {
+  const { formatMessage } = useIntl();
+  const doors: Array<{
+    mode: HomeMode;
+    icon: 'quick' | 'libraries';
+    title: string;
+    body: string;
+  }> = [
+    {
+      mode: 'convert',
+      icon: 'quick',
+      title: formatMessage(homeMessages.convertTitle),
+      body: formatMessage(homeMessages.convertBody),
+    },
+    {
+      mode: 'organize',
+      icon: 'libraries',
+      title: formatMessage(homeMessages.organizeTitle),
+      body: formatMessage(homeMessages.organizeBody),
+    },
+  ];
+  const libraryCount = formatMessage(homeMessages.libraryCount, {
+    count: config.libraries.length,
+  });
+
   return (
-    <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
-      <PanelGrid>
-        <Panel title="Convert" icon="quick">
-          <p style={{ margin: 0, color: 'var(--hb-textMuted)' }}>
-            Re-encode files with HandBrake or FFmpeg. A quick conversion uses a
-            throwaway copy, so your saved libraries stay untouched.
-          </p>
-          {config.presets.length === 0 ? (
-            <Alert variant="warning" className="mt-3 mb-0">
-              Create a conversion preset before converting.
-            </Alert>
-          ) : (
-            <Actions>
-              <Button variant="success" icon="quick" onClick={onQuickConvert}>
-                Start a quick conversion
-              </Button>
-              <Button variant="ghost" icon="presets" onClick={onOpenSettings}>
-                Manage presets
-              </Button>
-            </Actions>
-          )}
-        </Panel>
-
-        <Panel title="Organize" icon="libraries">
-          <p style={{ margin: 0, color: 'var(--hb-textMuted)' }}>
-            Match existing files to Plex or TVDB metadata and rename them into
-            show, season and movie folders. No conversion is required.
-          </p>
-          <Actions>
-            <Button variant="secondary" icon="libraries" onClick={onQuickOrganize}>
-              Start quick organize
-            </Button>
-          </Actions>
-        </Panel>
-      </PanelGrid>
-
-      <Panel title="Libraries" icon="libraries">
-        {config.libraries.length === 0 ? (
-          <Muted>No libraries yet.</Muted>
-        ) : (
-          <Grid>
-            {config.libraries.map((library) => {
-              const preset = config.presets.find(
-                (item) => item.id === library.defaultPresetId,
-              );
-              const organizedShows = library.organize?.tvdb?.shows?.length ?? 0;
-              const isTv = library.mediaType === 'tv';
-              return (
-                <Card key={library.id}>
-                  <CardHeader>
-                    <CardTitle>{library.name || 'Untitled library'}</CardTitle>
-                    <TypeChip>{isTv ? 'TV' : 'Movies'}</TypeChip>
-                  </CardHeader>
-                  <Muted>
-                    {library.folders.length} folder
-                    {library.folders.length === 1 ? '' : 's'} ·{' '}
-                    {preset?.name ?? 'no default preset'}
-                  </Muted>
-                  <Muted>
-                    {library.mappingRules.length} mapping rule
-                    {library.mappingRules.length === 1 ? '' : 's'}
-                    {isTv
-                      ? ` · ${organizedShows} show${organizedShows === 1 ? '' : 's'} matched`
-                      : ''}
-                  </Muted>
-                  <CardActions>
-                    <Button
-                      compact
-                      variant="success"
-                      icon="arrowRight"
-                      onClick={() => onOpenLibrary(library.id)}
-                    >
-                      Convert
-                    </Button>
-                    <Button
-                      compact
-                      variant="secondary"
-                      icon="libraries"
-                      onClick={() => onOrganizeLibrary(library.id)}
-                    >
-                      Organize
-                    </Button>
-                  </CardActions>
-                  <QuickActions>
-                    <Muted>One-off:</Muted>
-                    <Button
-                      compact
-                      variant="ghost"
-                      icon="quick"
-                      onClick={() => onQuickFromLibrary(library)}
-                    >
-                      Quick convert
-                    </Button>
-                    <Button
-                      compact
-                      variant="ghost"
-                      icon="libraries"
-                      onClick={() => onQuickOrganizeFromLibrary(library)}
-                    >
-                      Quick organize
-                    </Button>
-                  </QuickActions>
-                </Card>
-              );
-            })}
-          </Grid>
-        )}
-        <Actions>
-          <Button variant="secondary" icon="libraries" onClick={onOpenSettings}>
-            Manage libraries
-          </Button>
-        </Actions>
-      </Panel>
-    </div>
+    <Wrap>
+      <Question>{formatMessage(homeMessages.homeQuestion)}</Question>
+      <Doors>
+        {doors.map((door) => {
+          const library = config.libraries.find(
+            (candidate) => candidate.id === lastLibraryByMode[door.mode],
+          );
+          const descriptionId = `home-door-${door.mode}`;
+          return (
+            <DoorCard key={door.mode}>
+              <DoorButton
+                type="button"
+                aria-label={door.title}
+                aria-describedby={descriptionId}
+                onClick={() => onChooseMode(door.mode)}
+              >
+                <DoorTop>
+                  <DoorIcon>
+                    <Icon name={door.icon} size="md" />
+                  </DoorIcon>
+                  <DoorTitle>{door.title}</DoorTitle>
+                </DoorTop>
+                <DoorBody id={descriptionId}>{door.body}</DoorBody>
+                <DoorMeta>{libraryCount}</DoorMeta>
+                <DoorArrow>
+                  <Icon name="arrowRight" size="sm" />
+                </DoorArrow>
+              </DoorButton>
+              {library && (
+                <DoorFooter>
+                  <Button
+                    compact
+                    variant="ghost"
+                    icon="arrowRight"
+                    iconPosition="end"
+                    onClick={() => onContinue(door.mode, library.id)}
+                  >
+                    {formatMessage(homeMessages.continueWith, {
+                      name: library.name || formatMessage(homeMessages.untitledLibrary),
+                    })}
+                  </Button>
+                </DoorFooter>
+              )}
+            </DoorCard>
+          );
+        })}
+      </Doors>
+    </Wrap>
   );
 };

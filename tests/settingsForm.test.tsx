@@ -62,12 +62,16 @@ describe('SettingsForm', () => {
       </IntlProvider>,
     );
 
-    fireEvent.click(screen.getByText('Libraries'));
-    expect(screen.getAllByDisplayValue('Movies').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('tab', { name: /Libraries/ }));
+    expect(screen.getByLabelText('Library name')).toBeTruthy();
+    expect(
+      (screen.getByRole('combobox', { name: 'Library' }) as HTMLInputElement)
+        .value,
+    ).toBe('Movies');
     expect(screen.getByText('Default mapping rules')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
 
-    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByRole('tab', { name: /Presets/ }));
     expect(screen.getAllByDisplayValue('Fast 1080p30').length).toBeGreaterThan(0);
     expect(
       screen.getByRole('button', { name: 'Add FFmpeg preset' }),
@@ -85,7 +89,7 @@ describe('SettingsForm mapping rules', () => {
       </IntlProvider>,
     );
 
-    fireEvent.click(screen.getByText('Libraries'));
+    fireEvent.click(screen.getByRole('tab', { name: /Libraries/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Add stage' })[0]);
     expect(screen.getByRole('region', { name: 'Add stage' })).toBeTruthy();
@@ -98,7 +102,7 @@ describe('SettingsForm mapping rules', () => {
 });
 
 describe('SettingsForm tabs', () => {
-  it('separates global, conversion and organizer settings', () => {
+  it('merges conversion and organizer settings under Libraries', () => {
     render(
       <IntlProvider locale="en" messages={getDefaultMessages()} defaultLocale="en">
         <SettingsForm config={config} />
@@ -108,14 +112,24 @@ describe('SettingsForm tabs', () => {
     expect(screen.getByText('Plex integration')).toBeTruthy();
     expect(screen.queryByText('Default mapping rules')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: /Organizer/ }));
-    expect(screen.getByText('Naming rules')).toBeTruthy();
-    expect(screen.getByText('Safety')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
-
     fireEvent.click(screen.getByRole('tab', { name: /Libraries/ }));
+    expect(
+      screen.getByRole('radiogroup', { name: 'Library section' }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Library name')).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Library type' })).toBeTruthy();
     expect(screen.getByText('Default mapping rules')).toBeTruthy();
     expect(screen.queryByText('Safety')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Organizer' }));
+    expect(screen.getByText('Naming rules')).toBeTruthy();
+    expect(screen.getByText('Safety')).toBeTruthy();
+    expect(screen.queryByText('Default mapping rules')).toBeNull();
+    // Identity stays visible while editing organizer defaults.
+    expect(screen.getByLabelText('Library name')).toBeTruthy();
+    expect(
+      screen.getByRole('radiogroup', { name: 'Library type' }),
+    ).toBeTruthy();
 
     cleanup();
   });

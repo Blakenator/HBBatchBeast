@@ -18,7 +18,7 @@ describe('template tokens', () => {
     expect(segments[2]).toEqual({
       kind: 'token',
       name: 'season',
-      padding: '02',
+      format: '02',
     });
     expect(serializeTemplateSegments(segments)).toBe(template);
   });
@@ -46,13 +46,55 @@ describe('template tokens', () => {
     expect(renderTemplateExample('{sh', 'tv').text).toBe('{sh');
   });
 
+  it('renders named format variants for air dates', () => {
+    expect(
+      renderTemplateExample(
+        '{airDate}|{airDate:short}|{airDate:year}|{airDate:month}|{airDate:day}|{airDate:compact}|{airDate:dot}',
+        'tv',
+      ).text,
+    ).toBe('2017-10-29|2017-10|2017|10|29|20171029|2017.10.29');
+    expect(
+      renderTemplateExample('{width}x{height}', 'movies').text,
+    ).toBe('1920x1080');
+  });
+
+  it('reports unknown format variants', () => {
+    const example = renderTemplateExample('{airDate:bogus}', 'tv');
+    expect(example.text).toBe('{airDate:bogus}');
+    expect(example.unknownTokens).toEqual(['airDate:bogus']);
+  });
+
+  it('lists padded and unpadded number variants', () => {
+    const seasons = templateTokenCatalog('tv').filter(
+      (token) => token.name === 'season',
+    );
+    expect(seasons.map((token) => token.format)).toEqual([undefined, '02']);
+    expect(
+      templateTokenCatalog('tv').filter((token) => token.name === 'episodeEnd'),
+    ).toHaveLength(2);
+  });
+
+  it('has example data for every catalog entry', () => {
+    for (const mediaType of ['tv', 'movies'] as const) {
+      for (const token of templateTokenCatalog(mediaType)) {
+        const snippet = formatTokenSnippet(token.name, token.format);
+        expect(renderTemplateExample(snippet, mediaType).unknownTokens).toEqual(
+          [],
+        );
+      }
+    }
+  });
+
   it('offers only the tokens for the media type', () => {
     const tv = templateTokenCatalog('tv').map((token) => token.name);
     const movies = templateTokenCatalog('movies').map((token) => token.name);
     expect(tv).toContain('show');
     expect(tv).toContain('tag');
+    expect(tv).toContain('airDate');
     expect(tv).not.toContain('imdbId');
     expect(movies).toContain('imdbId');
+    expect(movies).toContain('width');
+    expect(movies).toContain('height');
     expect(movies).not.toContain('show');
     expect(tv).toContain('ext');
   });

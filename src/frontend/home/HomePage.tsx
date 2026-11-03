@@ -18,11 +18,20 @@ import { AppShell } from '../ui/AppShell';
 import { AppStatus } from '../ui/StatusPill';
 import { RunScreen } from '../run/RunScreen';
 import { LauncherPage } from './LauncherPage';
+import { LibraryPickerPage } from './LibraryPickerPage';
 import { OrganizePage } from '../organize/OrganizePage';
 import { QuickConvertPage } from './QuickConvertPage';
 import { homeMessages } from './messages';
+import type { HomeMode } from './types';
 
-type View = 'home' | 'quick' | 'run' | 'settings' | 'organize';
+type View =
+  | 'home'
+  | 'convert-picker'
+  | 'organize-picker'
+  | 'quick'
+  | 'run'
+  | 'settings'
+  | 'organize';
 
 export const HomePage: React.FC = () => {
   const { formatMessage } = useIntl();
@@ -33,6 +42,9 @@ export const HomePage: React.FC = () => {
   const globalConfig = useGlobalConfig();
   const [status, setStatus] = useState<AppStatus>('idle');
   const [view, setView] = useState<View>('home');
+  const [lastLibraryByMode, setLastLibraryByMode] = useState<
+    Partial<Record<HomeMode, string>>
+  >({});
   const [settingsReturn, setSettingsReturn] = useState<Exclude<View, 'settings'>>(
     'home',
   );
@@ -115,6 +127,7 @@ export const HomePage: React.FC = () => {
     setQuickLibrary(null);
     setQuickOrganizeLibrary(null);
     setActiveLibraryId(libraryId);
+    setLastLibraryByMode((current) => ({ ...current, convert: libraryId }));
     if (globalConfig.selected_library !== libraryId) {
       persist({ ...globalConfig, selected_library: libraryId });
     }
@@ -127,6 +140,7 @@ export const HomePage: React.FC = () => {
     setQuickOrganizeLibrary(null);
     setOrganizeLibraryId(libraryId);
     setActiveLibraryId(libraryId);
+    setLastLibraryByMode((current) => ({ ...current, organize: libraryId }));
     setView('organize');
   };
 
@@ -144,16 +158,22 @@ export const HomePage: React.FC = () => {
     setView('quick');
   };
 
-  /** Quick organize: an unsaved copy of a library, or a blank TV session. */
+  /** One-off organize: an unsaved copy of a library, or a blank TV session. */
   const startQuickOrganize = (source?: Library) => {
     setQuickLibrary(null);
     setQuickOrganizeLibrary(createQuickOrganizeLibrary({ source }));
     setView('organize');
   };
 
+  const chooseMode = (mode: HomeMode) => {
+    setQuickLibrary(null);
+    setQuickOrganizeLibrary(null);
+    setView(mode === 'convert' ? 'convert-picker' : 'organize-picker');
+  };
+
   const cancelQuickConvert = () => {
     setQuickLibrary(null);
-    setView('home');
+    setView('convert-picker');
   };
 
   const continueQuickConvert = (next: Library) => {
@@ -170,7 +190,7 @@ export const HomePage: React.FC = () => {
   const saveQuickLibrary = (next: Library) => {
     const saved = {
       ...next,
-      name: next.name.trim() || 'Quick conversion',
+      name: next.name.trim() || 'One-off conversion',
     };
     persist({
       ...globalConfig,
@@ -179,6 +199,7 @@ export const HomePage: React.FC = () => {
     });
     setQuickLibrary(null);
     setActiveLibraryId(saved.id);
+    setLastLibraryByMode((current) => ({ ...current, convert: saved.id }));
   };
 
   const updateOrganizeLibrary = (next: Library) => {
@@ -198,7 +219,7 @@ export const HomePage: React.FC = () => {
     const saved: Library = {
       ...next,
       name:
-        next.name === 'Quick organize' ? 'Organized library' : next.name,
+        next.name === 'One-off organize' ? 'Organized library' : next.name,
     };
     persist({
       ...globalConfig,
@@ -208,6 +229,7 @@ export const HomePage: React.FC = () => {
     setQuickOrganizeLibrary(null);
     setOrganizeLibraryId(saved.id);
     setActiveLibraryId(saved.id);
+    setLastLibraryByMode((current) => ({ ...current, organize: saved.id }));
     toast.success('Saved the organizer session as a library.');
     return Promise.resolve(saved);
   };
@@ -217,20 +239,34 @@ export const HomePage: React.FC = () => {
       setView(settingsReturn);
       return;
     }
+    if (view === 'convert-picker' || view === 'organize-picker') {
+      setView('home');
+      return;
+    }
     if (view === 'quick') {
       setQuickLibrary(null);
-      setView('home');
+      setView('convert-picker');
       return;
     }
     if (view === 'organize') {
       setQuickOrganizeLibrary(null);
-      setView('home');
+      setView('organize-picker');
       return;
     }
-    if (view === 'run' && canGoHome) setView('home');
+    if (view === 'run' && canGoHome) {
+      setQuickLibrary(null);
+      setView('convert-picker');
+    }
   };
 
-  const backLabel = view === 'settings' ? 'Back' : 'Home';
+  const backLabel =
+    view === 'settings'
+      ? formatMessage(homeMessages.back)
+      : view === 'convert-picker' || view === 'organize-picker'
+        ? formatMessage(homeMessages.home)
+        : view === 'organize'
+          ? formatMessage(homeMessages.organizeTitle)
+          : formatMessage(homeMessages.convertTitle);
   const organizeLibrary =
     quickOrganizeLibrary ??
     globalConfig.libraries.find(
@@ -242,16 +278,22 @@ export const HomePage: React.FC = () => {
     globalConfig.libraries[0];
   const pageName =
     view === 'settings'
-      ? 'Settings'
-      : view === 'quick'
-        ? 'Quick conversion'
-        : view === 'organize'
-          ? organizeLibrary?.name
-          : view === 'run'
-            ? library?.name
-            : undefined;
+      ? formatMessage(homeMessages.settings)
+      : view === 'convert-picker'
+        ? formatMessage(homeMessages.convertTitle)
+        : view === 'organize-picker'
+          ? formatMessage(homeMessages.organizeTitle)
+          : view === 'quick'
+            ? formatMessage(homeMessages.oneOffPage)
+            : view === 'organize'
+              ? organizeLibrary?.name
+              : view === 'run'
+                ? library?.name
+                : undefined;
   const showBack =
     view === 'settings' ||
+    view === 'convert-picker' ||
+    view === 'organize-picker' ||
     view === 'quick' ||
     view === 'organize' ||
     (view === 'run' && canGoHome);
@@ -318,15 +360,44 @@ export const HomePage: React.FC = () => {
             onStatusChange={setStatus}
             onOpenSettings={openSettings}
           />
-        ) : (
+        ) : view === 'home' ? (
           <LauncherPage
             config={globalConfig}
-            onOpenLibrary={openLibrary}
-            onQuickConvert={startQuickConvert}
+            lastLibraryByMode={{
+              convert:
+                lastLibraryByMode.convert ?? globalConfig.selected_library,
+              organize:
+                lastLibraryByMode.organize ?? globalConfig.selected_library,
+            }}
+            onChooseMode={chooseMode}
+            onContinue={(mode, libraryId) =>
+              mode === 'convert'
+                ? openLibrary(libraryId)
+                : openOrganize(libraryId)
+            }
+          />
+        ) : view === 'organize-picker' ? (
+          <LibraryPickerPage
+            mode="organize"
+            config={globalConfig}
+            selectedLibraryId={
+              lastLibraryByMode.organize ?? globalConfig.selected_library
+            }
+            onStartLibrary={openOrganize}
+            onQuickStart={() => startQuickOrganize()}
+            onQuickFromLibrary={(source) => startQuickOrganize(source)}
+            onOpenSettings={openSettings}
+          />
+        ) : (
+          <LibraryPickerPage
+            mode="convert"
+            config={globalConfig}
+            selectedLibraryId={
+              lastLibraryByMode.convert ?? globalConfig.selected_library
+            }
+            onStartLibrary={openLibrary}
+            onQuickStart={startQuickConvert}
             onQuickFromLibrary={startQuickFromLibrary}
-            onQuickOrganize={() => startQuickOrganize()}
-            onQuickOrganizeFromLibrary={(source) => startQuickOrganize(source)}
-            onOrganizeLibrary={openOrganize}
             onOpenSettings={openSettings}
           />
         )}

@@ -62,3 +62,7 @@ requirement, not a preference.
 
 Run the smallest relevant test first, then `pnpm typecheck`, `pnpm lint`, and `pnpm test` before
 finishing.
+
+Changes that touch `src/**`, `forge.config.ts`, the `vite.*.config.mts` files, `packaging/**` or
+`index.html` need a changeset. Run `pnpm changeset`, commit the generated `.changeset/*.md`, and let
+the husky pre-commit hook flatten it into `package.json` and `CHANGELOG.md`.

@@ -1,0 +1,1 @@
+node scripts/changesets-precommit.mjs

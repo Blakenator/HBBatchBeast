@@ -10,13 +10,9 @@ import {
   tokenQueryAt,
   type MediaType,
   type TemplateSegment,
+  type TemplateTokenInfo,
 } from '../../common';
 import { TokenBox, TokenChip } from './Tokens';
-
-const DEFAULT_PADDING: Record<string, string> = {
-  season: '02',
-  episode: '02',
-};
 
 const Wrap = styled.div`
   position: relative;
@@ -123,6 +119,26 @@ const ErrorText = styled.span`
   color: var(--hb-danger);
 `;
 
+const InsertButton = styled.button`
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 0;
+  border-radius: var(--hb-radius-sm);
+  background: transparent;
+  color: var(--hb-textMuted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--hb-font-sm);
+  line-height: 1;
+  padding: 3px 6px;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--hb-surfaceMuted);
+    color: var(--hb-accent);
+  }
+`;
+
 interface TemplateFieldProps {
   id: string;
   label: string;
@@ -166,8 +182,13 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
   const listId = useId();
   const exampleId = `${id}-example`;
   const inputs = useRef<Array<HTMLInputElement | null>>([]);
+  const caret = useRef<{ index: number; position: number }>({
+    index: 0,
+    position: Number.MAX_SAFE_INTEGER,
+  });
   const [open, setOpen] = useState<
-    { index: number; start: number; query: string } | undefined
+    | { index: number; start: number; removeLength: number; query: string }
+    | undefined
   >();
   const [active, setActive] = useState(0);
   const [focus, setFocus] = useState<'trailing' | number | undefined>();
@@ -189,13 +210,17 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
   const catalog = useMemo(() => templateTokenCatalog(mediaType), [mediaType]);
   const options = useMemo(() => {
     if (!open) return [];
-    const query = open.query.toLowerCase();
-    if (!query) return catalog;
-    return catalog.filter(
-      (token) =>
-        token.name.toLowerCase().includes(query) ||
-        token.label.toLowerCase().includes(query),
-    );
+    const [nameQuery, formatQuery] = open.query.toLowerCase().split(':');
+    return catalog.filter((token) => {
+      const matchesName =
+        token.name.toLowerCase().includes(nameQuery) ||
+        token.label.toLowerCase().includes(nameQuery);
+      if (!matchesName) return false;
+      return (
+        formatQuery === undefined ||
+        (token.format ?? '').toLowerCase().startsWith(formatQuery)
+      );
+    });
   }, [catalog, open]);
 
   useEffect(() => {
@@ -223,19 +248,24 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
     commit(next);
     const query = tokenQueryAt(text, caret);
     if (query) {
-      setOpen({ index, start: query.start, query: query.query });
+      setOpen({
+        index,
+        start: query.start,
+        removeLength: 1 + query.query.length,
+        query: query.query,
+      });
       setActive(0);
       return;
     }
     setOpen(undefined);
   };
 
-  const choose = (name: string) => {
+  const choose = (option: TemplateTokenInfo) => {
     if (!open) return;
     const segment = renderSegments[open.index];
     if (!segment || segment.kind !== 'text') return;
     const before = segment.text.slice(0, open.start);
-    const after = segment.text.slice(open.start + 1 + open.query.length);
+    const after = segment.text.slice(open.start + open.removeLength);
     const next: TemplateSegment[] = renderSegments.map((candidate, position) =>
       position === open.index
         ? { kind: 'text' as const, text: before }
@@ -246,8 +276,8 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
       0,
       {
         kind: 'token',
-        name,
-        ...(DEFAULT_PADDING[name] ? { padding: DEFAULT_PADDING[name] } : {}),
+        name: option.name,
+        ...(option.format ? { format: option.format } : {}),
       },
       ...(after ? [{ kind: 'text' as const, text: after }] : []),
       { kind: 'text' as const, text: '' },
@@ -255,6 +285,25 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
     commit(next);
     setOpen(undefined);
     setFocus('trailing');
+  };
+
+  const openPicker = () => {
+    if (open) {
+      setOpen(undefined);
+      return;
+    }
+    const trailingIndex = renderSegments.length - 1;
+    const focused = renderSegments[caret.current.index];
+    const index = focused?.kind === 'text' ? caret.current.index : trailingIndex;
+    const segment = renderSegments[index];
+    if (!segment || segment.kind !== 'text') return;
+    setOpen({
+      index,
+      start: Math.min(caret.current.position, segment.text.length),
+      removeLength: 0,
+      query: '',
+    });
+    setActive(0);
   };
 
   const removeToken = (index: number) => {
@@ -286,7 +335,7 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
       if (event.key === 'Enter') {
         event.preventDefault();
         const option = options[active];
-        if (option) choose(option.name);
+        if (option) choose(option);
         return;
       }
       if (event.key === 'Escape') {
@@ -298,10 +347,11 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
     const segment = renderSegments[index];
     if (
       event.key === 'Backspace' &&
+      event.currentTarget instanceof HTMLInputElement &&
       index > 0 &&
       segment?.kind === 'text' &&
       segment.text === '' &&
-      ((event.currentTarget as HTMLInputElement).selectionStart ?? 0) === 0
+      (event.currentTarget.selectionStart ?? 0) === 0
     ) {
       event.preventDefault();
       const previous = renderSegments[index - 1];
@@ -357,19 +407,38 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
               aria-controls={open ? listId : undefined}
               value={segment.text}
               placeholder={renderSegments.length === 1 ? placeholder : undefined}
-              onChange={(event) =>
+              onChange={(event) => {
+                caret.current = {
+                  index,
+                  position:
+                    event.target.selectionStart ?? event.target.value.length,
+                };
                 updateText(
                   index,
                   event.target.value,
                   event.target.selectionStart ?? event.target.value.length,
-                )
-              }
+                );
+              }}
+              onSelect={(event) => {
+                caret.current = {
+                  index,
+                  position: event.currentTarget.selectionStart ?? 0,
+                };
+              }}
+              onFocus={(event) => {
+                caret.current = {
+                  index,
+                  position: event.currentTarget.selectionStart ?? 0,
+                };
+              }}
               onKeyDown={(event) => handleKeyDown(index, event)}
               onBlur={() => setOpen(undefined)}
             />
           ) : (
-            <EditorChip key={`token-${index}-${segment.name}`}>
-              <code>{formatTokenSnippet(segment.name, segment.padding)}</code>
+            <EditorChip
+              key={`token-${index}-${segment.name}-${segment.format ?? ''}`}
+            >
+              <code>{formatTokenSnippet(segment.name, segment.format)}</code>
               <ChipRemove
                 type="button"
                 aria-label={`Remove ${segment.name}`}
@@ -383,6 +452,20 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
             </EditorChip>
           ),
         )}
+        <InsertButton
+          type="button"
+          aria-label="Insert variable"
+          title="Insert variable"
+          aria-expanded={Boolean(open)}
+          aria-controls={open ? listId : undefined}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={openPicker}
+          onKeyDown={(event) =>
+            handleKeyDown(Math.min(open?.index ?? 0, renderSegments.length - 1), event)
+          }
+        >
+          {'{}'}
+        </InsertButton>
       </EditorBox>
 
       {open && (
@@ -395,21 +478,16 @@ export const TemplateField: React.FC<TemplateFieldProps> = ({
           ) : (
             options.map((option, index) => (
               <Option
-                key={option.name}
+                key={`${option.name}:${option.format ?? ''}`}
                 role="option"
                 aria-selected={index === active}
                 $active={index === active}
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  choose(option.name);
+                  choose(option);
                 }}
               >
-                <code>
-                  {formatTokenSnippet(
-                    option.name,
-                    DEFAULT_PADDING[option.name],
-                  )}
-                </code>
+                <code>{formatTokenSnippet(option.name, option.format)}</code>
                 <span>{option.label}</span>
                 <OptionDetail>{option.description}</OptionDetail>
                 <OptionDetail>Example: {option.example}</OptionDetail>

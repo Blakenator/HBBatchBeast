@@ -8,7 +8,7 @@ stories — not against the legacy UI.
 
 | # | Principle | Consequence for the build |
 | --- | --- | --- |
-| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | Home is a launcher (Quick convert + libraries), then one library run screen. Settings is a persistent page with Global, Libraries and Presets tabs, reached from the header; it does not compete with the run. |
+| **D1** | **The run is the product.** Everything the user does converges on configuring, previewing and watching one run. | Home asks Convert or Organize, then opens a focused library picker with one-off alongside saved libraries. Settings is a persistent page with Global, Libraries and Presets tabs, reached from the header; it does not compete with the run. |
 | **D2** | **Preview before commit.** Nothing is converted until the user has seen what would happen. | Scan-only is the default first action; the run button lives in the review state, not the settings form. |
 | **D3** | **Safe by default, explicit by exception.** Destructive actions are off, isolated and explained. | Delete/replace live in their own section, visually marked, with one plain-language sentence each and a run-level confirmation. |
 | **D4** | **Progress is always visible and honest.** Long runs must never look stalled or finished-early. | Persistent run bar with counts, elapsed, per-worker state; cancellation and worker death are surfaced, not silent. |
@@ -21,10 +21,12 @@ stories — not against the legacy UI.
 
 ```
 App shell
-├── Header: app name · active library · status pill (idle/scanning/running/paused/error) · Home · Settings
+├── Header: app name · page name · status pill (idle/scanning/running/paused/error) · Back · Settings
 ├── Home / launcher  (default route)
-│   ├── Quick convert: opens a temporary setup page (folders · preset · rules · filters)
-│   └── Libraries: cards with folder count, default preset, mapping-rule count, Open and Use as quick run
+│   ├── Convert door → library picker: saved libraries with readiness and one Start per row,
+│   │   plus one one-off conversion row; a row’s overflow menu seeds a one-off from that library
+│   └── Organize door → library picker: saved libraries with readiness and one Start per row,
+│       plus one one-off organize row; a row’s overflow menu seeds a one-off from that library
 ├── Library run screen
 │   ├── Setup summary cards: Folders · Encoding/default preset/rules · Filters · File handling
 │   ├── Validation banner (only when blocking issues exist)
@@ -40,13 +42,16 @@ App shell
 │   └── Continue to scan → normal review/run screen; Save as library available
 ├── Settings page
 │   ├── Global tab    — language, worker count, verbose worker logs, log files and locations
-│   ├── Libraries tab — library selector and per-library conversion settings
-│   │   ├── Folders       — source/destination/temp rows, suffix, temp staging
-│   │   ├── Encoding      — HandBrake/FFmpeg, container
-│   │   ├── Mapping rules — ordered first-match rules (folder/path, media, filename, size, type)
-│   │   │                   with a locked Default preset row at the bottom
-│   │   ├── Scan filters  — step-by-step AND/OR rule stack, chip summary, ffprobe pickers
-│   │   └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
+│   ├── Libraries tab — shared header: library picker, name, Movies/TV type, summary and
+│   │   │                create/duplicate/delete (delete confirms; the last library is protected)
+│   │   ├── Encoding sub-tab
+│   │   │   ├── Folders       — source/destination/temp rows, suffix, temp staging
+│   │   │   ├── Encoding      — HandBrake/FFmpeg, container
+│   │   │   ├── Mapping rules — ordered first-match rules (folder/path, media, filename, size, type)
+│   │   │   │                   with a locked Default preset row at the bottom
+│   │   │   ├── Scan filters  — step-by-step AND/OR rule stack, chip summary, ffprobe pickers
+│   │   │   └── File handling — delete source, replace original (always/if smaller), apostrophes, queue order
+│   │   └── Organizer sub-tab — metadata source, naming rules, confidence, sidecars, collisions, cleanup
 │   └── Presets tab   — reusable HandBrake/FFmpeg encoding recipes
 └── Secondary views (opened from row actions or header)
     ├── Log viewer
@@ -78,7 +83,9 @@ Rationale: the legacy app put six tabs of *configuration* in front of the user a
 | Tab / group | Must contain | Notes |
 | --- | --- | --- |
 | Global | Language, worker count, verbose worker logs, log files and locations | Preferences shared by all libraries. |
-| Libraries | Library selector and create/rename/duplicate/delete actions | Conversion settings below apply only to the active library; deleting the last library is blocked (US-21, US-28). |
+| Libraries header | Library picker, active-library name, Movies/TV type, summary (type, folders, mapping rules, default preset) and New library / Duplicate / Delete actions | Shared by both sub-tabs, so identity is edited in one place; Delete confirms first and the last library cannot be deleted (US-21, US-28). |
+| Encoding sub-tab | Folders, encoder/container, mapping rules, scan filters and file handling below | Conversion settings apply only to the active library. |
+| Organizer sub-tab | Metadata source, naming rules, confidence, sidecar handling, collision policy, empty-folder cleanup and path case sensitivity | Organizer defaults apply only to the active library; the Plex database stays a Global setting (US-21, US-26). |
 | Folders | Paired source/destination rows, optional temp row per source, per-row suffix, temp staging | Row editor; add/remove/reorder; paste-many support; per-row validation (US-02, US-03). |
 | Encoding | Encoder switch, container select, suffix rows | Presets come from the Presets tab and are filtered to the active encoder; NVENC warning inline (US-04, US-05, US-08, US-29). |
 | Mapping rules | Ordered first-match list; each rule has a condition tree (folder/path, media property, filename, size, type) and a preset. The default preset is a locked rule at the bottom. | Order is visible and reorderable; the locked default cannot be deleted; the queue shows which rule matched (US-29). |
@@ -127,10 +134,10 @@ scroll to the field.
 
 ### 3.6 Organize mode
 
-- Organize is a top-level mode beside Convert on the home screen. Every library stores its **media
-  type** (Movies/TV) and opens in both modes; organizer defaults (metadata source, naming rules,
-  confidence, sidecars, collisions, show matches) are remembered per library, while the Plex database
-  is one machine-wide setting under Settings → Global.
+- Organize is a peer door on the home screen; choosing it opens the organize library picker. Every
+  library stores its **media type** (Movies/TV) and is available from both pickers; organizer defaults
+  (metadata source, naming rules, confidence, sidecars, collisions, show matches) are remembered per
+  library, while the Plex database is one machine-wide setting under Settings → Global.
 - A TV library is a container of shows. The first step detects the show folders under each source
   root and matches each one to a TVDB series: automatic from the folder name, visible with cover art,
   changeable with a search and clearable. Opening a search pre-fills the folder-derived query and
@@ -142,11 +149,12 @@ scroll to the field.
 - A three-step flow: **What to organize → Naming rules → Review and apply**. A compact stepper is the
   only persistent chrome; one step's panel is mounted at a time, so long scan results never compete
   with settings. Steps can be revisited without losing state, and Back/Next mirror the reading order.
-- Template fields are chip editors: typing `{` opens a searchable variable list with a description and
-  example per variable, choosing one inserts a removable chip, and an example line under the field
-  renders the template with representative data. The default TV folder template is
-  `{show}/Season {season:02}`; the `{show}` segment is dropped when the source folder is itself the
-  show, so single-show libraries stay flat.
+- Template fields are chip editors: typing `{` or pressing the **Insert variable** button opens a
+  searchable variable list with a description and example per variable, choosing one inserts a
+  removable chip, and an example line under the field renders the template with representative data.
+  Number tokens are unpadded unless the chosen variant (or a `:02` format) pads them, and the picker
+  lists both forms. The default TV folder template is `{show}/Season {season:02}`; the `{show}`
+  segment is dropped when the source folder is itself the show, so single-show libraries stay flat.
 - The review table works like the conversion queue: sortable columns, resizable/reorderable/hideable
   columns with the layout persisted, virtualized rows, status chips and search. Paths are never shown
   as long strings: the table uses structured `Show`, `Season`, `Folder`, `Current name` and `New name`
@@ -154,24 +162,28 @@ scroll to the field.
   when a rename moves the file, and a word-level diff with a tinted background highlights the changed
   folder and name tokens.
   The table scrolls inside its panel so the page never grows wider; full paths stay in tooltips.
-- Each row offers **Fix match** to override the show, episode or movie. The dialog prefills from the
-  parsed title, offers a **Use file name** shortcut that fills the episode filter for TV (the filter
-  recognises the `S01E02` tag inside the name) or the movie search, marks the chosen result with a
-  prominent checkmark. Each result is a collapsible card: clicking the card selects the match, while
-  a chevron expands the full description without changing the selection. The override is
-  persisted per file and re-plans only that row; **Use best guess** removes it.
-- The review table is the safety surface: current path, new path, match confidence/reason, action and
-  Plex view count, with filters for changes, skips, conflicts and low confidence. Conflicts are
-  visibly blocked, not auto-resolved.
+- Each row has a `…` menu with **Fix match** and **Open folder**. The Fix match dialog prefills from
+  the parsed title, offers a **Use file name** shortcut that fills the episode filter for TV (the
+  filter recognises the `S01E02` tag inside the name) or the movie search, marks the chosen result
+  with a prominent checkmark, and previews the resulting filename before saving. Each result is a
+  collapsible card: clicking the card selects the match, while a chevron expands the full description
+  without changing the selection. The override is persisted per file and re-plans only that row;
+  **Use best guess** removes it.
+- The review table is the safety surface: current path, new path, a two-faced match badge
+  (`strong`/`weak`/`conflict` plus percentage) with a weighted evidence popover, action and Plex view
+  count, with filters for changes, skips, conflicts, low confidence and match review. Conflicts are
+  visibly blocked, not auto-resolved; identical file/folder paths are skipped automatically, and
+  specials render as `S00`/`Season 00`.
+- The `Why` column is merged into Match: the full reason lives in the badge popover.
 - Scanning streams progress from the backend: discovery reports how many files have been found, and
   matching reports a real percentage (`completed / total`), the current file and show, elapsed time and
   an estimated remainder. The bar is indeterminate only while the total is unknown; results replace it
   when the plan is complete.
 - Apply is a two-step confirmation that states the move count, whether Plex will change, and whether
   watch history will move. Plex-running offers stop / skip Plex / cancel — never silent elevation.
-- Quick organize is a peer of quick convert: an unsaved session (blank or seeded from a library) that
-  can be saved as a library afterwards. TVDB search results show cover art, a spinner, an inline
-  error with retry and an empty state.
+- One-off organize is a peer of one-off conversion: an unsaved session (blank or seeded from a library
+  row’s overflow menu) that can be saved as a library afterwards. TVDB search results show cover art,
+  a spinner, an inline error with retry and an empty state.
 - Long paths and sanitized names wrap rather than truncate in dialogs; platform-specific Plex guidance
   is shown inline as muted helper text.
 
@@ -254,15 +266,16 @@ must act on. Errors are never toast-only.
 | Review state + validation banner | US-09, US-10, F1.4–F1.5 |
 | Running / paused / stopping states | US-11–US-15, F3 |
 | Queue table filters + row actions | US-16–US-18, US-24, F4 |
-| Home → Quick convert | US-28, F10 |
-| Settings → Libraries → Folders | US-02, US-03 |
-| Settings → Libraries → Encoding | US-04, US-05, US-08 |
-| Settings → Libraries → Mapping rules | US-29, F11 |
-| Settings → Libraries → Scan filters | US-06, US-07 |
+| Home → Convert door → one-off conversion | US-28, F10 |
+| Settings → Libraries → Encoding → Folders | US-02, US-03 |
+| Settings → Libraries → Encoding → Encoding | US-04, US-05, US-08 |
+| Settings → Libraries → Encoding → Mapping rules | US-29, F11 |
+| Settings → Libraries → Encoding → Scan filters | US-06, US-07 |
 | Settings → Presets | US-08, US-29 |
 | Queue Filter trace popover | US-09, US-16 |
-| Settings → Libraries → File handling | US-19, US-20 |
-| Settings → Libraries (management) | US-21, F5 |
+| Settings → Libraries → Encoding → File handling | US-19, US-20 |
+| Settings → Libraries → Organizer | US-21, US-26 |
+| Settings → Libraries (header: select, rename, duplicate, delete) | US-21, F5 |
 | Settings → System / language | US-14, US-22 |
 | Log viewer | US-17, US-27 |
 | Media info | US-24, F8 |

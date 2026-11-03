@@ -1,4 +1,5 @@
 import type {
+  EpisodeMatchSummary,
   MediaType,
   OrganizePlan,
   OrganizePlanItem,
@@ -13,7 +14,7 @@ import type { NamingRule } from './settings';
 import {
   extensionOf,
   stripExtension,
-  episodeTag,
+  episodeDisplayTag,
 } from './filename';
 import { selectNamingRule, type NamingRuleContext } from './rules';
 import {
@@ -29,6 +30,7 @@ import {
   splitFolderTemplate,
   type TemplateTokens,
 } from './paths';
+import { normalizePathForComparison } from '../pathUtils';
 
 export interface PlannedFileInput extends OrganizeSourceFile {
   parsed: ParsedMediaName;
@@ -37,6 +39,8 @@ export interface PlannedFileInput extends OrganizeSourceFile {
   episode?: TvdbEpisode;
   movie?: TvdbMovie;
   plex?: PlexAssociation;
+  /** Tag/title/air-date evidence behind an episode match. */
+  episodeMatch?: EpisodeMatchSummary;
   seriesName?: string;
   /** First-release year of the matched series. */
   seriesYear?: number;
@@ -60,31 +64,57 @@ export interface OrganizePlanInput {
   existingPaths?: string[];
 }
 
+function resolveAirDate(file: PlannedFileInput): string {
+  for (const candidate of [
+    file.episode?.airDate,
+    file.plex?.airDate,
+    file.parsed.airDate,
+  ]) {
+    const match = candidate ? /^\d{4}-\d{2}-\d{2}/.exec(candidate) : null;
+    if (match) return match[0];
+  }
+  return '';
+}
+
 function tokensFor(
   file: PlannedFileInput,
   mediaType: MediaType,
 ): TemplateTokens {
   const episode = file.episode;
   const movie = file.movie;
-  const airYear =
-    episode?.airDate && /^\d{4}/.test(episode.airDate)
-      ? Number(episode.airDate.slice(0, 4))
+  const airDate = resolveAirDate(file);
+  const airYear = airDate ? Number(airDate.slice(0, 4)) : undefined;
+  const episodeNumbers = file.parsed.episodeNumbers ?? [];
+  const episodeEnd =
+    episodeNumbers.length > 1
+      ? episodeNumbers[episodeNumbers.length - 1]
       : undefined;
+  const tag = episode ? episodeDisplayTag(episode) : '';
+  const episodeName = episode?.name ?? '';
+  const show = file.seriesName ?? '';
+  const resolution = file.parsed.resolution ?? '';
   return {
     ext: file.extension,
+    extension: file.extension,
     filename: file.filename,
     path: file.path,
     mediaType,
-    resolution: file.parsed.resolution ?? '',
+    resolution,
+    resolutionBucket: resolution,
+    width: file.parsed.width,
+    height: file.parsed.height,
     season: episode?.seasonNumber,
     episode: episode?.episodeNumber,
-    tag:
-      episode?.tag ||
-      (episode ? episodeTag(episode.seasonNumber, episode.episodeNumber) : ''),
-    name: episode?.name ?? '',
-    show: file.seriesName ?? '',
+    episodeEnd,
+    tag,
+    episodeTag: tag,
+    name: episodeName,
+    episodeName,
+    show,
+    seriesName: show,
     title: movie?.title ?? episode?.name ?? file.parsed.title,
     year: movie?.year ?? airYear ?? file.parsed.year,
+    airDate,
     seriesYear: file.seriesYear,
     slug: movie?.slug ?? '',
     imdbId: movie?.imdbId ?? '',
@@ -190,19 +220,33 @@ function uniqueTarget(
   return current;
 }
 
+function uniqueInputFiles(
+  files: PlannedFileInput[],
+  caseInsensitive: boolean,
+): PlannedFileInput[] {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const key = organizerComparisonKey(file.path, { caseInsensitive });
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
  * Pure plan builder shared by the backend and the review UI. It never touches
  * the filesystem; callers supply discovered paths and Plex associations.
  */
 export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
   const warnings: string[] = [];
+  const files = uniqueInputFiles(input.files, input.caseInsensitive);
   const used = new Set<string>(
     (input.existingPaths ?? []).map((path) =>
       organizerComparisonKey(path, { caseInsensitive: input.caseInsensitive }),
     ),
   );
   const sourceKeys = new Set(
-    input.files.map((file) =>
+    files.map((file) =>
       organizerComparisonKey(file.path, {
         caseInsensitive: input.caseInsensitive,
       }),
@@ -210,7 +254,7 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
   );
   const items: OrganizePlanItem[] = [];
 
-  for (const file of input.files) {
+  for (const file of files) {
     const rule = selectNamingRule(input.rules, ruleContextFor(file, input.mediaType));
     const fallbackTarget = file.path;
     const fallbackRelative = file.relativePath;
@@ -233,6 +277,7 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       ...(file.episode ? { episode: file.episode } : {}),
       ...(file.movie ? { movie: file.movie } : {}),
       ...(file.plex ? { plex: file.plex } : {}),
+      ...(file.episodeMatch ? { episodeMatch: file.episodeMatch } : {}),
       ...(file.seriesName ? { seriesName: file.seriesName } : {}),
       ...(file.seriesYear ? { seriesYear: file.seriesYear } : {}),
       ...(showFolderName ? { showFolder: showFolderName } : {}),
@@ -240,22 +285,6 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
         ? { showSubpath: file.showSubpath }
         : {}),
     };
-
-    if (file.confidence < input.confidenceThreshold) {
-      items.push({
-        ...base,
-        action: 'skip',
-        reason:
-          file.reason ||
-          `Confidence ${(file.confidence * 100).toFixed(0)}% is below the ${(
-            input.confidenceThreshold * 100
-          ).toFixed(0)}% threshold`,
-        targetPath: fallbackTarget,
-        relativeTarget: fallbackRelative,
-        sidecars: [],
-      });
-      continue;
-    }
 
     if (!rule) {
       items.push({
@@ -298,6 +327,23 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       continue;
     }
 
+    const sameFilename = targetFilename === file.filename;
+    if (file.confidence < input.confidenceThreshold && !sameFilename) {
+      items.push({
+        ...base,
+        action: 'skip',
+        reason:
+          file.reason ||
+          `Confidence ${(file.confidence * 100).toFixed(0)}% is below the ${(
+            input.confidenceThreshold * 100
+          ).toFixed(0)}% threshold`,
+        targetPath: fallbackTarget,
+        relativeTarget: fallbackRelative,
+        sidecars: [],
+      });
+      continue;
+    }
+
     let relativeSegments: string[];
     if (input.mediaType === 'tv') {
       relativeSegments = [...folderSegments, targetFilename];
@@ -323,20 +369,31 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     const caseOnly = isCaseOnlyDifference(file.path, targetPath, {
       caseInsensitive: input.caseInsensitive,
     });
+    const samePath =
+      normalizePathForComparison(file.path) ===
+      normalizePathForComparison(targetPath);
+    const folderOnly = sameFilename && !samePath;
+    const noChange = samePath || targetKey === sourceKey;
 
     let action: OrganizePlanItem['action'] = 'rename';
     let reason = file.reason || 'Matched';
-    if (targetKey === sourceKey) {
+    if (noChange) {
       action = 'skip';
       reason = 'Already named';
     } else if (used.has(targetKey) && !sourceKeys.has(targetKey)) {
-      if (input.collisions === 'suffix') {
+      if (sameFilename) {
+        action = 'skip';
+        reason = 'Already named';
+      } else if (input.collisions === 'suffix') {
         targetPath = uniqueTarget(targetPath, used, input.caseInsensitive);
         reason = `${file.reason || 'Matched'} (collision renamed)`;
       } else {
         action = 'conflict';
         reason = 'Target already exists';
       }
+    }
+    if (action === 'rename' && folderOnly) {
+      reason = 'Folder name updated; file name already correct';
     }
 
     const sidecars =
@@ -366,20 +423,35 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       targetPath,
       relativeTarget,
       sidecars,
-      ...(caseOnly ? { caseOnly: true } : {}),
+      ...(caseOnly && action === 'rename' ? { caseOnly: true } : {}),
+      ...(folderOnly ? { folderOnly: true } : {}),
+      ...(noChange ? { noChange: true } : {}),
     });
   }
 
   if (input.mediaType === 'tv') {
-    const withoutSeries = input.files.filter((file) => !file.seriesName);
+    const withoutSeries = files.filter((file) => !file.seriesName);
     if (withoutSeries.length > 0) {
       warnings.push(
         `${withoutSeries.length} TV file(s) have no selected TVDB series.`,
       );
     }
+    const matchedConflicts = items.filter(
+      (item) =>
+        item.episodeMatch?.conflict && !item.folderOnly && !item.noChange,
+    ).length;
+    if (matchedConflicts > 0) {
+      warnings.push(
+        `${matchedConflicts} file(s) have conflicting tag/title evidence; review them before applying.`,
+      );
+    }
   }
-  const lowConfidence = input.files.filter(
-    (file) => file.confidence < input.confidenceThreshold,
+  const lowConfidence = items.filter(
+    (item) =>
+      !item.folderOnly &&
+      !item.noChange &&
+      item.confidence !== undefined &&
+      item.confidence < input.confidenceThreshold,
   ).length;
   if (lowConfidence > 0) {
     warnings.push(`${lowConfidence} file(s) are below the confidence threshold.`);

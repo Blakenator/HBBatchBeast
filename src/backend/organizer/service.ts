@@ -5,6 +5,7 @@ import type { AppPaths } from '../helpers/appPaths';
 import { probeMedia as defaultProbeMedia } from '../helpers/probeMedia';
 import type { Library } from '../../common/library';
 import type {
+  EpisodeResolution,
   OrganizeApplyResult,
   OrganizePlan,
   OrganizeSourceFile,
@@ -26,8 +27,9 @@ import {
   pickBestSeries,
   guessSeriesQuery,
   normalizeSubpath,
-  rankEpisodes,
   rankMovies,
+  resolutionLabel,
+  resolveEpisode,
   resolveOrganizeSettings,
   resolveShowMapping,
   type DetectedShow,
@@ -68,7 +70,7 @@ export interface OrganizePlanOptions {
   home?: string;
   tvdbClient?: TvdbClient;
   catalog?: PlexCatalog;
-  probeMedia?: (filePath: string) => Promise<{ height?: number }>;
+  probeMedia?: (filePath: string) => Promise<ProbeDimensions>;
   /** Global Plex database path, independent of the library. */
   plexDbPath?: string;
   /** Receives throttled live progress while the plan is built. */
@@ -138,6 +140,7 @@ function associationFromMovie(movie: PlexMovieFile): PlexAssociation {
       ? { librarySectionId: movie.librarySectionId }
       : {}),
     libraryRoot: movie.libraryRoot,
+    ...(movie.airDate ? { airDate: movie.airDate } : {}),
     ...(movie.directoryId ? { directoryId: movie.directoryId } : {}),
     ...(movie.directoryPath ? { directoryPath: movie.directoryPath } : {}),
     watchCount: movie.watchCount,
@@ -160,6 +163,7 @@ function associationFromEpisode(episode: PlexEpisodeFile): PlexAssociation {
       ? { librarySectionId: episode.librarySectionId }
       : {}),
     libraryRoot: episode.libraryRoot,
+    ...(episode.airDate ? { airDate: episode.airDate } : {}),
     ...(episode.directoryId ? { directoryId: episode.directoryId } : {}),
     ...(episode.directoryPath
       ? { directoryPath: episode.directoryPath }
@@ -473,35 +477,32 @@ export async function detectShowFolders(options: {
   return { folders, warnings };
 }
 
-function parsedWithProbe(
-  parsed: ParsedMediaName,
-  height: number | undefined,
-): ParsedMediaName {
-  if (parsed.resolution || !height) return parsed;
-  return withProbeResolution(parsed, height);
+interface ProbeDimensions {
+  width?: number;
+  height?: number;
 }
 
-/** ffprobe is authoritative; the filename is only a fallback. */
+function parsedWithProbe(
+  parsed: ParsedMediaName,
+  dimensions: ProbeDimensions,
+): ParsedMediaName {
+  if (!dimensions.width && !dimensions.height) return parsed;
+  return withProbeResolution(parsed, dimensions);
+}
+
+/** ffprobe or Plex is authoritative; the filename is only a fallback. */
 function withProbeResolution(
   parsed: ParsedMediaName,
-  height: number | undefined,
+  dimensions: ProbeDimensions,
 ): ParsedMediaName {
-  if (!height) return parsed;
+  const width = dimensions.width ?? parsed.width;
+  const height = dimensions.height ?? parsed.height;
+  if (!width && !height) return parsed;
   return {
     ...parsed,
-    resolution:
-      height > 2000
-        ? '4K'
-        : height > 1400
-          ? '1440p'
-          : height > 1000
-            ? '1080p'
-            : height > 700
-              ? '720p'
-              : height > 500
-                ? '480p'
-                : 'SD',
-    height,
+    ...(resolutionLabel(height) ? { resolution: resolutionLabel(height) } : {}),
+    ...(width ? { width } : {}),
+    ...(height ? { height } : {}),
   };
 }
 
@@ -513,7 +514,7 @@ async function buildTvPlan(
   catalog: PlexCatalog | undefined,
   client: TvdbClient,
   caseInsensitive: boolean,
-  probe: (filePath: string) => Promise<{ height?: number }>,
+  probe: (filePath: string) => Promise<ProbeDimensions>,
   onFileStart?: (
     completed: number,
     total: number,
@@ -577,7 +578,7 @@ async function buildTvPlan(
     onFileStart?.(plannedCount, files.length, file.path, series.name);
     let parsed = parsedBase;
     try {
-      parsed = withProbeResolution(parsed, (await probe(file.path)).height);
+      parsed = withProbeResolution(parsed, await probe(file.path));
     } catch {
       // Keep the filename-derived resolution when the file cannot be probed.
     }
@@ -593,9 +594,14 @@ async function buildTvPlan(
       }
       episodeCache.set(series.slug, episodes);
     }
-    const best = override?.episode
-      ? { episode: override.episode, confidence: 1, reason: 'Manual match' }
-      : rankEpisodes(parsed, episodes, 1)[0];
+    const resolution: EpisodeResolution = override?.episode
+      ? {
+          episode: override.episode,
+          confidence: 1,
+          reason: 'Manual match',
+          conflict: false,
+        }
+      : resolveEpisode(parsed, episodes, { seriesName: series.name });
     const plexFile = catalog
       ? findEpisodeAssociation(catalog.episodes, file.path, caseInsensitive)
       : undefined;
@@ -605,14 +611,15 @@ async function buildTvPlan(
       : path.basename(folderRoot);
     planned.push({
       ...file,
-      parsed,
-      confidence: best?.confidence ?? 0,
-      reason: best?.reason ?? 'No matching TVDB episode',
+      parsed: parsedWithProbe(parsed, plexFile ?? {}),
+      confidence: resolution.confidence,
+      reason: resolution.reason || 'No matching TVDB episode',
       seriesName: series.name,
       showSubpath,
       ...(series.year ? { seriesYear: series.year } : {}),
       ...(showFolder ? { showFolder } : {}),
-      ...(best?.episode ? { episode: best.episode } : {}),
+      ...(resolution.episode ? { episode: resolution.episode } : {}),
+      ...(resolution.summary ? { episodeMatch: resolution.summary } : {}),
       ...(plexFile ? { plex: associationFromEpisode(plexFile) } : {}),
     });
     fileDone(file, series.name);
@@ -645,7 +652,7 @@ async function buildMoviePlan(
   catalog: PlexCatalog | undefined,
   client: TvdbClient,
   caseInsensitive: boolean,
-  probe: (filePath: string) => Promise<{ height?: number }>,
+  probe: (filePath: string) => Promise<ProbeDimensions>,
   onFileStart?: (
     completed: number,
     total: number,
@@ -676,14 +683,14 @@ async function buildMoviePlan(
       : undefined;
     const override = overrideFor(settings, file.path, caseInsensitive);
     try {
-      parsed = withProbeResolution(parsed, (await probe(file.path)).height);
+      parsed = withProbeResolution(parsed, await probe(file.path));
     } catch {
       // Resolution is optional for matching; the template simply renders empty.
     }
     if (override?.movie) {
       planned.push({
         ...file,
-        parsed,
+        parsed: parsedWithProbe(parsed, plexFile ?? {}),
         confidence: 1,
         reason: 'Manual match',
         movie: override.movie,
@@ -695,7 +702,7 @@ async function buildMoviePlan(
     if (settings.movieMetadata === 'plex' && plexFile) {
       planned.push({
         ...file,
-        parsed: parsedWithProbe(parsed, plexFile.height),
+        parsed: parsedWithProbe(parsed, plexFile),
         confidence: 1,
         reason: 'Plex metadata',
         movie: {
@@ -726,7 +733,7 @@ async function buildMoviePlan(
     const best = rankMovies(parsed, movies, 1)[0];
     planned.push({
       ...file,
-      parsed,
+      parsed: parsedWithProbe(parsed, plexFile ?? {}),
       confidence: best?.confidence ?? 0,
       reason: best?.reason ?? 'No matching TVDB movie',
       ...(best?.movie ? { movie: best.movie } : {}),
@@ -780,7 +787,7 @@ export async function buildOrganizePlanForLibrary(
     (async (filePath: string) => {
       const info = await defaultProbeMedia(filePath);
       const video = info.streams.find((stream) => stream.type === 'video');
-      return { height: video?.height };
+      return { width: video?.width, height: video?.height };
     });
 
   const startedAt = Date.now();

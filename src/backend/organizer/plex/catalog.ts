@@ -27,7 +27,9 @@ interface PlexFileBase {
   guid: string;
   title: string;
   year?: number;
+  width?: number;
   height?: number;
+  airDate?: string;
   addedAt?: string;
   mediaItemId: number;
   mediaPartId: number;
@@ -71,7 +73,10 @@ interface MovieRow {
   guid: string;
   title: string;
   year: number | null;
+  width: number | null;
   height: number | null;
+  /** Plex stores this as epoch seconds, not a date string. */
+  airDate: string | number | null;
   addedAt: string | null;
   mediaItemId: number;
   mediaPartId: number;
@@ -121,7 +126,9 @@ const MOVIE_SQL = `
          mti.guid AS guid,
          mti.title AS title,
          mti.year AS year,
+         mit.width AS width,
          mit.height AS height,
+         mti.originally_available_at AS airDate,
          mti.added_at AS addedAt,
          mit.id AS mediaItemId,
          mp.id AS mediaPartId,
@@ -150,7 +157,9 @@ const EPISODE_SQL = `
          ep."index" AS episodeNumber,
          ep.title AS episodeTitle,
          ep.year AS year,
+         mit.width AS width,
          mit.height AS height,
+         ep.originally_available_at AS airDate,
          ep.added_at AS addedAt,
          mit.id AS mediaItemId,
          mp.id AS mediaPartId,
@@ -171,6 +180,19 @@ const EPISODE_SQL = `
   ORDER BY show.title, season."index", ep."index", mp.id
 `;
 
+/** Plex stores `originally_available_at` as epoch seconds in UTC. */
+function plexDateOnly(value: string | number): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const iso = /^\d{4}-\d{2}-\d{2}/.exec(trimmed);
+    if (iso) return iso[0];
+    if (!/^\d+$/.test(trimmed)) return '';
+    value = Number(trimmed);
+  }
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return new Date(value * 1000).toISOString().slice(0, 10);
+}
+
 function baseFromRow(
   row: MovieRow,
   watches: PlexWatchState[],
@@ -182,8 +204,14 @@ function baseFromRow(
     ...(row.year !== null && row.year !== undefined
       ? { year: Number(row.year) }
       : {}),
+    ...(row.width !== null && row.width !== undefined
+      ? { width: Number(row.width) }
+      : {}),
     ...(row.height !== null && row.height !== undefined
       ? { height: Number(row.height) }
+      : {}),
+    ...(row.airDate && plexDateOnly(row.airDate)
+      ? { airDate: plexDateOnly(row.airDate) }
       : {}),
     ...(row.addedAt ? { addedAt: row.addedAt } : {}),
     mediaItemId: Number(row.mediaItemId),

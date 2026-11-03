@@ -50,6 +50,10 @@ const episodeHtml = `
   <h4 class="list-group-item-heading"><a href="/series/x">Behind the Scenes</a></h4>
 </div>
 <div class="list-group-item">
+  <small class="text-muted episode-label">SPECIAL 2x7</small>
+  <h4 class="list-group-item-heading"><a href="/series/x">Extended Special</a></h4>
+</div>
+<div class="list-group-item">
   <small class="text-muted episode-label">S01E02</small>
   <h4 class="list-group-item-heading"><a href="/series/x">The Deep</a></h4>
 </div>
@@ -68,7 +72,7 @@ afterEach(() => {
 describe('TVDB parsing', () => {
   it('parses episode tags, specials and names', () => {
     const episodes = parseTvdbEpisodeHtml(episodeHtml);
-    expect(episodes).toHaveLength(3);
+    expect(episodes).toHaveLength(4);
     expect(
       episodes.find((episode) => episode.tag === 'S01E01'),
     ).toMatchObject({
@@ -81,6 +85,12 @@ describe('TVDB parsing', () => {
     ).toMatchObject({
       seasonNumber: 0,
       episodeNumber: 1,
+    });
+    expect(
+      episodes.find((episode) => episode.tag === 'SPECIAL 2x7'),
+    ).toMatchObject({
+      seasonNumber: 0,
+      episodeNumber: 7,
     });
     expect(
       episodes.find((episode) => episode.tag === 'S01E02')?.name,
@@ -169,7 +179,7 @@ describe('TVDB client', () => {
     });
 
     const episodes = await client.loadEpisodes('family-guy');
-    expect(episodes[2]).toMatchObject({
+    expect(episodes.find((episode) => episode.tag === 'S01E02')).toMatchObject({
       tag: 'S01E02',
       name: 'The Deep',
     });

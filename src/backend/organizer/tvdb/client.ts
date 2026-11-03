@@ -127,7 +127,7 @@ function parseEpisodeTag(
   const special = /\bSPECIAL\s+(\d{1,2})x(\d{1,3})\b/i.exec(tag);
   if (special) {
     return {
-      seasonNumber: Number(special[1]),
+      seasonNumber: 0,
       episodeNumber: Number(special[2]),
     };
   }

@@ -20,21 +20,28 @@ import {
   useTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { toast } from 'react-toastify';
 import {
+  PROMISE_CHANNEL,
   diffNameSegments,
   diffTargetName,
+  episodeDisplayTag,
+  pathDirname,
   type DiffSegment,
   type MediaType,
   type NamingRule,
   type OrganizePlan,
   type OrganizePlanItem,
   type OrganizeSettings,
+  titleComparisonKey,
 } from '../../common';
+import { useBackend } from '../helpers';
 import { Button, IconButton } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import type { AppIconName } from '../ui/icons';
+import { MatchBadge } from './MatchBadge';
 
-type PlanFilter = 'all' | 'rename' | 'skip' | 'conflict' | 'low';
+type PlanFilter = 'all' | 'rename' | 'skip' | 'conflict' | 'low' | 'review';
 
 const FILTERS: { value: PlanFilter; label: string }[] = [
   { value: 'all', label: 'All files' },
@@ -42,6 +49,7 @@ const FILTERS: { value: PlanFilter; label: string }[] = [
   { value: 'skip', label: 'Skipped' },
   { value: 'conflict', label: 'Conflicts' },
   { value: 'low', label: 'Low confidence' },
+  { value: 'review', label: 'Match review' },
 ];
 
 const ROW_HEIGHT = 44;
@@ -57,16 +65,14 @@ const DEFAULT_COLUMN_SIZES: Record<string, number> = {
   folder: 220,
   source: 220,
   target: 260,
-  match: 132,
+  match: 180,
   rule: 92,
-  reason: 170,
   action: 90,
   plex: 84,
   fix: 44,
 };
 
 const DEFAULT_VISIBILITY: ColumnVisibilityState = {
-  reason: false,
   plex: false,
 };
 
@@ -183,11 +189,18 @@ const BodyRow = styled.div<{ $conflict: boolean }>`
   height: ${ROW_HEIGHT}px;
   border-bottom: 1px solid var(--hb-border);
   background: ${({ $conflict }) =>
-    $conflict ? 'var(--hb-dangerSurface, #fff3f3)' : 'transparent'};
+    $conflict
+      ? 'color-mix(in srgb, var(--hb-danger) 12%, var(--hb-surface))'
+      : 'transparent'};
+  box-shadow: ${({ $conflict }) =>
+    $conflict ? 'inset 3px 0 0 var(--hb-danger)' : 'none'};
   font-size: var(--hb-font-sm);
 
   &:hover {
-    background: var(--hb-surfaceMuted);
+    background: ${({ $conflict }) =>
+      $conflict
+        ? 'color-mix(in srgb, var(--hb-danger) 18%, var(--hb-surface))'
+        : 'var(--hb-surfaceMuted)'};
   }
 `;
 
@@ -274,6 +287,35 @@ const MenuRow = styled.div`
     display: flex;
     align-items: center;
     gap: var(--hb-space-xs);
+  }
+`;
+
+const RowActionButton = styled.button`
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: var(--hb-space-xs) var(--hb-space-sm);
+  border: 0;
+  border-radius: var(--hb-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--hb-font-xs);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--hb-surfaceMuted);
+  }
+
+  &:disabled {
+    color: var(--hb-textMuted);
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--hb-focus);
+    outline-offset: -2px;
   }
 `;
 
@@ -399,6 +441,80 @@ function ruleLabel(
   return index === rules.length - 1 ? 'Default' : rule.name || `Rule ${index + 1}`;
 }
 
+const RowActionsMenu: React.FC<{
+  item: OrganizePlanItem;
+  onFixMatch: (item: OrganizePlanItem) => void;
+}> = ({ item, onFixMatch }) => {
+  const popoverId = useId();
+  const [open, setOpen] = useState(false);
+  const openFolder = useBackend({
+    channel: PROMISE_CHANNEL.OpenFolder,
+    skip: true,
+  });
+  const folder = pathDirname(item.sourcePath);
+
+  const openContainingFolder = async () => {
+    setOpen(false);
+    if (!folder) {
+      toast.error('Could not open folder: the file has no parent folder.');
+      return;
+    }
+    try {
+      const result = await openFolder.refetch({ path: folder });
+      if (!result || result.error) {
+        toast.error(
+          result?.error?.message
+            ? `Could not open folder: ${result.error.message}`
+            : 'Could not open folder.',
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? `Could not open folder: ${error.message}`
+          : 'Could not open folder.',
+      );
+    }
+  };
+
+  return (
+    <OverlayTrigger
+      trigger="click"
+      placement="bottom-end"
+      show={open}
+      onToggle={setOpen}
+      rootClose
+      overlay={
+        <Popover id={popoverId}>
+          <Popover.Body style={{ padding: 'var(--hb-space-xs)', minWidth: 150 }}>
+            <RowActionButton
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onFixMatch(item);
+              }}
+            >
+              Fix match
+            </RowActionButton>
+            <RowActionButton
+              type="button"
+              disabled={!folder}
+              onClick={() => void openContainingFolder()}
+            >
+              Open folder
+            </RowActionButton>
+          </Popover.Body>
+        </Popover>
+      }
+    >
+      <IconButton
+        icon="more"
+        label={`More actions for ${item.sourceRelativePath}`}
+      />
+    </OverlayTrigger>
+  );
+};
+
 interface OrganizePlanTableProps {
   plan: OrganizePlan;
   settings: OrganizeSettings;
@@ -476,13 +592,22 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const normalizedNeedle = titleComparisonKey(search);
     return plan.items.filter((item) => {
       if (filter === 'rename' && item.action !== 'rename') return false;
       if (filter === 'skip' && item.action !== 'skip') return false;
       if (filter === 'conflict' && item.action !== 'conflict') return false;
       if (
+        filter === 'review' &&
+        (!item.episodeMatch?.conflict || item.folderOnly || item.noChange)
+      ) {
+        return false;
+      }
+      if (
         filter === 'low' &&
         !(
+          !item.folderOnly &&
+          !item.noChange &&
           item.confidence !== undefined &&
           item.confidence < settings.confidenceThreshold
         )
@@ -501,7 +626,14 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
         item.reason,
       ]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(needle));
+        .some((value) => {
+          const text = String(value);
+          if (text.toLowerCase().includes(needle)) return true;
+          return (
+            normalizedNeedle.length > 0 &&
+            titleComparisonKey(text).includes(normalizedNeedle)
+          );
+        });
     });
   }, [filter, plan.items, search, settings.confidenceThreshold]);
 
@@ -647,16 +779,54 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           sortFn: 'basic',
           cell: (info) => {
             const item = info.row.original;
-            const percent =
-              item.confidence === undefined
-                ? '—'
-                : `${Math.round(item.confidence * 100)}%`;
             return (
-              <EllipsisText>
-                {percent}
-                {item.episode ? ` · ${item.episode.tag}` : ''}
-                {item.movie ? ` · ${item.movie.title}` : ''}
-              </EllipsisText>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--hb-space-xs)',
+                  minWidth: 0,
+                }}
+              >
+                {item.folderOnly || item.noChange ? (
+                  <EllipsisText
+                    title={item.reason}
+                    style={{
+                      color: 'var(--hb-textMuted)',
+                      fontSize: 'var(--hb-font-xs)',
+                    }}
+                  >
+                    {item.folderOnly ? 'folder only' : 'unchanged'}
+                  </EllipsisText>
+                ) : (
+                  <MatchBadge
+                    confidence={item.confidence}
+                    threshold={settings.confidenceThreshold}
+                    summary={item.episodeMatch}
+                    reason={item.reason}
+                    label={
+                      item.episode
+                        ? episodeDisplayTag(item.episode)
+                        : (item.movie?.title ?? 'Match')
+                    }
+                  />
+                )}
+                <EllipsisText
+                  title={
+                    item.episode
+                      ? episodeDisplayTag(item.episode)
+                      : (item.movie?.title ?? '')
+                  }
+                  style={{
+                    color: 'var(--hb-textMuted)',
+                    fontSize: 'var(--hb-font-xs)',
+                  }}
+                >
+                  {item.episode
+                    ? episodeDisplayTag(item.episode)
+                    : (item.movie?.title ?? '')}
+                </EllipsisText>
+              </div>
             );
           },
         }),
@@ -666,23 +836,6 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           size: DEFAULT_COLUMN_SIZES.rule,
           sortFn: 'text',
           cell: (info) => ruleLabel(info.row.original, settings.namingRules),
-        }),
-        columnHelper.accessor((row) => row.reason ?? '', {
-          id: 'reason',
-          header: 'Why',
-          size: DEFAULT_COLUMN_SIZES.reason,
-          sortFn: 'text',
-          cell: (info) => (
-            <EllipsisText
-              title={info.getValue()}
-              style={{
-                color: 'var(--hb-textMuted)',
-                fontSize: 'var(--hb-font-xs)',
-              }}
-            >
-              {info.getValue() || '—'}
-            </EllipsisText>
-          ),
         }),
         columnHelper.accessor((row) => row.action, {
           id: 'action',
@@ -714,20 +867,22 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           header: '',
           size: DEFAULT_COLUMN_SIZES.fix,
           enableSorting: false,
-          cell: (info) => {
-            const item = info.row.original;
-            return (
-              <IconButton
-                icon="edit"
-                label={`Fix match: ${item.sourceRelativePath}`}
-                title="Fix the match for this file"
-                onClick={() => onFixMatch(item)}
-              />
-            );
-          },
+          cell: (info) => (
+            <RowActionsMenu
+              item={info.row.original}
+              onFixMatch={onFixMatch}
+            />
+          ),
         }),
       ]),
-    [mediaType, onFixMatch, onSelectedChange, selected, settings.namingRules],
+    [
+      mediaType,
+      onFixMatch,
+      onSelectedChange,
+      selected,
+      settings.confidenceThreshold,
+      settings.namingRules,
+    ],
   );
 
   const table = useTable({

@@ -45,7 +45,7 @@ export const QuickConvertPage: React.FC<QuickConvertPageProps> = ({
 
   return (
     <Wrap>
-      <Panel title="Quick conversion" icon="quick">
+      <Panel title="One-off conversion" icon="quick">
         <Muted>
           This run is temporary. It will not change your saved libraries, and
           you can save it as a library after reviewing the queue.

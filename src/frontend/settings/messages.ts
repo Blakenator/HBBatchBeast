@@ -34,6 +34,9 @@ export const settingsMessages = createMessages({
     defaultMessage:
       'Libraries store folders, scan filters, encoders, containers and preset mapping rules.',
   },
+  librarySections: { defaultMessage: 'Library section' },
+  encodingSection: { defaultMessage: 'Encoding' },
+  organizerSection: { defaultMessage: 'Organizer' },
   presetSettings: { defaultMessage: 'Presets' },
   presetSettingsDescription: {
     defaultMessage:

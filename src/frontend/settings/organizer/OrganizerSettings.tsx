@@ -3,14 +3,11 @@ import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import {
   libraryOrganizeSettings,
-  withLibraryMediaType,
   type AppConfigV2,
   type Library,
-  type MediaType,
   type OrganizeSettings,
 } from '../../../common';
 import { NamingRulesEditor } from '../../organize/NamingRulesEditor';
-import { SegmentedControl } from '../SegmentedControl';
 
 const Wrap = styled.div`
   display: grid;
@@ -59,27 +56,6 @@ export const OrganizerSettings: React.FC<OrganizerSettingsProps> = ({
 
   return (
     <Wrap>
-      <Section>
-        <SectionTitle>Media type</SectionTitle>
-        <SegmentedControl
-          label="Library type"
-          value={library.mediaType}
-          onChange={(value: string) =>
-            onChange(
-              withLibraryMediaType(library, value as MediaType),
-            )
-          }
-          options={[
-            { value: 'movies', label: 'Movies' },
-            { value: 'tv', label: 'TV shows' },
-          ]}
-        />
-        <Muted>
-          Naming rules follow the media type. File templates, folder templates
-          and show matches are stored on this library.
-        </Muted>
-      </Section>
-
       <Section>
         <SectionTitle>Metadata</SectionTitle>
         {isTv ? (

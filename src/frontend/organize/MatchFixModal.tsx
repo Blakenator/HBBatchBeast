@@ -3,9 +3,18 @@ import styled from 'styled-components';
 import { Alert, Form, Modal, Spinner } from 'react-bootstrap';
 import {
   PROMISE_CHANNEL,
+  episodeDisplayTag,
+  episodeNameText,
   organizerIsPathInside,
   overrideFor,
+  parseMediaFilename,
+  pathBasename,
+  previewTargetForItem,
+  rankEpisodes,
+  resolveEpisode,
   resolveShowMapping,
+  titleComparisonKey,
+  type EpisodeMatchSummary,
   type Library,
   type MediaType,
   type OrganizeMatchOverride,
@@ -18,6 +27,7 @@ import {
 import { useBackend } from '../helpers';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
+import { MatchBadge } from './MatchBadge';
 import { Poster, SeriesSearch } from './SeriesSearch';
 
 const Rows = styled.div`
@@ -130,6 +140,22 @@ const Muted = styled.span`
   white-space: nowrap;
 `;
 
+const FilenamePreview = styled.div`
+  padding: var(--hb-space-xs) var(--hb-space-sm);
+  border: 1px solid var(--hb-border);
+  border-radius: var(--hb-radius-sm);
+  background: var(--hb-surfaceMuted);
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-xs);
+  white-space: normal;
+  overflow-wrap: anywhere;
+
+  strong {
+    color: var(--hb-text);
+    font-weight: 600;
+  }
+`;
+
 const SelectedMark = styled.span`
   display: inline-flex;
   align-items: center;
@@ -195,12 +221,25 @@ function fileNameQuery(item: OrganizePlanItem): string {
   return name.replace(/\.[^.]+$/, '').trim();
 }
 
+function episodeKey(episode: TvdbEpisode): string {
+  return `${episode.seasonNumber}:${episode.episodeNumber}`;
+}
+
+function sameEpisode(left: TvdbEpisode, right: TvdbEpisode): boolean {
+  if (left.id && right.id) return left.id === right.id;
+  return (
+    left.seasonNumber === right.seasonNumber &&
+    left.episodeNumber === right.episodeNumber
+  );
+}
+
 interface SelectableRowProps {
   selected: boolean;
   onSelect: () => void;
   title: string;
   description?: string;
   leading?: React.ReactNode;
+  badge?: React.ReactNode;
   cover?: React.ReactNode;
 }
 
@@ -214,6 +253,7 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
   title,
   description,
   leading,
+  badge,
   cover,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -236,6 +276,7 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
         {leading}
         <RowText>
           <Name>{title}</Name>
+          {badge}
           {description && !expanded && (
             <DescriptionPreview $clamped={long} title={description}>
               {description}
@@ -458,9 +499,74 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     // Only the slug and media type change what is loaded.
   }, [effectiveSeries?.slug, mediaType]);
 
+  const parsedMedia = useMemo(
+    () =>
+      item.parsed ??
+      parseMediaFilename(fileNameQuery(item), item.sourceRelativePath),
+    [item],
+  );
+  const rankedEpisodes = useMemo(
+    () =>
+      rankEpisodes(parsedMedia, episodes, episodes.length, {
+        seriesName: effectiveSeries?.name,
+      }),
+    [effectiveSeries?.name, episodes, parsedMedia],
+  );
+  const matchesByEpisode = useMemo(
+    () =>
+      new Map(
+        rankedEpisodes.map((candidate) => [
+          episodeKey(candidate.episode),
+          candidate,
+        ]),
+      ),
+    [rankedEpisodes],
+  );
+  const resolution = useMemo(
+    () =>
+      resolveEpisode(parsedMedia, episodes, {
+        seriesName: effectiveSeries?.name,
+      }),
+    [effectiveSeries?.name, episodes, parsedMedia],
+  );
+  const displayEpisodes = useMemo(() => {
+    const ranked = rankedEpisodes.map((candidate) => candidate.episode);
+    if (!resolution.episode) return ranked;
+    return [
+      resolution.episode,
+      ...ranked.filter(
+        (candidate) => !sameEpisode(candidate, resolution.episode!),
+      ),
+    ];
+  }, [rankedEpisodes, resolution.episode]);
+  const matchedTitle =
+    parsedMedia.episodeTitle ??
+    episodeNameText(parsedMedia, effectiveSeries?.name);
+  const previewOverride = useMemo<OrganizeMatchOverride | undefined>(() => {
+    const selectedSeries = series ?? originalSeries;
+    const ready = mediaType === 'tv' ? Boolean(episode) : Boolean(movie);
+    if (!ready) return undefined;
+    return {
+      ...(selectedSeries ? { series: selectedSeries } : {}),
+      ...(episode ? { episode } : {}),
+      ...(movie ? { movie } : {}),
+    };
+  }, [episode, mediaType, movie, originalSeries, series]);
+  const previewFilename = useMemo(() => {
+    if (!previewOverride) return undefined;
+    const target = previewTargetForItem(item, previewOverride, {
+      settings,
+      mediaType,
+    });
+    return target ? pathBasename(target) : undefined;
+  }, [item, mediaType, previewOverride, settings]);
+
   const filteredEpisodes = useMemo(() => {
-    const needle = episodeFilter.trim().toLowerCase();
-    if (!needle) return episodes;
+    const needle = titleComparisonKey(episodeFilter);
+    // Ranked first so the best tag/title evidence stays at the top.
+    const source =
+      displayEpisodes.length > 0 ? displayEpisodes : episodes;
+    if (!needle) return source;
     // A pasted file name usually carries S01E02 (or 1x02); match that episode
     // exactly instead of failing on the surrounding title/quality tokens.
     const tag =
@@ -469,18 +575,18 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     if (tag) {
       const season = Number(tag[1]);
       const episodeNumber = Number(tag[2]);
-      return episodes.filter(
+      return source.filter(
         (candidate) =>
           candidate.seasonNumber === season &&
           candidate.episodeNumber === episodeNumber,
       );
     }
-    return episodes.filter(
+    return source.filter(
       (candidate) =>
-        candidate.tag.toLowerCase().includes(needle) ||
-        candidate.name.toLowerCase().includes(needle),
+        titleComparisonKey(episodeDisplayTag(candidate)).includes(needle) ||
+        titleComparisonKey(candidate.name).includes(needle),
     );
-  }, [episodeFilter, episodes]);
+  }, [displayEpisodes, episodeFilter, episodes]);
 
   const save = () => {
     if (!series && !episode && !movie) {
@@ -585,6 +691,16 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                 onChange={(event) => setEpisodeFilter(event.target.value)}
               />
             </Form.Group>
+            {previewFilename && (
+              <FilenamePreview>
+                New filename: <strong>{previewFilename}</strong>
+              </FilenamePreview>
+            )}
+            {matchedTitle && (
+              <Muted style={{ whiteSpace: 'normal' }}>
+                Matching filename title: “{matchedTitle}”
+              </Muted>
+            )}
 
             {loading ? (
               <Muted role="status" aria-live="polite">
@@ -600,18 +716,44 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                   <SelectableRow
                     key={`${candidate.id ?? candidate.tag}-${candidate.episodeNumber}`}
                     selected={
-                      episode?.tag === candidate.tag &&
-                      episode?.name === candidate.name
+                      episode ? sameEpisode(episode, candidate) : false
                     }
                     onSelect={() => setEpisode(candidate)}
                     title={candidate.name}
+                    badge={(() => {
+                      const match = matchesByEpisode.get(
+                        episodeKey(candidate),
+                      );
+                      if (!match) return undefined;
+                      const resolved = Boolean(
+                        resolution.episode &&
+                          sameEpisode(candidate, resolution.episode),
+                      );
+                      const summary: EpisodeMatchSummary = resolved
+                        ? (resolution.summary ?? {
+                            ...match.evidence,
+                            conflict: false,
+                          })
+                        : { ...match.evidence, conflict: false };
+                      return (
+                        <MatchBadge
+                          confidence={
+                            resolved ? resolution.confidence : match.confidence
+                          }
+                          threshold={settings.confidenceThreshold}
+                          summary={summary}
+                          reason={resolved ? resolution.reason : match.reason}
+                          label={episodeDisplayTag(candidate)}
+                        />
+                      );
+                    })()}
                     description={[
                       candidate.description,
                       candidate.airDate ? `Aired ${candidate.airDate}` : '',
                     ]
                       .filter(Boolean)
                       .join(' · ')}
-                    leading={<Tag>{candidate.tag}</Tag>}
+                    leading={<Tag>{episodeDisplayTag(candidate)}</Tag>}
                   />
                 ))}
                 {filteredEpisodes.length === 0 && (
@@ -647,6 +789,11 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
               onSelect={setMovie}
               initialQuery={movieQuery}
             />
+            {previewFilename && (
+              <FilenamePreview>
+                New filename: <strong>{previewFilename}</strong>
+              </FilenamePreview>
+            )}
           </>
         )}
       </Modal.Body>

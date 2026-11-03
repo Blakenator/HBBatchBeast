@@ -33,6 +33,7 @@ import { MatchFixModal } from './MatchFixModal';
 import { NamingRulesEditor } from './NamingRulesEditor';
 import { OrganizePlanTable } from './OrganizePlanTable';
 import { ShowMappings } from './ShowMappings';
+import { describeOrganizeScanError } from './scanError';
 
 interface OrganizePageProps {
   config: AppConfigV2;
@@ -91,7 +92,9 @@ const OrganizeScanRunner: React.FC<OrganizeScanRunnerProps> = ({
   });
 
   useEffect(() => {
-    if (scan.error) handlers.current.onError(scan.error.message);
+    if (!scan.error) return;
+    console.error('Organize scan failed', scan.error);
+    handlers.current.onError(describeOrganizeScanError(scan.error));
   }, [scan.error]);
 
   return null;
@@ -616,7 +619,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
           Back
         </Button>
         <strong>
-          {isQuick ? 'Quick organize' : `Organize: ${current.name}`}
+          {isQuick ? 'One-off organize' : `Organize: ${current.name}`}
         </strong>
         {isQuick && (
           <span style={{ color: 'var(--hb-textMuted)', fontSize: 'var(--hb-font-xs)' }}>

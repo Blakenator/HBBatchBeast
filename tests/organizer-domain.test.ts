@@ -11,6 +11,7 @@ import {
   renderFileTemplate,
   renderFolderTemplate,
   renderTemplate,
+  resolutionLabel,
   resolveOrganizeSettings,
   sanitizePathSegment,
   selectNamingRule,
@@ -85,6 +86,19 @@ describe('organize path helpers', () => {
     expect(() => renderTemplate('{missing}', {})).toThrow(/Unknown template/);
   });
 
+  it('renders named token variants and rejects unknown ones', () => {
+    expect(
+      renderTemplate('{airDate:short}/{width}x{height}', {
+        airDate: '2017-10-29',
+        width: 1920,
+        height: 1080,
+      }),
+    ).toBe('2017-10/1920x1080');
+    expect(() => renderTemplate('{airDate:bogus}', { airDate: '' })).toThrow(
+      /Unknown template token variant/,
+    );
+  });
+
   it('keeps folder templates relative', () => {
     expect(renderFolderTemplate('Season {season:02}', { season: 2 })).toEqual([
       'Season 02',
@@ -120,13 +134,37 @@ describe('filename parsing', () => {
     expect(parsed.title).toContain('Blue Planet II');
   });
 
+  it('parses explicit frame dimensions', () => {
+    expect(parseMediaFilename('Arrival.2016.1920x1080.BluRay.mkv')).toMatchObject(
+      {
+        width: 1920,
+        height: 1080,
+        resolution: '1080p',
+      },
+    );
+    expect(parseMediaFilename('Arrival.2016.1920x1080.mkv').title).toBe(
+      'Arrival',
+    );
+  });
+
+  it('maps heights to resolution buckets inclusively', () => {
+    expect(resolutionLabel(2160)).toBe('4K');
+    expect(resolutionLabel(1440)).toBe('1440p');
+    expect(resolutionLabel(1080)).toBe('1080p');
+    expect(resolutionLabel(720)).toBe('720p');
+    expect(resolutionLabel(576)).toBe('576p');
+    expect(resolutionLabel(480)).toBe('480p');
+    expect(resolutionLabel(360)).toBe('SD');
+    expect(resolutionLabel(undefined, '1080p')).toBe('1080p');
+  });
+
   it('parses 1x02, specials and multi-episode names', () => {
     expect(parseMediaFilename('Show 1x02.mkv')).toMatchObject({
       seasonNumber: 1,
       episodeNumber: 2,
     });
     expect(parseMediaFilename('Show Special 1x3.mkv')).toMatchObject({
-      seasonNumber: 1,
+      seasonNumber: 0,
       episodeNumber: 3,
       isSpecial: true,
     });
@@ -140,6 +178,23 @@ describe('filename parsing', () => {
       parseMediaFilename('E05.mkv', 'Show/Season 2/E05.mkv'),
     ).toMatchObject({ seasonNumber: 2, episodeNumber: 5 });
   });
+
+  it('forces a Specials folder to season 0', () => {
+    expect(
+      parseMediaFilename('S01E05.mkv', 'Show/Specials/S01E05.mkv'),
+    ).toMatchObject({
+      seasonNumber: 0,
+      episodeNumber: 5,
+      isSpecial: true,
+    });
+    expect(
+      parseMediaFilename('E02.mkv', 'Show/Specials/E02.mkv'),
+    ).toMatchObject({
+      seasonNumber: 0,
+      episodeNumber: 2,
+      isSpecial: true,
+    });
+  });
 });
 
 describe('matching', () => {
@@ -147,7 +202,12 @@ describe('matching', () => {
     const parsed = parseMediaFilename('Show.S02E01.mkv');
     const [best] = rankEpisodes(parsed, episodes);
     expect(best.episode).toMatchObject({ seasonNumber: 2, episodeNumber: 1 });
-    expect(best.confidence).toBe(1);
+    expect(best.confidence).toBeCloseTo(0.88, 5);
+    expect(best.evidence).toMatchObject({
+      tag: 'correct',
+      name: 'missing',
+      coverage: 0.4,
+    });
   });
 
   it('falls back to episode-title similarity', () => {
@@ -163,6 +223,21 @@ describe('matching', () => {
       { id: '2', slug: 'speed-racer-1967', title: 'Speed Racer', year: 1967 },
     ];
     const parsed = parseMediaFilename('Speed.Racer.2008.1080p.BluRay.mkv');
+    const [best] = rankMovies(parsed, movies);
+    expect(best.movie.id).toBe('1');
+    expect(best.confidence).toBeGreaterThan(0.9);
+  });
+
+  it('normalizes punctuation and apostrophes in TVDB movie titles', () => {
+    const movies: TvdbMovie[] = [
+      {
+        id: '1',
+        slug: 'spider-man',
+        title: "Marvel's Spider-Man",
+        year: 2018,
+      },
+    ];
+    const parsed = parseMediaFilename('Marvels.Spider.Man.2018.mkv');
     const [best] = rankMovies(parsed, movies);
     expect(best.movie.id).toBe('1');
     expect(best.confidence).toBeGreaterThan(0.9);
@@ -245,6 +320,118 @@ describe('planner', () => {
       '/library/Blue Planet II/Season 01/S01E02 - The Deep.mkv',
     );
     expect(plan.items[0].action).toBe('rename');
+  });
+
+  it('renders dimensions, air dates, multi-episode ends and aliases', () => {
+    const source = file(
+      '/library/Blue Planet II/Show.S02E03E04.1920x1080.mkv',
+      'Show.S02E03E04.1920x1080.mkv',
+      '/library/Blue Planet II',
+    );
+    const plan = buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/library/Blue Planet II'],
+      files: [
+        {
+          ...source,
+          parsed: parseMediaFilename(source.filename, source.relativePath),
+          episode: {
+            tag: 'S02E03',
+            name: 'Coral Reefs',
+            seasonNumber: 2,
+            episodeNumber: 3,
+            airDate: '2018-10-28',
+          },
+          confidence: 1,
+          reason: 'Test match',
+          seriesName: 'Blue Planet II',
+        },
+      ],
+      rules: [
+        createNamingRule('tv', {
+          fileTemplate:
+            '{episodeTag}-{episodeEnd}-{width}x{height}-{airDate:short}.{extension}',
+          folderTemplate: 'Season {season}/{year}',
+        }),
+      ],
+      confidenceThreshold: 0.6,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+    });
+    expect(plan.items[0].targetPath).toBe(
+      '/library/Blue Planet II/Season 2/2018/S02E03-4-1920x1080-2018-10.mkv',
+    );
+  });
+
+  it('prefers TVDB, then Plex, then the filename for air dates', () => {
+    const build = (
+      episodeAirDate: string | undefined,
+      plexAirDate: string | undefined,
+      filename = 'Show.S02E03.mkv',
+    ) => {
+      const source = file(
+        `/library/Show/${filename}`,
+        filename,
+        '/library/Show',
+      );
+      const plan = buildOrganizePlan({
+        mediaType: 'tv',
+        sourceRoots: ['/library/Show'],
+        files: [
+          {
+            ...source,
+            parsed: parseMediaFilename(filename, source.relativePath),
+            episode: {
+              tag: 'S02E03',
+              name: 'Coral Reefs',
+              seasonNumber: 2,
+              episodeNumber: 3,
+              ...(episodeAirDate ? { airDate: episodeAirDate } : {}),
+            },
+            ...(plexAirDate
+              ? {
+                  plex: {
+                    metadataItemId: 1,
+                    mediaItemId: 2,
+                    mediaPartId: 3,
+                    guid: 'plex://episode/1',
+                    airDate: plexAirDate,
+                    watchCount: 0,
+                    watchStates: [],
+                  },
+                }
+              : {}),
+            confidence: 1,
+            reason: 'Test match',
+            seriesName: 'Show',
+          },
+        ],
+        rules: [
+          createNamingRule('tv', {
+            fileTemplate: '{airDate}.{ext}',
+            folderTemplate: '',
+          }),
+        ],
+        confidenceThreshold: 0.6,
+        renameMovieFolders: true,
+        caseInsensitive: false,
+        collisions: 'block',
+        sidecarPolicy: 'rename',
+      });
+      return plan.items[0].targetPath;
+    };
+
+    expect(build('2018-10-28', '2019-01-05')).toBe(
+      '/library/Show/2018-10-28.mkv',
+    );
+    expect(build(undefined, '2019-01-05')).toBe(
+      '/library/Show/2019-01-05.mkv',
+    );
+    expect(build(undefined, undefined, 'Show.2017.04.15.mkv')).toBe(
+      '/library/Show/2017-04-15.mkv',
+    );
   });
 
   it('flags target collisions and low confidence', () => {

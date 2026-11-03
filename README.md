@@ -4,7 +4,7 @@ A desktop app for batch-converting video with **HandBrakeCLI** or **FFmpeg**. Li
 your folders and scan filters, conversion presets describe the encoding recipes, and ordered mapping
 rules choose a preset per file (for example 480p → mobile, 1080p → TV). It scans recursively, skips
 files that already have output at the destination, and works through the queue with a configurable
-number of workers. A one-off **Quick convert** flow handles a single folder without creating a
+number of workers. A one-off **conversion** flow handles a single folder without creating a
 library.
 
 This is a fork of [HaveAGitGat/HBBatchBeast](https://github.com/HaveAGitGat/HBBatchBeast). The original
@@ -25,10 +25,11 @@ the repository root.
 
 ## Using the app
 
-1. On the home screen, either start a **Quick conversion** or open a saved library. Quick conversion
-   is a temporary setup page with the same folders, preset, mapping-rule and scan-filter controls as a
-   library. You can also press **Use as quick run** on a library to pre-fill those fields from it;
-   nothing is saved unless you choose **Save as library** after reviewing the queue.
+1. On the home screen, choose **Convert** or **Organize**, then pick a saved library. Each picker
+   also offers a one-off session — a temporary setup page with the same folders, preset, mapping-rule
+   and scan-filter controls as a library — and each library row’s overflow menu can pre-fill that
+   one-off from the library. Nothing is saved unless you choose **Save as library** after reviewing
+   the queue.
 2. Open **Settings → Libraries** to manage a library. Each folder row pairs a source with a
    destination; the **…** buttons open the OS folder picker, and multiple rows can be pasted or added
    at once. With temp staging on, every row also gets a temp folder.
@@ -61,10 +62,10 @@ editor, and a single confirmation lists exactly what a run will do before it sta
 
 **Organize** is a peer mode to conversion, not a step that requires it. Most files only need to be
 renamed into a library layout; conversion is optional. Libraries are not split by mode: every
-library has a **media type** (Movies or TV) and opens in **Convert** (its **Convert** action) and in
-**Organize** (its **Organize** action) with the same source folders. Organizer defaults — metadata
-source, naming rules, confidence, sidecars, collisions and show matches — are saved on the library as
-you edit them. The Plex database is one machine-wide setting shared by every library.
+library has a **media type** (Movies or TV) and is available from both the **Convert** and
+**Organize** pickers with the same source folders. Organizer defaults — metadata source, naming
+rules, confidence, sidecars, collisions and show matches — are saved on the library as you edit them.
+The Plex database is one machine-wide setting shared by every library.
 
 1. Choose **Movies** or **TV shows**, then add one or more source folders. A TV source folder is a
    *library root that contains shows*; a folder that directly contains media is treated as a single
@@ -78,7 +79,10 @@ you edit them. The Plex database is one machine-wide setting shared by every lib
    single show or for a one-off rename. Tick **Scan only** on one or more shows to limit discovery,
    probing and matching to that subset; “Scan the whole library” clears the selection. For movies, choose **Plex database** to reuse Plex's
    metadata, or **TVDB** to search without Plex. Resolution comes from ffprobe (with the filename as
-   a fallback), so Plex is never required.
+   a fallback), so Plex is never required. TV episodes are resolved from two independent signals —
+   the `SxxEyy` tag and the filename's episode title — with an embedded air date as a tiebreaker.
+   Regional tags often disagree with the title, so conflicts are labeled and low-confidence rows stay
+   in review instead of being guessed.
 3. Edit the ordered **naming rules**. Rules are evaluated top to bottom and the first match wins; the
    last rule is a locked default. Conditions can use media type, path, filename, extension,
    resolution, season, episode, title and year with `is`, `is not`, `contains`, `does not contain`,
@@ -86,12 +90,21 @@ you edit them. The Plex database is one machine-wide setting shared by every lib
    - The default TV templates are `{tag} - {name}.{ext}` inside `{show}/Season {season:02}`. When the
      source folder *is* the show, the `{show}` segment is dropped, so single-show libraries keep a
      flat `Season NN` layout.
-   - Templates are chip editors: typing `{` opens a searchable list of variables with descriptions
-     and examples, choosing one inserts a removable chip, and an example line under each field shows
-     the rendered result for every token. Tokens include `{show}`, `{seriesYear}`, `{tag}`, `{name}`,
-     `{season:02}`, `{title}`, `{year}`, `{resolution}`, `{ext}` and the source file tokens.
-   - Windows reserved names, control characters, trailing dots/spaces and over-long names are
-     sanitized before anything moves.
+   - Templates are chip editors: typing `{` or pressing the **Insert variable** button (`{}`) opens a
+     searchable list of variables with descriptions and examples, choosing one inserts a removable
+     chip, and an example line under each field shows the rendered result for every token. Tokens
+     include `{show}`, `{seriesYear}`, `{tag}`, `{name}`, `{season}`, `{episode}`, `{episodeEnd}`,
+     `{title}`, `{year}`, `{airDate}`, `{resolution}`, `{width}`, `{height}`, `{ext}` and the source
+     file tokens. Number tokens are unpadded by default; append `:02` for zero-padded values
+     (`{season:02}`, `{episode:02}`). `{airDate}` renders `2017-10-29` and supports
+     `:short` (2017-10), `:year`, `:month`, `:day`, `:compact` (20171029) and `:dot` (2017.10.29).
+     `{resolution}` is the bucket label (`4K`, `1080p`, `576p`, `SD`), while `{width}`/`{height}` are
+     the probed pixel dimensions. Compatibility aliases such as `{seriesName}`, `{episodeTag}`,
+     `{episodeName}`, `{resolutionBucket}` and `{extension}` are accepted.
+   - Windows reserved names, control characters, trailing dots/spaces, filesystem-invalid
+     characters and over-long names are sanitized before anything moves.
+   - Specials always use `S00` as the season, including TVDB `SPECIAL` labels, so a special renders
+     as `S00E07` in `Season 00`.
 4. The page is a three-step flow — **What to organize → Naming rules → Review and apply** — with one
    step visible at a time, so the scan results do not compete with the settings. **Scan files**
    builds a review plan and reports live progress from the scanner: a discovered-file count while
@@ -100,24 +113,31 @@ you edit them. The Plex database is one machine-wide setting shared by every lib
    **Apply**. The review table
    works like the conversion queue: sortable and resizable columns whose order and visibility are
    remembered, virtualized rows, status chips (all / will rename / skipped / conflicts / low
-   confidence) and search. Paths are not shown as long strings: the table uses structured
-   `Show`, `Season`, `Folder`, `Current name` and `New name` columns (TV-only columns collapse for
-   movies). The `Folder` column shows the folder before → after when a rename moves the file into a
-   different show/season folder, and the changed parts of both the folder and the file name are
-   highlighted. Full paths stay in the tooltips, the table scrolls inside its panel, and the page
-   itself never grows wider.
+   confidence / match review) and search. Paths are not shown as long strings: the table uses
+   structured `Show`, `Season`, `Folder`, `Current name` and `New name` columns (TV-only columns
+   collapse for movies). The `Folder` column shows the folder before → after when a rename moves the
+   file into a different show/season folder, and the changed parts of both the folder and the file
+   name are highlighted. The **Match** column is a two-faced badge: `strong`, `weak` or `conflict` on
+   the left and the confidence percentage on the right. Hover or focus it for the weighted breakdown
+   of tag, title and air-date evidence together with the full reason. Each row has a `…` menu with
+   **Fix match** and **Open folder**. Rows whose file and folder names are already identical are
+   skipped automatically. Full paths stay in the tooltips, the table scrolls inside its panel, and
+   the page itself never grows wider.
 5. **Fix match** on any row overrides the show, episode or movie for that file. The search starts from
    the parsed title; **Use file name** drops the exact file name (without the extension) into the
    episode filter for TV (which then picks out its `S01E02` tag) or into the movie search; the chosen
    result carries a clear checkmark, and each result is a collapsible card — clicking it selects the
-   match, while the chevron expands the full description without changing the selection. The fix is saved on the library (so a later scan keeps it)
+   match, while the chevron expands the full description without changing the selection. Episode
+   results are ranked by the same tag/title evidence and show a compact match badge; the extracted
+   filename title is displayed above the list, and the **New filename** preview updates with the
+   selected episode or movie before saving. The fix is saved on the library (so a later scan keeps it)
    and re-plans only that row; **Use best guess** removes it.
 6. **Apply** first shows a confirmation with the exact move count and whether Plex will be updated.
    **Undo last** reverses the previous file moves from its journal.
 
-**Quick organize** starts from the home screen (blank) or from a library card (seeded with that
-library's folders and organizer defaults). It works on an unsaved copy, so nothing you do changes a
-saved library, and **Save as library** promotes the session afterwards.
+**One-off organize** starts from the Organize picker (blank) or from a library row’s overflow menu
+(seeded with that library’s folders and organizer defaults). It works on an unsaved copy, so nothing
+you do changes a saved library, and **Save as library** promotes the session afterwards.
 
 TVDB search results show small cover art, a loading indicator, an inline error with retry, and an
 explicit empty state.
@@ -154,15 +174,17 @@ TVDB lookups use TVDB's public site search and all-seasons pages, so no API key 
 are cached under `<userData>/cache/tvdb`. TVDB data is attributed to TheTVDB in the Organize
 screen; the app stays GPL-3.0-only.
 
-Settings is a full page rather than a drawer, with **Global settings**, **Libraries**, **Organizer**
-and **Presets** tabs. Conversion settings (folders, encoder, presets, filters, file handling and the
-library type) live under **Libraries**; organizer defaults (metadata source, naming rules,
-confidence, sidecars, collisions and cleanup) live under **Organizer** for the same selected library.
-Language, worker count, verbose worker logs, the Plex database and diagnostics/log locations apply to
-the whole app; folders, encoding, mapping rules, scan filters and file handling belong to the active
-library. Create, duplicate, rename, and delete libraries from the **Libraries** tab. Settings save
-automatically as you edit them. The header's back button returns to the home screen (or to the
-library run you left).
+Settings is a full page rather than a drawer, with **Global settings**, **Libraries** and
+**Presets** tabs. The **Libraries** tab opens with a shared header — library picker, the active
+library's name and Movies/TV type, and the create/duplicate/delete actions — above two sub-tabs:
+**Encoding** (folders, encoder, presets, mapping rules, scan filters and file handling) and
+**Organizer** (metadata source, naming rules, confidence, sidecars, collisions and cleanup). The
+header summary shows the selected library's type, folder count, mapping-rule count and default
+preset, and deleting a library asks for confirmation first. Language, worker count, verbose worker
+logs, the Plex database and diagnostics/log locations apply to the whole app; folders, encoding,
+mapping rules, scan filters, file handling and organizer defaults belong to the active library.
+Settings save automatically as you edit them. The header's back button returns to the previous screen
+(the door’s library picker, the run you left, or the home screen).
 
 ### Where files live
 
@@ -223,6 +245,32 @@ Useful extras:
 - `HBB_INTEGRATION=1 pnpm test` adds a real HandBrake conversion of `tests/fixtures/sample.mp4`
   (requires HandBrakeCLI, takes a few seconds).
 
+## Versioning and releases
+
+Versions and changelog entries come from [changesets](https://changesets.dev). Any commit that changes
+the shipped app (`src/**`, `forge.config.ts`, the Vite configs, `packaging/**`, `index.html`) needs a
+pending changeset:
+
+```bash
+pnpm changeset          # describe the change and pick patch/minor/major
+git add .changeset/… && git commit
+```
+
+The husky pre-commit hook refuses such a commit without a changeset, and otherwise flattens every
+pending entry with `changeset version`, staging `package.json`, `CHANGELOG.md` and the consumed
+changeset files in the same commit. Docs, tests, CI and tooling changes do not need one.
+
+```bash
+pnpm release:version    # manual flatten, if a commit bypassed the hook
+pnpm release            # annotate v<version> at HEAD after merging
+git push --follow-tags
+pnpm make               # build installers, then publish them on GitHub
+```
+
+Set `HBB_SKIP_CHANGESET_FLATTEN=1` to skip the hook for a single commit (for example while resolving a
+merge). Version tags are `v<version>`; tags from before changesets (`2.1.5`, `2.1.4`, …) keep their
+original form.
+
 ## Changes from the original app
 
 Deliberately **removed** (the rewrite has no equivalent and legacy config keys are simply ignored):
@@ -238,8 +286,9 @@ Also different:
 
 - Libraries, conversion presets and per-library mapping rules replace the old fixed profile slots;
   create, duplicate, rename and delete libraries from settings.
-- A home screen offers Quick convert for one-off folders alongside saved libraries, then flows into
-  the library run screen (scan → review → run).
+- A home screen offers **Convert** and **Organize** doors; each opens a library picker with a one-off
+  session alongside saved libraries, then flows into the run screen (scan → review → run) or the
+  organizer.
 - A cross-platform tray icon with status indicators, and an application menu with reload, zoom,
   devtools (development builds) and a bug-report link.
 - A run journal means an interrupted run is reported as interrupted instead of looking completed.

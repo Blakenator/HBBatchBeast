@@ -49,14 +49,54 @@ const baseItem: OrganizePlanItem = {
   targetPath: '/media/tv/Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
   relativeTarget: 'Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
   action: 'rename',
-  confidence: 0.95,
-  reason: 'Matched S01E01',
+  confidence: 0.98,
+  reason: 'Tag and filename title match S01E01 - One Ocean',
   sidecars: [],
   episode: { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
   parsed: { title: 'Blue Planet', cleanTitle: 'blue planet' },
   showFolder: 'Blue Planet II',
   seriesName: 'Blue Planet II',
   showSubpath: 'Blue Planet II',
+  episodeMatch: {
+    tag: 'correct',
+    name: 'correct',
+    nameSimilarity: 1,
+    nameText: 'one ocean',
+    airDateMatch: false,
+    coverage: 0.9,
+    rawScore: 1,
+    confidenceBeforeCap: 0.98,
+    conflict: false,
+    components: [
+      {
+        kind: 'tag',
+        weight: 0.4,
+        present: true,
+        state: 'correct',
+        componentScore: 1,
+        contribution: 0.4,
+        detail: 'Matches S01E01',
+      },
+      {
+        kind: 'name',
+        weight: 0.5,
+        present: true,
+        state: 'correct',
+        similarity: 1,
+        componentScore: 1,
+        contribution: 0.5,
+        detail: 'Matches "one ocean" (100%)',
+      },
+      {
+        kind: 'airDate',
+        weight: 0.1,
+        present: false,
+        state: 'missing',
+        contribution: 0,
+        detail: 'No air date',
+      },
+    ],
+  },
 };
 
 const conflictItem: OrganizePlanItem = {
@@ -224,12 +264,121 @@ describe('OrganizePlanTable', () => {
     expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
   });
 
-  it('opens the fix dialog from a row', () => {
+  it('matches the search box against normalized file and episode names', () => {
+    const hyphenItem: OrganizePlanItem = {
+      ...baseItem,
+      id: 'hyphen',
+      sourcePath: '/media/tv/Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      sourceRelativePath: 'Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      relativeTarget:
+        'Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      targetPath:
+        '/media/tv/Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      episode: {
+        tag: 'S10E20',
+        name: 'Leggo My Meg-O',
+        seasonNumber: 10,
+        episodeNumber: 20,
+      },
+    };
+    renderTable(vi.fn(), 'tv', { ...plan, items: [hyphenItem] });
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search the review table' }),
+      { target: { value: 'leggo my meg o' } },
+    );
+    expect(screen.getByText('1 of 1 file(s)')).toBeTruthy();
+  });
+
+  it('shows folder-only and unchanged rows without a match badge', () => {
+    const folderOnly: OrganizePlanItem = {
+      ...baseItem,
+      id: 'folder-only',
+      action: 'rename',
+      folderOnly: true,
+      reason: 'Folder name updated; file name already correct',
+    };
+    const noChange: OrganizePlanItem = {
+      ...baseItem,
+      id: 'no-change',
+      action: 'skip',
+      noChange: true,
+      reason: 'Already named',
+    };
+    renderTable(vi.fn(), 'tv', {
+      ...plan,
+      items: [folderOnly, noChange],
+    });
+
+    expect(screen.getByText('folder only')).toBeTruthy();
+    expect(screen.getByText('unchanged')).toBeTruthy();
+    expect(
+      screen.queryAllByRole('button', { name: /strong|weak|conflict/ }),
+    ).toHaveLength(0);
+  });
+
+  it('shows a split match badge with the weighted breakdown', async () => {
+    renderTable();
+    const badge = screen.getByRole('button', {
+      name: 'S01E01 strong 98%',
+    });
+    fireEvent.focus(badge);
+
+    expect(await screen.findByText('Match evidence')).toBeTruthy();
+    expect(screen.getByText('Tag')).toBeTruthy();
+    expect(screen.getByText('Title')).toBeTruthy();
+    expect(screen.getByText('Air date')).toBeTruthy();
+    expect(screen.getByText(/Coverage 90%/)).toBeTruthy();
+    expect(
+      screen.getByText(/Tag and filename title match S01E01 - One Ocean/),
+    ).toBeTruthy();
+  });
+
+  it('filters rows with conflicting match evidence', () => {
+    const matchConflict: OrganizePlanItem = {
+      ...baseItem,
+      id: 'match-conflict',
+      sourcePath: '/media/tv/Blue Planet II/S01E02.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E02.mkv',
+      episode: {
+        tag: 'S01E05',
+        name: 'Big Blue',
+        seasonNumber: 1,
+        episodeNumber: 5,
+      },
+      confidence: 0.8,
+      episodeMatch: {
+        ...baseItem.episodeMatch!,
+        conflict: true,
+        conflictKind: 'tag-vs-name',
+        conflictReason: 'Tag conflicts with the filename title.',
+      },
+    };
+    renderTable(vi.fn(), 'tv', {
+      ...plan,
+      items: [baseItem, matchConflict],
+    });
+
+    expect(
+      screen.getByRole('button', { name: 'S01E05 conflict 80%' }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Match review' }));
+    expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
+  });
+
+  it('does not render a separate Why column after merging it into Match', () => {
+    renderTable();
+    expect(screen.queryByRole('columnheader', { name: 'Why' })).toBeNull();
+  });
+
+  it('opens the fix dialog from the row actions menu', () => {
     const onFixMatch = vi.fn();
     renderTable(onFixMatch);
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Fix match:/ })[0],
+      screen.getAllByRole('button', { name: /More actions for/ })[0],
     );
+    expect(screen.getByRole('button', { name: 'Open folder' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Fix match' }));
     expect(onFixMatch).toHaveBeenCalledWith(
       expect.objectContaining({ id: baseItem.id }),
     );

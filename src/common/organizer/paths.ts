@@ -10,13 +10,14 @@ import {
   normalizePathForComparison,
   pathComparisonKey,
 } from '../pathUtils';
+import { formatTemplateValue } from './templateTokens';
 
 const WINDOWS_RESERVED =
   /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 const INVALID_SEGMENT_CHARS = /[<>:"/\\|?*]/g;
 const DRIVE_PATH = /^[a-zA-Z]:($|[/\\])/;
 const UNC_PATH = /^[/\\]{2}/;
-const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::(\d+))?\}/g;
+const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::([a-zA-Z][a-zA-Z0-9_]*|\d+))?\}/g;
 const utf8 = new TextEncoder();
 
 export class OrganizePathError extends Error {
@@ -97,23 +98,24 @@ export function sanitizePathSegment(
 
 export type TemplateTokens = Record<string, string | number | undefined>;
 
-/** Renders `{token}` and `{token:02}` placeholders. Unknown tokens throw. */
+/** Renders `{token}`, `{token:02}` and `{token:variant}` placeholders. */
 export function renderTemplate(
   template: string,
   tokens: TemplateTokens,
 ): string {
   return template.replace(
     TOKEN_PATTERN,
-    (_match, token: string, padding: string | undefined) => {
+    (_match, token: string, format: string | undefined) => {
       if (!(token in tokens)) {
         throw new OrganizePathError(`Unknown template token "{${token}}"`);
       }
-      const value = tokens[token];
-      if (value === undefined || value === null) return '';
-      const text = String(value);
-      if (!padding) return text;
-      const width = Number(padding);
-      return text.padStart(width, '0');
+      const rendered = formatTemplateValue(token, format, tokens[token]);
+      if (rendered === undefined) {
+        throw new OrganizePathError(
+          `Unknown template token variant "{${token}:${format}}"`,
+        );
+      }
+      return rendered;
     },
   );
 }

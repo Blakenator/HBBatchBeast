@@ -53,14 +53,73 @@ export interface ParsedMediaName {
   title: string;
   /** Normalised title used for comparisons. */
   cleanTitle: string;
+  /**
+   * Cleaned text after the matched tag, when the filename provides one.
+   * `Blue.Planet.II.S01E02.The.Deep.mkv` → `The Deep`.
+   */
+  episodeTitle?: string;
   year?: number;
   seasonNumber?: number;
   episodeNumber?: number;
   episodeNumbers?: number[];
   resolution?: string;
+  width?: number;
   height?: number;
   isSpecial?: boolean;
   airDate?: string;
+}
+
+export type EpisodeAxisState = 'missing' | 'incorrect' | 'correct';
+
+export type EpisodeMatchComponentKind = 'tag' | 'name' | 'airDate';
+
+/** One weighted input to an episode match; also what the badge popover shows. */
+export interface EpisodeMatchComponent {
+  kind: EpisodeMatchComponentKind;
+  /** Configured weight; all weights sum to 1. */
+  weight: number;
+  present: boolean;
+  state: EpisodeAxisState;
+  /** Only for the name component. */
+  similarity?: number;
+  /** 0..1 when present, absent when the signal was missing. */
+  componentScore?: number;
+  /** componentScore * weight, or 0 when missing. */
+  contribution: number;
+  detail: string;
+}
+
+export interface EpisodeMatchEvidence {
+  tag: EpisodeAxisState;
+  name: EpisodeAxisState;
+  nameSimilarity: number;
+  nameText?: string;
+  airDateMatch: boolean;
+  components: EpisodeMatchComponent[];
+  /** Sum of weights for signals that were present (0..1). */
+  coverage: number;
+  /** Weighted component score before the coverage/calibration multiplier. */
+  rawScore: number;
+  /** Weighted confidence before any conflict/ambiguity cap. */
+  confidenceBeforeCap: number;
+  /** Conflict or ambiguity cap applied to the final confidence. */
+  cap?: number;
+}
+
+export type EpisodeConflictKind =
+  | 'tag-vs-name'
+  | 'tag-vs-air-date'
+  | 'name-vs-air-date'
+  | 'tag-name-air-date'
+  | 'ambiguous-name';
+
+/** Evidence persisted on a plan item for the review table and badge popover. */
+export interface EpisodeMatchSummary extends EpisodeMatchEvidence {
+  conflict: boolean;
+  conflictKind?: EpisodeConflictKind;
+  conflictReason?: string;
+  /** Episode tags each signal pointed at when they disagreed. */
+  suggestedTags?: { tag?: string; name?: string; airDate?: string };
 }
 
 export interface EpisodeCandidate {
@@ -68,6 +127,21 @@ export interface EpisodeCandidate {
   score: number;
   confidence: number;
   reason: string;
+  evidence: EpisodeMatchEvidence;
+}
+
+export interface EpisodeResolution {
+  episode?: TvdbEpisode;
+  candidate?: EpisodeCandidate;
+  confidence: number;
+  reason: string;
+  summary?: EpisodeMatchSummary;
+  conflict: boolean;
+  conflictKind?: EpisodeConflictKind;
+  conflictReason?: string;
+  tagCandidate?: EpisodeCandidate;
+  nameCandidate?: EpisodeCandidate;
+  airDateCandidate?: EpisodeCandidate;
 }
 
 export interface MovieCandidate {
@@ -97,6 +171,8 @@ export interface PlexAssociation {
   showTitle?: string;
   librarySectionId?: number;
   libraryRoot?: string;
+  /** Plex `originally_available_at`, reduced to YYYY-MM-DD. */
+  airDate?: string;
   directoryId?: number;
   directoryPath?: string;
   watchCount: number;
@@ -127,6 +203,8 @@ export interface OrganizePlanItem {
   episode?: TvdbEpisode;
   movie?: TvdbMovie;
   plex?: PlexAssociation;
+  /** Tag/title/air-date evidence behind an episode match. */
+  episodeMatch?: EpisodeMatchSummary;
   sidecars: OrganizeSidecar[];
   /** Filename-derived data the templates rendered with. */
   parsed?: ParsedMediaName;
@@ -139,6 +217,10 @@ export interface OrganizePlanItem {
   seriesYear?: number;
   /** True when the source and target differ only by case. */
   caseOnly?: boolean;
+  /** True when only the folder changes and the file name is already correct. */
+  folderOnly?: boolean;
+  /** True when the rendered target path is already the source path. */
+  noChange?: boolean;
 }
 
 export interface OrganizePlan {

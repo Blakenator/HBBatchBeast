@@ -305,7 +305,7 @@ export function emptyLibrary(
 }
 
 /**
- * Temporary library used by Quick convert. It intentionally never carries
+ * Temporary library used by one-off conversion. It intentionally never carries
  * destructive options into a one-off run.
  */
 export function createQuickLibrary(
@@ -315,7 +315,7 @@ export function createQuickLibrary(
   const base = source
     ? (JSON.parse(JSON.stringify(source)) as Library)
     : emptyLibrary({
-        name: 'Quick conversion',
+        name: 'One-off conversion',
         defaultPresetId: presets[0]?.id ?? '',
       });
   if (!source && presets[0]?.ffmpeg) {
@@ -325,7 +325,7 @@ export function createQuickLibrary(
   return {
     ...base,
     id: createLibraryId(),
-    name: 'Quick conversion',
+    name: 'One-off conversion',
     organize: undefined,
     defaults: {
       ...base.defaults,
@@ -337,7 +337,7 @@ export function createQuickLibrary(
 }
 
 /**
- * Temporary library used by Quick organize. It is never persisted: the
+ * Temporary library used by one-off organize. It is never persisted: the
  * organizer works on a copy so a one-off cleanup cannot change saved settings.
  */
 export function createQuickOrganizeLibrary(
@@ -348,12 +348,12 @@ export function createQuickOrganizeLibrary(
     return {
       ...copy,
       id: createLibraryId(),
-      name: 'Quick organize',
+      name: 'One-off organize',
       organize: resolveOrganizeSettings(copy.organize, copy.mediaType),
     };
   }
   return emptyLibrary({
-    name: 'Quick organize',
+    name: 'One-off organize',
     mediaType: options.mediaType ?? 'movies',
   });
 }

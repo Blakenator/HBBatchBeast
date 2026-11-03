@@ -120,7 +120,7 @@ describe('library organizer defaults', () => {
     const quick = createQuickOrganizeLibrary({ source });
 
     expect(quick.id).not.toBe(source.id);
-    expect(quick.name).toBe('Quick organize');
+    expect(quick.name).toBe('One-off organize');
     expect(quick.mediaType).toBe('tv');
     expect(quick.folders).toEqual(source.folders);
     expect(createQuickOrganizeLibrary({}).mediaType).toBe('movies');

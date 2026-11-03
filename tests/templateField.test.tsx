@@ -44,13 +44,45 @@ describe('TemplateField', () => {
     render(<Harness />);
     const input = screen.getByRole('textbox', { name: 'Folder template' });
     fireEvent.change(input, { target: { value: 'Season {se' } });
-    fireEvent.mouseDown(screen.getByText('Season number'));
+    fireEvent.mouseDown(screen.getByText('Season number (zero-padded)'));
 
     expect(screen.getByTestId('value').textContent).toBe('Season {season:02}');
     expect(screen.getByText('{season:02}')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove season' }));
     expect(screen.getByTestId('value').textContent).toBe('Season ');
+  });
+
+  it('offers the unpadded number variant', () => {
+    render(<Harness />);
+    const input = screen.getByRole('textbox', { name: 'Folder template' });
+    fireEvent.change(input, { target: { value: 'Season {se' } });
+    fireEvent.mouseDown(screen.getByText('Season number'));
+
+    expect(screen.getByTestId('value').textContent).toBe('Season {season}');
+  });
+
+  it('filters format variants while typing a colon', () => {
+    render(<Harness />);
+    const input = screen.getByRole('textbox', { name: 'Folder template' });
+    fireEvent.change(input, { target: { value: '{airDate:sh' } });
+
+    expect(screen.getByText('Air date (year-month)')).toBeTruthy();
+    expect(screen.queryByText('Air year')).toBeNull();
+  });
+
+  it('opens the variable list from the insert button', () => {
+    render(<Harness initial="Season " />);
+    const button = screen.getByRole('button', { name: 'Insert variable' });
+    fireEvent.click(button);
+
+    expect(
+      screen.getByRole('listbox', { name: 'Template variables' }),
+    ).toBeTruthy();
+    fireEvent.mouseDown(screen.getByText('Frame width'));
+
+    expect(screen.getByTestId('value').textContent).toBe('Season {width}');
+    expect(screen.getByText('{width}')).toBeTruthy();
   });
 
   it('renders an example line for every token', () => {

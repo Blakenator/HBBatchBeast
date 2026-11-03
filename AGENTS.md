@@ -28,3 +28,7 @@ non-negotiables are:
 - Sanitize generated names and compare collisions case-insensitively on Windows/macOS.
 
 Validate with `pnpm typecheck`, `pnpm lint`, and `pnpm test`.
+
+Changes to `src/**`, the build configs, `packaging/**` or `index.html` need a changeset: run
+`pnpm changeset` and commit the generated `.changeset/*.md`. The husky pre-commit hook flattens it into
+`package.json` and `CHANGELOG.md`.

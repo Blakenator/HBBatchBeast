@@ -58,8 +58,10 @@ interface LibraryEditorProps {
   config: AppConfigV2;
   library: Library;
   onChange: (library: Library) => void;
-  /** Quick conversion keeps the safe defaults and hides destructive controls. */
+  /** One-off conversion keeps the safe defaults and hides destructive controls. */
   showFileHandling?: boolean;
+  /** Settings shows the shared name/type fields in its page header instead. */
+  showIdentity?: boolean;
 }
 
 function rows(value: string): string[] {
@@ -75,6 +77,7 @@ export const LibraryEditor: React.FC<LibraryEditorProps> = ({
   library,
   onChange,
   showFileHandling = true,
+  showIdentity = true,
 }) => {
   const encoderPresets = config.presets.filter((preset) =>
     presetMatchesEncoder(preset, library.encoder),
@@ -187,42 +190,43 @@ export const LibraryEditor: React.FC<LibraryEditorProps> = ({
 
   return (
     <Wrap>
-      <Section>
-        <SectionTitle>Library</SectionTitle>
-        <Form.Control
-          value={library.name}
-          aria-label="Library name"
-          onChange={(event) =>
-            onChange({ ...library, name: event.target.value })
-          }
-        />
-        <SegmentedControl
-          label="Library type"
-          value={library.mediaType}
-          onChange={(value) =>
-            onChange(
-              withLibraryMediaType(
-                library,
-                value === 'tv' ? 'tv' : 'movies',
-              ),
-            )
-          }
-          options={[
-            { value: 'movies', label: 'Movies' },
-            { value: 'tv', label: 'TV shows' },
-          ]}
-        />
-        <p
-          style={{
-            margin: 0,
-            color: 'var(--hb-textMuted)',
-            fontSize: 'var(--hb-font-xs)',
-          }}
-        >
-          The type drives the organizer's naming rules. Organizer defaults live
-          in the Organizer tab.
-        </p>
-      </Section>
+      {showIdentity && (
+        <Section>
+          <SectionTitle>Library</SectionTitle>
+          <Form.Control
+            value={library.name}
+            aria-label="Library name"
+            onChange={(event) =>
+              onChange({ ...library, name: event.target.value })
+            }
+          />
+          <SegmentedControl
+            label="Library type"
+            value={library.mediaType}
+            onChange={(value) =>
+              onChange(
+                withLibraryMediaType(
+                  library,
+                  value === 'tv' ? 'tv' : 'movies',
+                ),
+              )
+            }
+            options={[
+              { value: 'movies', label: 'Movies' },
+              { value: 'tv', label: 'TV shows' },
+            ]}
+          />
+          <p
+            style={{
+              margin: 0,
+              color: 'var(--hb-textMuted)',
+              fontSize: 'var(--hb-font-xs)',
+            }}
+          >
+            The type drives the organizer's naming rules and file templates.
+          </p>
+        </Section>
+      )}
 
       <Section>
         <SectionTitle>Folders</SectionTitle>

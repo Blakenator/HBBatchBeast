@@ -7,6 +7,7 @@ import {
   normalizePathForComparison,
   pathBasename,
   pathComparisonKey,
+  pathDirname,
 } from '../src/common/pathUtils';
 
 describe('normalizePathForComparison', () => {
@@ -99,6 +100,25 @@ describe('pathBasename', () => {
     expect(pathBasename('C:\\Media\\Movies\\Show.mkv')).toBe('Show.mkv');
     expect(pathBasename('/media/movies/')).toBe('movies');
     expect(pathBasename('')).toBe('');
+  });
+});
+
+describe('pathDirname', () => {
+  it('handles POSIX paths and roots', () => {
+    expect(pathDirname('/media/movies/Show.mkv')).toBe('/media/movies');
+    expect(pathDirname('/Show.mkv')).toBe('/');
+    expect(pathDirname('relative/Show.mkv')).toBe('relative');
+    expect(pathDirname('Show.mkv')).toBe('');
+    expect(pathDirname('')).toBe('');
+  });
+
+  it('preserves Windows separator style and drive roots', () => {
+    expect(pathDirname('C:\\Media\\Movies\\Show.mkv')).toBe(
+      'C:\\Media\\Movies',
+    );
+    expect(pathDirname('C:/Media/Movies/Show.mkv')).toBe('C:/Media/Movies');
+    expect(pathDirname('C:\\Show.mkv')).toBe('C:\\');
+    expect(pathDirname('\\\\nas\\share\\Show.mkv')).toBe('\\\\nas\\share');
   });
 });
 

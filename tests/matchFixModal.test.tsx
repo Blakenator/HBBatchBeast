@@ -86,6 +86,8 @@ describe('MatchFixModal', () => {
 
     expect(await screen.findByText('The Deep')).toBeTruthy();
     fireEvent.click(screen.getByText('The Deep'));
+    expect(screen.getByText(/New filename:/)).toBeTruthy();
+    expect(screen.getByText('S01E02 - The Deep.mkv')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Save match' }));
 
     expect(onSave).toHaveBeenCalledWith({
@@ -207,6 +209,131 @@ describe('MatchFixModal', () => {
     expect(
       screen.queryByRole('region', { name: 'Full description' }),
     ).toBeNull();
+  });
+
+  it('matches the episode filter against normalized titles', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        {
+          tag: 'S10E20',
+          name: 'Leggo My Meg-O',
+          seasonNumber: 10,
+          episodeNumber: 20,
+        },
+        {
+          tag: 'S10E01',
+          name: 'Lottery Fever',
+          seasonNumber: 10,
+          episodeNumber: 1,
+        },
+      ],
+    });
+    renderModal();
+    await screen.findByText('Leggo My Meg-O');
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Find episode' }),
+      { target: { value: 'leggo my meg o' } },
+    );
+
+    expect(screen.getByText('Leggo My Meg-O')).toBeTruthy();
+    expect(screen.queryByText('Lottery Fever')).toBeNull();
+  });
+
+  it('shows ranked match evidence badges and the extracted title', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        {
+          tag: 'S01E02',
+          name: 'The Deep',
+          seasonNumber: 1,
+          episodeNumber: 2,
+        },
+        {
+          tag: 'S01E01',
+          name: 'One Ocean',
+          seasonNumber: 1,
+          episodeNumber: 1,
+        },
+      ],
+    });
+    const lib = library();
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Blue Planet II One Ocean',
+            cleanTitle: 'blue planet ii one ocean',
+            episodeTitle: 'One Ocean',
+            seasonNumber: 1,
+            episodeNumber: 1,
+            episodeNumbers: [1],
+          },
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText('Matching filename title: “One Ocean”'),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'S01E01 strong 98%' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /S01E02 weak/ }),
+    ).toBeTruthy();
+  });
+
+  it('uses the resolved conflict confidence for the best episode', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        {
+          tag: 'S01E02',
+          name: 'The Deep',
+          seasonNumber: 1,
+          episodeNumber: 2,
+        },
+        {
+          tag: 'S01E05',
+          name: 'Big Blue',
+          seasonNumber: 1,
+          episodeNumber: 5,
+        },
+      ],
+    });
+    const lib = library();
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Blue Planet II Big Blue',
+            cleanTitle: 'blue planet ii big blue',
+            episodeTitle: 'Big Blue',
+            seasonNumber: 1,
+            episodeNumber: 2,
+            episodeNumbers: [2],
+          },
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    // The row would be conflict-capped at 80%; the modal must agree instead of
+    // showing the candidate's uncapped base confidence.
+    expect(
+      await screen.findByRole('button', { name: 'S01E05 conflict 80%' }),
+    ).toBeTruthy();
   });
 
   it('clears the fix with Use best guess', async () => {

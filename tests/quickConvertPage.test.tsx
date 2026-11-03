@@ -30,7 +30,7 @@ vi.mock('../src/frontend/helpers', () => ({
 
 const library: Library = {
   id: 'library-1',
-  name: 'Quick conversion',
+  name: 'One-off conversion',
   folders: [{ id: 'folder-1', source: '/src', destination: '/dst' }],
   filters: defaultFilterExpression(),
   encoder: 'handbrake',
@@ -69,7 +69,7 @@ describe('QuickConvertPage', () => {
       </IntlProvider>,
     );
 
-    expect(screen.getByText('Quick conversion')).toBeTruthy();
+    expect(screen.getByText('One-off conversion')).toBeTruthy();
     expect(screen.getByText('Default mapping rules')).toBeTruthy();
     expect(screen.getByText('Default preset')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();

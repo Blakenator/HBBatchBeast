@@ -99,7 +99,39 @@ function plannedInputFor(
     ...(item.showFolder ? { showFolder: item.showFolder } : {}),
     ...(item.showSubpath !== undefined ? { showSubpath: item.showSubpath } : {}),
     ...(item.plex ? { plex: item.plex } : {}),
+    ...(!override && item.episodeMatch
+      ? { episodeMatch: item.episodeMatch }
+      : {}),
   };
+}
+
+/**
+ * Renders the target path for a prospective manual match without touching the
+ * plan. Used by the Fix match modal to preview the new filename.
+ */
+export function previewTargetForItem(
+  item: OrganizePlanItem,
+  override: OrganizeMatchOverride,
+  options: {
+    settings: OrganizeSettings;
+    mediaType: MediaType;
+    caseInsensitive?: boolean;
+  },
+): string | undefined {
+  const replanned = buildOrganizePlan({
+    mediaType: options.mediaType,
+    sourceRoots: [item.sourceRoot],
+    files: [plannedInputFor(item, override)],
+    rules: options.settings.namingRules,
+    confidenceThreshold: 0,
+    renameMovieFolders: options.settings.renameMovieFolders,
+    caseInsensitive:
+      options.caseInsensitive ?? options.settings.caseInsensitive ?? false,
+    collisions: 'suffix',
+    sidecarPolicy: 'skip',
+    existingPaths: [],
+  });
+  return replanned.items[0]?.targetPath;
 }
 
 /**

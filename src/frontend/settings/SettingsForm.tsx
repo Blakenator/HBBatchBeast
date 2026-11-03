@@ -17,9 +17,10 @@ import { PlexSettings } from './PlexSettings';
 import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
 import { Icon } from '../ui/Icon';
 import type { AppIconName } from '../ui/icons';
-import { LibraryBar } from './library/LibraryBar';
+import { LibraryHeader } from './library/LibraryHeader';
 import { LibraryEditor } from './library/LibraryEditor';
 import { OrganizerSettings } from './organizer/OrganizerSettings';
+import { SegmentedControl } from './SegmentedControl';
 import { PresetManager } from '../presets/PresetManager';
 
 interface SettingsFormProps {
@@ -42,6 +43,9 @@ const tabTitle = (icon: AppIconName, label: string) => (
 export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
   const { formatMessage } = useIntl();
   const [tab, setTab] = useState('global');
+  const [librarySection, setLibrarySection] = useState<
+    'encoding' | 'organizer'
+  >('encoding');
   const {
     currentLibrary,
     currentGlobalConfig,
@@ -86,9 +90,9 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
   };
 
   const deleteLibrary = () => {
-    if (currentGlobalConfig.libraries.length <= 1) return;
+    if (!currentLibrary || currentGlobalConfig.libraries.length <= 1) return;
     const libraries = currentGlobalConfig.libraries.filter(
-      (library) => library.id !== currentGlobalConfig.selected_library,
+      (library) => library.id !== currentLibrary.id,
     );
     mergeAppUpdate({
       libraries,
@@ -97,22 +101,6 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
   };
 
   const globalSettings = resolveGlobalSettings(currentGlobalConfig);
-
-  const libraryBar = (
-    <LibraryBar
-      config={currentGlobalConfig}
-      onSelect={selectLibrary}
-      onCreate={addLibrary}
-      onDuplicate={duplicateLibrary}
-      onRename={(libraryId, name) =>
-        updateLibrary(
-          (library) => ({ ...library, name: name.trim() || library.name }),
-          libraryId,
-        )
-      }
-      onDelete={deleteLibrary}
-    />
-  );
 
   return (
     <div>
@@ -156,51 +144,75 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
         </Tab>
 
         <Tab
-          eventKey="convert"
+          eventKey="libraries"
           title={tabTitle(
-            'quick',
+            'libraries',
             formatMessage(settingsMessages.librarySettings),
           )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
-            {tab !== 'convert' ? null : (
+            {tab !== 'libraries' ? null : (
               <>
-                {libraryBar}
-                <div style={{ marginTop: 'var(--hb-space-md)' }}>
-                  {currentLibrary ? (
-                    <LibraryEditor
-                      config={currentGlobalConfig}
-                      library={currentLibrary}
-                      onChange={(library) =>
-                        updateLibrary(() => library, library.id)
-                      }
-                    />
-                  ) : null}
-                </div>
-              </>
-            )}
-          </div>
-        </Tab>
-
-        <Tab
-          eventKey="organizer"
-          title={tabTitle('libraries', 'Organizer')}
-        >
-          <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
-            {tab !== 'organizer' ? null : (
-              <>
-                {libraryBar}
-                <div style={{ marginTop: 'var(--hb-space-md)' }}>
-                  {currentLibrary ? (
-                    <OrganizerSettings
-                      config={currentGlobalConfig}
-                      library={currentLibrary}
-                      onChange={(library) =>
-                        updateLibrary(() => library, library.id)
-                      }
-                    />
-                  ) : null}
-                </div>
+                <LibraryHeader
+                  config={currentGlobalConfig}
+                  library={currentLibrary}
+                  onSelect={selectLibrary}
+                  onCreate={addLibrary}
+                  onDuplicate={duplicateLibrary}
+                  onChange={(library) =>
+                    updateLibrary(() => library, library.id)
+                  }
+                  onDelete={deleteLibrary}
+                />
+                {currentLibrary ? (
+                  <>
+                    <div style={{ marginTop: 'var(--hb-space-md)' }}>
+                      <SegmentedControl
+                        label={formatMessage(settingsMessages.librarySections)}
+                        value={librarySection}
+                        onChange={(value) =>
+                          setLibrarySection(
+                            value === 'organizer' ? 'organizer' : 'encoding',
+                          )
+                        }
+                        options={[
+                          {
+                            value: 'encoding',
+                            label: formatMessage(
+                              settingsMessages.encodingSection,
+                            ),
+                          },
+                          {
+                            value: 'organizer',
+                            label: formatMessage(
+                              settingsMessages.organizerSection,
+                            ),
+                          },
+                        ]}
+                      />
+                    </div>
+                    <div style={{ marginTop: 'var(--hb-space-md)' }}>
+                      {librarySection === 'encoding' ? (
+                        <LibraryEditor
+                          config={currentGlobalConfig}
+                          library={currentLibrary}
+                          showIdentity={false}
+                          onChange={(library) =>
+                            updateLibrary(() => library, library.id)
+                          }
+                        />
+                      ) : (
+                        <OrganizerSettings
+                          config={currentGlobalConfig}
+                          library={currentLibrary}
+                          onChange={(library) =>
+                            updateLibrary(() => library, library.id)
+                          }
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : null}
               </>
             )}
           </div>

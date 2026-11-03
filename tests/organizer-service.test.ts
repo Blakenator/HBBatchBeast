@@ -11,7 +11,7 @@ import {
   undoLastOrganize,
 } from '../src/backend/organizer/service';
 import { emptyLibrary } from '../src/common/library';
-import { createOrganizeSettings } from '../src/common/organizer/settings';
+import { createNamingRule, createOrganizeSettings } from '../src/common/organizer/settings';
 import type { OrganizeScanProgress } from '../src/common/organizer/types';
 import type { TvdbClient } from '../src/backend/organizer/tvdb/client';
 
@@ -96,7 +96,12 @@ describe('organize service', () => {
     expect(plan.items[0]).toMatchObject({
       action: 'rename',
       targetPath: path.join(showFolder, 'Season 01', 'S01E01 - One Ocean.mkv'),
-      confidence: 1,
+    });
+    expect(plan.items[0].confidence).toBeCloseTo(0.98, 5);
+    expect(plan.items[0].episodeMatch).toMatchObject({
+      tag: 'correct',
+      name: 'correct',
+      conflict: false,
     });
     expect(plan.items[0].sidecars).toHaveLength(1);
     expect(plan.items[0].sidecars[0].targetPath).toBe(
@@ -335,6 +340,37 @@ describe('organize service', () => {
     ]);
     expect(plan.items.some((item) => item.sourcePath.includes('Show B'))).toBe(
       false,
+    );
+  });
+
+  it('uses probed frame dimensions in templates', async () => {
+    const lib = library();
+    lib.organize = {
+      ...lib.organize!,
+      namingRules: [
+        createNamingRule('tv', {
+          fileTemplate: '{tag} - {width}x{height}.{ext}',
+          folderTemplate: 'Season {season:02}',
+        }),
+      ],
+    };
+    const plan = await buildOrganizePlanForLibrary({
+      library: lib,
+      settings: lib.organize,
+      appPaths: paths,
+      platform: 'linux',
+      home: root,
+      tvdbClient: fakeClient,
+      probeMedia: async () => ({ width: 1920, height: 1080 }),
+    });
+
+    expect(plan.items[0].parsed).toMatchObject({
+      width: 1920,
+      height: 1080,
+      resolution: '1080p',
+    });
+    expect(plan.items[0].targetPath).toBe(
+      path.join(showFolder, 'Season 01', 'S01E01 - 1920x1080.mkv'),
     );
   });
 
