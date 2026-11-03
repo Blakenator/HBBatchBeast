@@ -9,3 +9,4 @@ export * from './filterExpression';
 export * from './library';
 export * from './configMigration';
 export * from './ffprobeProperties';
+export * from './organizer';

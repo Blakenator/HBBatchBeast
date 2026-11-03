@@ -22,6 +22,8 @@ import {
   createRuleId,
   emptyLibrary,
 } from './library';
+import { resolveOrganizeSettings } from './organizer/settings';
+import type { MediaType } from './organizer/types';
 import {
   normalizePresetName,
   parseCommandPair,
@@ -231,6 +233,7 @@ function migrateProfile(
     library: {
       id: createLibraryId(),
       name: profile.name?.trim() || `Library ${index + 1}`,
+      mediaType: 'movies',
       folders,
       filters: resolveFilterExpression(advanced),
       encoder,
@@ -249,7 +252,7 @@ function legacySettings(raw: GlobalAppConfig): Partial<GlobalSettingsConfig> {
   return selected?.tab_system ?? { ...DEFAULT_GLOBAL_SETTINGS };
 }
 
-function normalizeV2(raw: Partial<AppConfigV2>): AppConfigV2 {
+function normalizeConfig(raw: Partial<AppConfigV2>): AppConfigV2 {
   const libraries =
     Array.isArray(raw.libraries) && raw.libraries.length > 0
       ? raw.libraries
@@ -271,21 +274,73 @@ function normalizeV2(raw: Partial<AppConfigV2>): AppConfigV2 {
   return {
     schema_version: APP_CONFIG_SCHEMA_VERSION,
     lang: raw.lang ?? 'en',
-    app_settings: raw.app_settings ?? { ...DEFAULT_GLOBAL_SETTINGS },
+    app_settings: withLegacyPlex(
+      raw.app_settings ?? { ...DEFAULT_GLOBAL_SETTINGS },
+      libraries,
+    ),
     version_message: raw.version_message ?? '',
     selected_library: selected,
     presets,
-    libraries: libraries.map((library) => ({
-      ...library,
-      filters: library.filters ?? resolveFilterExpression(undefined),
-      mappingRules: library.mappingRules ?? [],
-      defaults: library.defaults ?? {},
-      folders: (library.folders ?? []).map((folder) => ({
-        ...folder,
-        id: folder.id || createFolderId(),
-      })),
+    libraries: libraries.map(normalizeLibrary),
+  };
+}
+
+interface LegacyOrganizeShape {
+  mediaType?: unknown;
+  plex?: { dbPath?: unknown; updateByDefault?: unknown };
+  organize?: { mediaType?: unknown };
+}
+
+/**
+ * The Plex database used to live inside each library's organizer settings. It
+ * is one server per machine, so it moves to the global settings once.
+ */
+function withLegacyPlex(
+  settings: Partial<GlobalSettingsConfig>,
+  libraries: Library[],
+): Partial<GlobalSettingsConfig> {
+  if (settings.plex && typeof settings.plex.dbPath === 'string') {
+    return settings;
+  }
+  for (const library of libraries) {
+    const legacy = (library.organize as LegacyOrganizeShape | undefined)?.plex;
+    if (legacy && typeof legacy.dbPath === 'string' && legacy.dbPath.trim()) {
+      return {
+        ...settings,
+        plex: {
+          dbPath: legacy.dbPath,
+          updateByDefault: legacy.updateByDefault === true,
+        },
+      };
+    }
+  }
+  return settings;
+}
+
+/**
+ * Fills in organizer defaults and drops the retired `capabilities` field from
+ * configs written while libraries were split into convert/organize kinds.
+ */
+function normalizeLibrary(library: Library): Library {
+  const legacy = library as Library & LegacyOrganizeShape;
+  const mediaType: MediaType =
+    legacy.mediaType === 'tv' || legacy.organize?.mediaType === 'tv'
+      ? 'tv'
+      : 'movies';
+  const normalized: Library & { capabilities?: unknown } = {
+    ...library,
+    mediaType,
+    organize: resolveOrganizeSettings(library.organize, mediaType),
+    filters: library.filters ?? resolveFilterExpression(undefined),
+    mappingRules: library.mappingRules ?? [],
+    defaults: library.defaults ?? {},
+    folders: (library.folders ?? []).map((folder) => ({
+      ...folder,
+      id: folder.id || createFolderId(),
     })),
   };
+  delete normalized.capabilities;
+  return normalized;
 }
 
 /**
@@ -302,12 +357,21 @@ export function migrateAppConfig(raw: unknown): {
 
   const candidate = raw as Partial<AppConfigV2> & Partial<GlobalAppConfig>;
   if (candidate.schema_version === APP_CONFIG_SCHEMA_VERSION) {
-    const config = normalizeV2(candidate);
+    const config = normalizeConfig(candidate);
     // Normalization may add missing ids/defaults; persist that once so a
-    // partially written v2 file cannot regenerate folder ids on every launch.
+    // partially written file cannot regenerate folder ids on every launch.
     return {
       config,
       changed: JSON.stringify(candidate) !== JSON.stringify(config),
+    };
+  }
+
+  const looksLikeV2 =
+    Array.isArray(candidate.libraries) && candidate.libraries.length > 0;
+  if (looksLikeV2) {
+    return {
+      config: normalizeConfig(candidate),
+      changed: true,
     };
   }
 

@@ -180,6 +180,42 @@ export const DiagnosticsPanel: React.FC = () => {
             </Button>
           </Row>
 
+          {info.organizer && (
+            <>
+              <Row style={{ alignItems: 'center' }}>
+                <Hint>
+                  {formatMessage(diagnosticsMessages.organizerSummary, {
+                    pending: info.organizer.pendingTransfers,
+                    backups: info.organizer.backups.length,
+                    cached: info.organizer.tvdbCacheFiles,
+                  })}
+                </Hint>
+              </Row>
+              <Row>
+                <Button
+                  compact
+                  variant="ghost"
+                  icon="browse"
+                  onClick={() =>
+                    void openPath.refetch({ path: info.organizer!.backupDir })
+                  }
+                >
+                  {formatMessage(diagnosticsMessages.openBackups)}
+                </Button>
+                <Button
+                  compact
+                  variant="ghost"
+                  icon="browse"
+                  onClick={() =>
+                    void openPath.refetch({ path: info.organizer!.tvdbCacheDir })
+                  }
+                >
+                  {formatMessage(diagnosticsMessages.openTvdbCache)}
+                </Button>
+              </Row>
+            </>
+          )}
+
           <Row style={{ alignItems: 'center' }}>
             <Hint>
               {interrupted

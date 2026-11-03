@@ -57,8 +57,108 @@ the repository root.
 Destructive options (delete source, replace the original) are grouped and explained in the library
 editor, and a single confirmation lists exactly what a run will do before it starts.
 
-Settings is a full page rather than a drawer, with **Global settings**, **Libraries**, and
-**Presets** tabs. Language, worker count, verbose worker logs, and diagnostics/log locations apply to
+## Organizing existing files
+
+**Organize** is a peer mode to conversion, not a step that requires it. Most files only need to be
+renamed into a library layout; conversion is optional. Libraries are not split by mode: every
+library has a **media type** (Movies or TV) and opens in **Convert** (its **Convert** action) and in
+**Organize** (its **Organize** action) with the same source folders. Organizer defaults — metadata
+source, naming rules, confidence, sidecars, collisions and show matches — are saved on the library as
+you edit them. The Plex database is one machine-wide setting shared by every library.
+
+1. Choose **Movies** or **TV shows**, then add one or more source folders. A TV source folder is a
+   *library root that contains shows*; a folder that directly contains media is treated as a single
+   show.
+2. For TV, choose **Detect & match shows**. Each first-level show folder is listed with its file
+   count and matched to TVDB from the folder name (`Blue.Planet.II.2017.1080p` → *Blue Planet II*
+   (2017)). Every match shows its cover art and can be changed or cleared; matches are persisted on
+   the library. Opening the search pre-fills the folder-derived query and reuses the results from the
+   automatic attempt, so a failed auto-match is one click away from a manual pick. A folder can also
+   be declared **Whole folder is one show**, which is useful when the folder already contains a
+   single show or for a one-off rename. Tick **Scan only** on one or more shows to limit discovery,
+   probing and matching to that subset; “Scan the whole library” clears the selection. For movies, choose **Plex database** to reuse Plex's
+   metadata, or **TVDB** to search without Plex. Resolution comes from ffprobe (with the filename as
+   a fallback), so Plex is never required.
+3. Edit the ordered **naming rules**. Rules are evaluated top to bottom and the first match wins; the
+   last rule is a locked default. Conditions can use media type, path, filename, extension,
+   resolution, season, episode, title and year with `is`, `is not`, `contains`, `does not contain`,
+   `at least` and `at most`.
+   - The default TV templates are `{tag} - {name}.{ext}` inside `{show}/Season {season:02}`. When the
+     source folder *is* the show, the `{show}` segment is dropped, so single-show libraries keep a
+     flat `Season NN` layout.
+   - Templates are chip editors: typing `{` opens a searchable list of variables with descriptions
+     and examples, choosing one inserts a removable chip, and an example line under each field shows
+     the rendered result for every token. Tokens include `{show}`, `{seriesYear}`, `{tag}`, `{name}`,
+     `{season:02}`, `{title}`, `{year}`, `{resolution}`, `{ext}` and the source file tokens.
+   - Windows reserved names, control characters, trailing dots/spaces and over-long names are
+     sanitized before anything moves.
+4. The page is a three-step flow — **What to organize → Naming rules → Review and apply** — with one
+   step visible at a time, so the scan results do not compete with the settings. **Scan files**
+   builds a review plan and reports live progress from the scanner: a discovered-file count while
+   walking the folders, then a real percentage with the file and show currently being probed and
+   matched, plus elapsed time and an estimate of the remainder. Nothing changes on disk until
+   **Apply**. The review table
+   works like the conversion queue: sortable and resizable columns whose order and visibility are
+   remembered, virtualized rows, status chips (all / will rename / skipped / conflicts / low
+   confidence) and search. Paths are not shown as long strings: the table uses structured
+   `Show`, `Season`, `Folder`, `Current name` and `New name` columns (TV-only columns collapse for
+   movies). The `Folder` column shows the folder before → after when a rename moves the file into a
+   different show/season folder, and the changed parts of both the folder and the file name are
+   highlighted. Full paths stay in the tooltips, the table scrolls inside its panel, and the page
+   itself never grows wider.
+5. **Fix match** on any row overrides the show, episode or movie for that file. The search starts from
+   the parsed title; **Use file name** drops the exact file name (without the extension) into the
+   episode filter for TV (which then picks out its `S01E02` tag) or into the movie search; the chosen
+   result carries a clear checkmark, and each result is a collapsible card — clicking it selects the
+   match, while the chevron expands the full description without changing the selection. The fix is saved on the library (so a later scan keeps it)
+   and re-plans only that row; **Use best guess** removes it.
+6. **Apply** first shows a confirmation with the exact move count and whether Plex will be updated.
+   **Undo last** reverses the previous file moves from its journal.
+
+**Quick organize** starts from the home screen (blank) or from a library card (seeded with that
+library's folders and organizer defaults). It works on an unsaved copy, so nothing you do changes a
+saved library, and **Save as library** promotes the session afterwards.
+
+TVDB search results show small cover art, a loading indicator, an inline error with retry, and an
+explicit empty state.
+
+### Plex updates and watch history
+
+Updating Plex is optional per operation. When it is on, HBBatchBeast checks the database, checks
+that Plex is stopped, writes a timestamped backup under `<userData>/backups`, and then updates
+`media_parts.file`, the `directories` tree and external subtitle `media_streams.url` values in one
+transaction. It never writes `metadata_items`.
+
+Watch history is keyed by Plex's metadata GUID, not by path, so history follows the file: when a TV
+file is matched to a different episode, the watch rows are moved or merged onto the correct episode.
+If Plex has not created that episode yet, a pending transfer is recorded in
+`<userData>/organize-pending.json`; rescan Plex, then choose **Complete pending history**.
+
+When Plex is running, Apply offers three choices: **Stop Plex and continue** (best effort through
+systemd, launchd or the Windows process), **Apply without Plex** (files only), or **Cancel**. Plex is
+restarted after an apply attempt when HBBatchBeast stopped it. If Plex is managed by Docker or a
+remote host, stop it there and use **Check** to recheck.
+
+| OS | Plex database candidate | Service |
+| --- | --- | --- |
+| Windows | `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\com.plexapp.plugins.library.db` | Plex tray icon, or `Plex Media Server.exe` |
+| macOS | `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` | launchd job `com.plexapp.plexmediaserver` |
+| Linux | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` (or `~/.config/plex/...`) | `systemctl stop plexmediaserver` |
+
+The Plex data directory is usually owned by the `plex` service account. On Linux, add your user to
+the `plex` group (then sign in again) or grant an ACL; on Windows use `icacls`; on macOS adjust
+Finder/Get Info permissions. The app shows the OS-specific remediation instead of asking for
+elevation.
+
+TVDB lookups use TVDB's public site search and all-seasons pages, so no API key is needed. Responses
+are cached under `<userData>/cache/tvdb`. TVDB data is attributed to TheTVDB in the Organize
+screen; the app stays GPL-3.0-only.
+
+Settings is a full page rather than a drawer, with **Global settings**, **Libraries**, **Organizer**
+and **Presets** tabs. Conversion settings (folders, encoder, presets, filters, file handling and the
+library type) live under **Libraries**; organizer defaults (metadata source, naming rules,
+confidence, sidecars, collisions and cleanup) live under **Organizer** for the same selected library.
+Language, worker count, verbose worker logs, the Plex database and diagnostics/log locations apply to
 the whole app; folders, encoding, mapping rules, scan filters and file handling belong to the active
 library. Create, duplicate, rename, and delete libraries from the **Libraries** tab. Settings save
 automatically as you edit them. The header's back button returns to the home screen (or to the
@@ -71,8 +171,12 @@ Config, presets and run state live in Electron's `userData` directory; logs live
 
 | Location | Purpose |
 | --- | --- |
-| `<userData>/Configuration.json` | libraries, presets and app settings (a `.v1.bak` copy is written on first migration from the profile format) |
+| `<userData>/Configuration.json` | libraries, presets and app settings (a `.v1.bak` or `.v2.bak` copy is written before a schema migration) |
 | `<userData>/run-journal.json` | state of the last run, used to report an interrupted run |
+| `<userData>/organize-journal.json` | file moves and Plex changes from the last organize apply, used by **Undo last** |
+| `<userData>/organize-pending.json` | watch-history transfers waiting for a Plex rescan |
+| `<userData>/backups/` | timestamped Plex database backups taken before an update |
+| `<userData>/cache/tvdb/` | cached TVDB search and episode pages |
 | `<logs>/` | master, error, conversion and scan logs plus filter caches |
 
 | OS | `userData` | `logs` |
@@ -85,8 +189,8 @@ On first launch after upgrading from a build that used `~/Documents/HBBatchBeast
 config, run journal and logs are copied into these locations. The old files are left untouched, so
 downgrading remains safe.
 
-**Logs & diagnostics** in Settings lists those logs, opens the folders, clears the filter caches and
-clears a recovered run journal.
+**Logs & diagnostics** in Settings lists those logs, opens the folders, clears the filter and TVDB
+caches, and clears a recovered run journal.
 
 ### Linux / Wayland
 

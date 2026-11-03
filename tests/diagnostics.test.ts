@@ -66,6 +66,28 @@ describe('diagnostics helpers', () => {
     ).toBe('');
   });
 
+  it('reports organizer data and clears the TVDB cache', () => {
+    const tvdbDir = path.join(paths.cacheDir, 'tvdb');
+    fs.mkdirSync(tvdbDir, { recursive: true });
+    fs.writeFileSync(path.join(tvdbDir, 'one.json'), '{}');
+    fs.writeFileSync(
+      path.join(paths.configDir, 'organize-pending.json'),
+      JSON.stringify([{ oldGuid: 'a', newFilePath: '/tv/a.mkv' }]),
+    );
+    fs.mkdirSync(paths.backupDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.backupDir, 'plex-1.db'), 'db');
+
+    const info = collectDiagnostics(paths);
+
+    expect(info.organizer?.pendingTransfers).toBe(1);
+    expect(info.organizer?.tvdbCacheFiles).toBe(1);
+    expect(info.organizer?.backups.map((backup) => backup.name)).toEqual([
+      'plex-1.db',
+    ]);
+    expect(clearCaches(paths)).toContain('TVDB cache');
+    expect(fs.readdirSync(tvdbDir)).toEqual([]);
+  });
+
   it('removes the run journal on request', () => {
     fs.writeFileSync(paths.journalPath, '{}');
 

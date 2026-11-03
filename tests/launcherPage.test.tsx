@@ -14,7 +14,8 @@ import { LauncherPage } from '../src/frontend/home/LauncherPage';
 
 const library: Library = {
   id: 'library-1',
-  name: 'Movies',
+  name: 'Films',
+  mediaType: 'movies',
   folders: [{ id: 'folder-1', source: '/src', destination: '/dst' }],
   filters: defaultFilterExpression(),
   encoder: 'handbrake',
@@ -42,7 +43,10 @@ const config: AppConfigV2 = {
 function renderLauncher() {
   const onQuickConvert = vi.fn();
   const onQuickFromLibrary = vi.fn();
+  const onQuickOrganize = vi.fn();
+  const onQuickOrganizeFromLibrary = vi.fn();
   const onOpenLibrary = vi.fn();
+  const onOrganizeLibrary = vi.fn();
   render(
     <IntlProvider locale="en" messages={getDefaultMessages()} defaultLocale="en">
       <LauncherPage
@@ -50,30 +54,62 @@ function renderLauncher() {
         onOpenLibrary={onOpenLibrary}
         onQuickConvert={onQuickConvert}
         onQuickFromLibrary={onQuickFromLibrary}
+        onQuickOrganize={onQuickOrganize}
+        onQuickOrganizeFromLibrary={onQuickOrganizeFromLibrary}
+        onOrganizeLibrary={onOrganizeLibrary}
         onOpenSettings={vi.fn()}
       />
     </IntlProvider>,
   );
-  return { onQuickConvert, onQuickFromLibrary, onOpenLibrary };
+  return {
+    onQuickConvert,
+    onQuickFromLibrary,
+    onQuickOrganize,
+    onQuickOrganizeFromLibrary,
+    onOpenLibrary,
+    onOrganizeLibrary,
+  };
 }
 
 describe('LauncherPage', () => {
-  it('opens a library', () => {
-    const { onOpenLibrary } = renderLauncher();
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+  it('opens a library for conversion and organizing', () => {
+    const { onOpenLibrary, onOrganizeLibrary } = renderLauncher();
+    fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     expect(onOpenLibrary).toHaveBeenCalledWith('library-1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Organize' }));
+    expect(onOrganizeLibrary).toHaveBeenCalledWith('library-1');
     cleanup();
   });
 
-  it('starts a blank or library-backed quick conversion', () => {
-    const { onQuickConvert, onQuickFromLibrary } = renderLauncher();
+  it('starts blank and library-backed quick sessions', () => {
+    const {
+      onQuickConvert,
+      onQuickFromLibrary,
+      onQuickOrganize,
+      onQuickOrganizeFromLibrary,
+    } = renderLauncher();
     fireEvent.click(
       screen.getByRole('button', { name: 'Start a quick conversion' }),
     );
     expect(onQuickConvert).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Use as quick run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Quick convert' }));
     expect(onQuickFromLibrary).toHaveBeenCalledWith(library);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Start quick organize' }),
+    );
+    expect(onQuickOrganize).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick organize' }));
+    expect(onQuickOrganizeFromLibrary).toHaveBeenCalledWith(library);
+    cleanup();
+  });
+
+  it('shows the library type', () => {
+    renderLauncher();
+    expect(screen.getByText('Movies')).toBeTruthy();
     cleanup();
   });
 });

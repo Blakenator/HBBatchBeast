@@ -33,6 +33,31 @@ requirement, not a preference.
   forms (`C:\Media`, `C:/Media`, `\\server\share`), and MUST NOT regress Linux, macOS, or Windows
   behaviour.
 
+## Plex and organizer paths (MUST)
+
+- Treat a Plex database as an external, absolute, host-native path. Resolve `~` with
+  `expandHomePath`, but never rewrite it to an app-relative path or a URL.
+- Plex stores `media_parts.file` as a native absolute path and `directories.path` as a path relative
+  to the library root using host separators. Write both with `node:path` semantics.
+- Plex stores external subtitle locations in `media_streams.url` as `file://` URLs. Convert with
+  `pathToFileURL` / `fileURLToPath`; never hand-build a URL.
+- Never write `metadata_items`: Plex's FTS4 ICU triggers make `node:sqlite` fail. Update
+  `media_parts`, `directories`, `media_streams` and watch-state tables only.
+- Always back up the Plex database before writing, use a single transaction, and re-check that Plex
+  is stopped (it may restart between the preflight and the write).
+- Watch state is keyed by metadata GUID (`metadata_item_settings.guid`,
+  `metadata_item_views.guid`), not by file path. Move or merge rows when a file's episode changes,
+  and queue a pending transfer when the target episode does not exist yet.
+- Control Plex through argv arrays (`systemctl`, `launchctl`, `tasklist`/`taskkill`) with no shell and
+  `windowsHide: true`; fall back to OS-specific instructions instead of elevating.
+- Put organizer journals, pending transfers, TVDB caches and Plex backups under `AppPaths`
+  (`configDir`, `cacheDir`, `backupDir`); never under `~/Documents`.
+- Sanitize generated file and folder names for the target platform (reserved names, control
+  characters, trailing dots/spaces, 255-byte limit) and compare collisions case-insensitively on
+  Windows and macOS.
+- Add simulated `linux`/`darwin`/`win32` tests for per-OS Plex database candidates and service
+  commands; CI stays Ubuntu-only.
+
 ## Validation
 
 Run the smallest relevant test first, then `pnpm typecheck`, `pnpm lint`, and `pnpm test` before

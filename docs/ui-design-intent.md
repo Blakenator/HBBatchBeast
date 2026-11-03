@@ -125,6 +125,56 @@ scroll to the field.
 - Opened from a converted row or a file picker; sections for general/video/audio/subtitles.
 - Loading and failure states are explicit (ffprobe unavailable, unreadable file).
 
+### 3.6 Organize mode
+
+- Organize is a top-level mode beside Convert on the home screen. Every library stores its **media
+  type** (Movies/TV) and opens in both modes; organizer defaults (metadata source, naming rules,
+  confidence, sidecars, collisions, show matches) are remembered per library, while the Plex database
+  is one machine-wide setting under Settings → Global.
+- A TV library is a container of shows. The first step detects the show folders under each source
+  root and matches each one to a TVDB series: automatic from the folder name, visible with cover art,
+  changeable with a search and clearable. Opening a search pre-fills the folder-derived query and
+  shows the automatic attempt's results. Matches are persisted as `{folder, subfolder, series}`, and
+  a folder can instead be marked **Whole folder is one show** for single-show folders and one-off
+  renames. The **Scan only** checkbox on each show scopes the run to any subset of shows (stated
+  again in Review); the scope only affects the next scans, never the saved mapping. Closing a row hides its search again;
+  the expand control carries its state and text.
+- A three-step flow: **What to organize → Naming rules → Review and apply**. A compact stepper is the
+  only persistent chrome; one step's panel is mounted at a time, so long scan results never compete
+  with settings. Steps can be revisited without losing state, and Back/Next mirror the reading order.
+- Template fields are chip editors: typing `{` opens a searchable variable list with a description and
+  example per variable, choosing one inserts a removable chip, and an example line under the field
+  renders the template with representative data. The default TV folder template is
+  `{show}/Season {season:02}`; the `{show}` segment is dropped when the source folder is itself the
+  show, so single-show libraries stay flat.
+- The review table works like the conversion queue: sortable columns, resizable/reorderable/hideable
+  columns with the layout persisted, virtualized rows, status chips and search. Paths are never shown
+  as long strings: the table uses structured `Show`, `Season`, `Folder`, `Current name` and `New name`
+  columns (TV-only columns collapse for movies). The `Folder` column renders the folder before → after
+  when a rename moves the file, and a word-level diff with a tinted background highlights the changed
+  folder and name tokens.
+  The table scrolls inside its panel so the page never grows wider; full paths stay in tooltips.
+- Each row offers **Fix match** to override the show, episode or movie. The dialog prefills from the
+  parsed title, offers a **Use file name** shortcut that fills the episode filter for TV (the filter
+  recognises the `S01E02` tag inside the name) or the movie search, marks the chosen result with a
+  prominent checkmark. Each result is a collapsible card: clicking the card selects the match, while
+  a chevron expands the full description without changing the selection. The override is
+  persisted per file and re-plans only that row; **Use best guess** removes it.
+- The review table is the safety surface: current path, new path, match confidence/reason, action and
+  Plex view count, with filters for changes, skips, conflicts and low confidence. Conflicts are
+  visibly blocked, not auto-resolved.
+- Scanning streams progress from the backend: discovery reports how many files have been found, and
+  matching reports a real percentage (`completed / total`), the current file and show, elapsed time and
+  an estimated remainder. The bar is indeterminate only while the total is unknown; results replace it
+  when the plan is complete.
+- Apply is a two-step confirmation that states the move count, whether Plex will change, and whether
+  watch history will move. Plex-running offers stop / skip Plex / cancel — never silent elevation.
+- Quick organize is a peer of quick convert: an unsaved session (blank or seeded from a library) that
+  can be saved as a library afterwards. TVDB search results show cover art, a spinner, an inline
+  error with retry and an empty state.
+- Long paths and sanitized names wrap rather than truncate in dialogs; platform-specific Plex guidance
+  is shown inline as muted helper text.
+
 ## 4. Interaction patterns
 
 **Folder rows (D7).** A table, not a textarea: each row = source picker + destination picker (+ temp when

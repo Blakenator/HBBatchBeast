@@ -11,11 +11,15 @@ export interface AppPaths {
   configFile: string;
   journalPath: string;
   logDir: string;
+  cacheDir: string;
+  backupDir: string;
 }
 
 export interface AppPathInput {
   userDataPath: string;
   logsPath: string;
+  /** Optional explicit cache root; defaults under userData. */
+  cachePath?: string;
 }
 
 export interface LegacyMigrationResult {
@@ -33,13 +37,19 @@ const PLACEHOLDER_FILES = [
   'Scans.txt',
 ];
 
-export function appPaths({ userDataPath, logsPath }: AppPathInput): AppPaths {
+export function appPaths({
+  userDataPath,
+  logsPath,
+  cachePath,
+}: AppPathInput): AppPaths {
   const configDir = path.resolve(userDataPath);
   return {
     configDir,
     configFile: path.join(configDir, 'Configuration.json'),
     journalPath: path.join(configDir, 'run-journal.json'),
     logDir: path.resolve(logsPath),
+    cacheDir: path.resolve(cachePath ?? path.join(configDir, 'cache')),
+    backupDir: path.join(configDir, 'backups'),
   };
 }
 
@@ -51,12 +61,16 @@ export function legacyAppPaths(homePath: string): AppPaths {
     configFile: path.join(root, 'Config', 'Configuration.json'),
     journalPath: path.join(root, 'Config', 'run-journal.json'),
     logDir: path.join(root, 'Logs'),
+    cacheDir: path.join(root, 'Cache'),
+    backupDir: path.join(root, 'Backups'),
   };
 }
 
 export function ensureAppFolders(paths: AppPaths): void {
   fs.mkdirSync(paths.configDir, { recursive: true });
   fs.mkdirSync(paths.logDir, { recursive: true });
+  fs.mkdirSync(paths.cacheDir, { recursive: true });
+  fs.mkdirSync(paths.backupDir, { recursive: true });
   for (const name of PLACEHOLDER_FILES) {
     const file = path.join(paths.logDir, name);
     if (!fs.existsSync(file)) fs.appendFileSync(file, '', 'utf8');

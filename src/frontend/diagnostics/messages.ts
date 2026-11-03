@@ -29,4 +29,11 @@ export const diagnosticsMessages = createMessages({
   clear: { defaultMessage: 'Clear' },
   cancel: { defaultMessage: 'Cancel' },
   loadFailed: { defaultMessage: 'Could not read the app folders' },
+  organizerTitle: { defaultMessage: 'Organize data' },
+  organizerSummary: {
+    defaultMessage:
+      '{pending} pending watch-history transfer(s), {backups} Plex backup(s), {cached} cached TVDB response(s).',
+  },
+  openBackups: { defaultMessage: 'Open Plex backups' },
+  openTvdbCache: { defaultMessage: 'Open TVDB cache' },
 });

@@ -10,7 +10,21 @@ import {
   RunBatchOperationProps,
   RunBatchOperationResult,
 } from './types';
-import type { AppConfigV2 } from './library';
+import type { AppConfigV2, Library } from './library';
+import type { DetectedShow } from './organizer/shows';
+import type {
+  OrganizeApplyResult,
+  OrganizeJournalSummary,
+  OrganizePendingResult,
+  OrganizePlan,
+  OrganizePlexCheck,
+  OrganizeScanProgress,
+  OrganizeScanScope,
+  OrganizePlexEnvironment,
+  TvdbEpisode,
+  TvdbMovie,
+  TvdbSeriesRef,
+} from './organizer/types';
 import type { RunState } from '../backend/run/runManager';
 
 import {
@@ -35,11 +49,23 @@ export enum PROMISE_CHANNEL {
   ProbeMedia = 'PROBE_MEDIA',
   PickPath = 'PICK_PATH',
   ListHandBrakePresets = 'LIST_HANDBRAKE_PRESETS',
+  OrganizeGetPlexEnvironment = 'ORGANIZE_GET_PLEX_ENVIRONMENT',
+  OrganizeCheckPlex = 'ORGANIZE_CHECK_PLEX',
+  OrganizeControlPlex = 'ORGANIZE_CONTROL_PLEX',
+  OrganizeSearchSeries = 'ORGANIZE_SEARCH_SERIES',
+  OrganizeSearchMovies = 'ORGANIZE_SEARCH_MOVIES',
+  OrganizeLoadEpisodes = 'ORGANIZE_LOAD_EPISODES',
+  OrganizeDetectShows = 'ORGANIZE_DETECT_SHOWS',
+  OrganizeApplyPlan = 'ORGANIZE_APPLY_PLAN',
+  OrganizeUndo = 'ORGANIZE_UNDO',
+  OrganizeCompletePending = 'ORGANIZE_COMPLETE_PENDING',
+  OrganizeReadJournal = 'ORGANIZE_READ_JOURNAL',
 }
 
 export enum ASYNC_CHANNEL {
   RunBatchOperation = 'RUN_BATCH_OPERATION',
   RunConversion = 'RUN_CONVERSION',
+  OrganizeScan = 'ORGANIZE_SCAN',
 }
 
 export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
@@ -107,6 +133,50 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
     props: { refresh?: boolean };
     result: HandBrakePresetScan;
   };
+  [PROMISE_CHANNEL.OrganizeGetPlexEnvironment]: {
+    props: void;
+    result: OrganizePlexEnvironment;
+  };
+  [PROMISE_CHANNEL.OrganizeCheckPlex]: {
+    props: { path: string };
+    result: OrganizePlexCheck;
+  };
+  [PROMISE_CHANNEL.OrganizeControlPlex]: {
+    props: { action: 'status' | 'stop' | 'start'; path: string };
+    result: OrganizePlexCheck;
+  };
+  [PROMISE_CHANNEL.OrganizeSearchSeries]: {
+    props: { query: string };
+    result: TvdbSeriesRef[];
+  };
+  [PROMISE_CHANNEL.OrganizeSearchMovies]: {
+    props: { query: string };
+    result: TvdbMovie[];
+  };
+  [PROMISE_CHANNEL.OrganizeLoadEpisodes]: {
+    props: { slug: string };
+    result: TvdbEpisode[];
+  };
+  [PROMISE_CHANNEL.OrganizeDetectShows]: {
+    props: { library: Library };
+    result: { folders: DetectedShow[]; warnings: string[] };
+  };
+  [PROMISE_CHANNEL.OrganizeApplyPlan]: {
+    props: { library: Library; plan: OrganizePlan; updatePlex: boolean };
+    result: OrganizeApplyResult;
+  };
+  [PROMISE_CHANNEL.OrganizeUndo]: {
+    props: { restorePlex?: boolean };
+    result: { reversed: number; warnings: string[] };
+  };
+  [PROMISE_CHANNEL.OrganizeCompletePending]: {
+    props: { dbPath: string };
+    result: OrganizePendingResult;
+  };
+  [PROMISE_CHANNEL.OrganizeReadJournal]: {
+    props: void;
+    result: OrganizeJournalSummary | undefined;
+  };
 }
 
 export interface BackendAsyncApi extends BackendAsyncApiType<ASYNC_CHANNEL> {
@@ -121,5 +191,11 @@ export interface BackendAsyncApi extends BackendAsyncApiType<ASYNC_CHANNEL> {
     initResult: RunState;
     progressResult: RunState;
     completeResult: RunState;
+  };
+  [ASYNC_CHANNEL.OrganizeScan]: {
+    props: { library: Library; scope?: OrganizeScanScope[] };
+    initResult: OrganizeScanProgress;
+    progressResult: OrganizeScanProgress;
+    completeResult: OrganizePlan;
   };
 }

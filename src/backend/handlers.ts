@@ -14,7 +14,8 @@ import {
   userPresetFiles,
 } from './helpers';
 import fs from 'fs';
-import { dialog, shell } from 'electron';
+import path from 'path';
+import { dialog, net, shell } from 'electron';
 import {
   ASYNC_CHANNEL,
   BackendAsyncApi,
@@ -26,9 +27,14 @@ import {
   createDefaultAppConfig,
   migrateAppConfig,
   parseMappedRows,
+  OrganizePlexCheck,
+  OrganizeScanProgress,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
+  isCaseInsensitivePlatform,
+  libraryOrganizeSettings,
   resolveGlobalSettings,
+  expandHomePath,
 } from '../common';
 import packageJson from '../../package.json';
 import { AppError } from '@superflag/super-ipc-core';
@@ -51,6 +57,27 @@ import {
   collectDiagnostics,
 } from './helpers/diagnostics';
 import { probeMedia } from './helpers/probeMedia';
+import { TvdbClient } from './organizer/tvdb/client';
+import {
+  applyOrganizePlan,
+  buildOrganizePlanForLibrary,
+  detectShowFolders,
+  readOrganizeJournal,
+  undoLastOrganize,
+} from './organizer/service';
+import { completePendingHistoryTransfers } from './organizer/plex/writer';
+import {
+  plexDatabaseCandidates,
+  plexPermissionRemediation,
+  plexServiceHint,
+  plexServiceInstructions,
+} from './organizer/plex/environment';
+import {
+  detectPlexService,
+  startPlexService,
+  stopPlexService,
+  waitForPlexStopped,
+} from './organizer/plex/service';
 
 
 export function mapQueueBuildResult(
@@ -151,35 +178,110 @@ function workerCountFor(config: GlobalAppConfig): number {
   return maxParallel === undefined ? requested : Math.min(requested, maxParallel);
 }
 
+function loadConfiguration(app: Electron.App): AppConfigV2 {
+  const configPath = prepareAppPaths(app).configFile;
+  if (fs.existsSync(configPath)) {
+    try {
+      console.log('Loading configuration file');
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
+      const migrated = migrateAppConfig(raw);
+      if (migrated.changed) {
+        const version = (raw as { schema_version?: unknown }).schema_version;
+        const suffix = version === 2 || version === 3 ? '.v2.bak' : '.v1.bak';
+        let backup = `${configPath}${suffix}`;
+        let attempt = 2;
+        while (fs.existsSync(backup)) {
+          backup = `${configPath}${suffix}.${attempt}`;
+          attempt += 1;
+        }
+        fs.copyFileSync(configPath, backup);
+        saveAppConfig(configPath, migrated.config);
+      }
+      return migrated.config;
+    } catch {
+      console.log('Unable to load configuration file, archiving old version');
+      fs.renameSync(configPath, configPath + '.old');
+    }
+  }
+
+  console.log('Initializing new config file');
+  const config: AppConfigV2 = createDefaultAppConfig(packageJson.version);
+  saveAppConfig(configPath, config);
+  return config;
+}
+
+let tvdbClient: TvdbClient | null = null;
+let tvdbCacheDir = '';
+
+/**
+ * Chromium's network stack (system proxy and certificate aware) is preferred,
+ * but it cancels some cross-origin requests outright. Fall back to Node's
+ * fetch so a metadata lookup never fails for a transport reason.
+ */
+async function tvdbFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await net.fetch(url, init as RequestInit);
+  } catch (error) {
+    console.warn(
+      `net.fetch failed for ${url}; retrying with the Node HTTP client: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return fetch(url, init);
+  }
+}
+
+function getTvdbClient(app: Electron.App): TvdbClient {
+  const paths = prepareAppPaths(app);
+  if (!tvdbClient || tvdbCacheDir !== paths.cacheDir) {
+    tvdbClient = new TvdbClient({
+      cacheDir: paths.cacheDir,
+      fetchImpl: tvdbFetch,
+    });
+    tvdbCacheDir = paths.cacheDir;
+  }
+  return tvdbClient;
+}
+
+async function inspectPlexDatabase(
+  app: Electron.App,
+  requestedPath: string,
+): Promise<OrganizePlexCheck> {
+  const dbPath = path.resolve(
+    expandHomePath(requestedPath, app.getPath('home')),
+  );
+  let writable = false;
+  try {
+    fs.accessSync(dbPath, fs.constants.W_OK);
+    writable = true;
+  } catch {
+    // The remediation message below tells the user how to grant access.
+  }
+  const status = await detectPlexService(process.platform);
+  return {
+    path: dbPath,
+    exists: fs.existsSync(dbPath),
+    writable,
+    running: status.running,
+    serviceKind: status.kind,
+    serviceInstructions: plexServiceInstructions(process.platform),
+    permissionRemediation: plexPermissionRemediation(
+      process.platform,
+      dbPath,
+    ),
+  };
+}
+
+/** Plex lives in the global settings, so every library uses the same server. */
+function configuredPlexPath(app: Electron.App): string | undefined {
+  return resolveGlobalSettings(loadConfiguration(app)).plex?.dbPath;
+}
+
 export const BackendHandlers: BackendSyncHandlersType<
   PROMISE_CHANNEL,
   BackendPromiseApi
 > = {
-  [PROMISE_CHANNEL.LoadConfiguration]: ({ app }) => {
-    const configPath = prepareAppPaths(app).configFile;
-    if (fs.existsSync(configPath)) {
-      try {
-        console.log('Loading configuration file');
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
-        const migrated = migrateAppConfig(raw);
-        if (migrated.changed) {
-          // Keep the v1 file next to the new one so a failed migration is
-          // recoverable without guessing at the original profile data.
-          fs.copyFileSync(configPath, `${configPath}.v1.bak`);
-          saveAppConfig(configPath, migrated.config);
-        }
-        return migrated.config;
-      } catch {
-        console.log('Unable to load configuration file, archiving old version');
-        fs.renameSync(configPath, configPath + '.old');
-      }
-    }
-
-    console.log('Initializing new config file');
-    const config: AppConfigV2 = createDefaultAppConfig(packageJson.version);
-    saveAppConfig(configPath, config);
-    return config;
-  },
+  [PROMISE_CHANNEL.LoadConfiguration]: ({ app }) => loadConfiguration(app),
   [PROMISE_CHANNEL.SaveConfiguration]: ({ app, args: config }) => {
     saveAppConfig(prepareAppPaths(app).configFile, config);
   },
@@ -226,12 +328,146 @@ export const BackendHandlers: BackendSyncHandlersType<
     activeRun?.cancelItem(index);
     return currentRunState();
   },
+  [PROMISE_CHANNEL.OrganizeGetPlexEnvironment]: ({ app }) => {
+    const home = app.getPath('home');
+    const databaseCandidates = plexDatabaseCandidates({
+      platform: process.platform,
+      env: process.env,
+      home,
+      appData: app.getPath('appData'),
+      exists: fs.existsSync,
+    });
+    return {
+      platform: process.platform,
+      databaseCandidates,
+      serviceKind: plexServiceHint(process.platform),
+      serviceInstructions: plexServiceInstructions(process.platform),
+      ...(databaseCandidates[0]
+        ? {
+            permissionRemediation: plexPermissionRemediation(
+              process.platform,
+              databaseCandidates[0],
+            ),
+          }
+        : {}),
+    };
+  },
+  [PROMISE_CHANNEL.OrganizeCheckPlex]: ({ app, args }) =>
+    inspectPlexDatabase(app, args.path),
+  [PROMISE_CHANNEL.OrganizeControlPlex]: async ({ app, args }) => {
+    if (args.action === 'stop') {
+      await stopPlexService(process.platform);
+      await waitForPlexStopped(process.platform, 10_000);
+    } else if (args.action === 'start') {
+      await startPlexService(process.platform);
+    }
+    return inspectPlexDatabase(app, args.path);
+  },
+  [PROMISE_CHANNEL.OrganizeSearchSeries]: ({ app, args }) =>
+    getTvdbClient(app).searchSeries(args.query),
+  [PROMISE_CHANNEL.OrganizeSearchMovies]: ({ app, args }) =>
+    getTvdbClient(app).searchMovies(args.query),
+  [PROMISE_CHANNEL.OrganizeLoadEpisodes]: ({ app, args }) =>
+    getTvdbClient(app).loadEpisodes(args.slug),
+  [PROMISE_CHANNEL.OrganizeDetectShows]: async ({ app, args }) =>
+    detectShowFolders({
+      library: args.library,
+      settings: libraryOrganizeSettings(args.library),
+      home: app.getPath('home'),
+      tvdbClient: getTvdbClient(app),
+    }),
+  [PROMISE_CHANNEL.OrganizeApplyPlan]: async ({ app, args }) => {
+    const plexDbPath = configuredPlexPath(app);
+    return applyOrganizePlan({
+      plan: args.plan,
+      settings: libraryOrganizeSettings(args.library),
+      appPaths: prepareAppPaths(app),
+      platform: process.platform,
+      updatePlex: args.updatePlex,
+      ...(plexDbPath ? { plexDbPath } : {}),
+    });
+  },
+  [PROMISE_CHANNEL.OrganizeUndo]: async ({ app, args }) =>
+    undoLastOrganize(prepareAppPaths(app), {
+      restorePlex: args?.restorePlex === true,
+    }),
+  [PROMISE_CHANNEL.OrganizeCompletePending]: async ({ app, args }) => {
+    const status = await detectPlexService(process.platform);
+    if (status.running) {
+      throw new AppError(
+        `Plex Media Server is running. ${plexServiceInstructions(process.platform)}`,
+      );
+    }
+    const paths = prepareAppPaths(app);
+    const dbPath = path.resolve(
+      expandHomePath(args.dbPath, app.getPath('home')),
+    );
+    try {
+      fs.accessSync(dbPath, fs.constants.W_OK);
+    } catch {
+      throw new AppError(
+        `HBBatchBeast cannot write the Plex database. ${plexPermissionRemediation(
+          process.platform,
+          dbPath,
+        )}`,
+      );
+    }
+    const result = completePendingHistoryTransfers({
+      dbPath,
+      backupDir: paths.backupDir,
+      pendingPath: path.join(paths.configDir, 'organize-pending.json'),
+      platform: process.platform,
+      caseInsensitive: isCaseInsensitivePlatform(process.platform),
+    });
+    return {
+      historyMoved: result.historyMoved,
+      pendingTransfers: result.pendingTransfers,
+      warnings: result.warnings,
+    };
+  },
+  [PROMISE_CHANNEL.OrganizeReadJournal]: ({ app }) =>
+    readOrganizeJournal(prepareAppPaths(app)),
 };
 
 export const BackendAsyncHandlers: BackendAsyncHandlersType<
   ASYNC_CHANNEL,
   BackendAsyncApi
 > = {
+  [ASYNC_CHANNEL.OrganizeScan]: async ({
+    app,
+    args,
+    handlers: { onInit, onProgress, onComplete, onError },
+  }) => {
+    const plexDbPath = configuredPlexPath(app);
+    const initialProgress: OrganizeScanProgress = {
+      phase: 'discovering',
+      completed: 0,
+      total: 0,
+      discovered: 0,
+      elapsedMs: 0,
+    };
+    onInit(initialProgress);
+    try {
+      const plan = await buildOrganizePlanForLibrary({
+        library: args.library,
+        settings: libraryOrganizeSettings(args.library),
+        appPaths: prepareAppPaths(app),
+        platform: process.platform,
+        home: app.getPath('home'),
+        tvdbClient: getTvdbClient(app),
+        ...(plexDbPath ? { plexDbPath } : {}),
+        ...(args.scope && args.scope.length > 0 ? { scope: args.scope } : {}),
+        onProgress,
+      });
+      onComplete(plan);
+    } catch (error) {
+      onError(
+        error instanceof AppError
+          ? error
+          : new AppError('Organize scan failed', { inner: error }),
+      );
+    }
+  },
   [ASYNC_CHANNEL.RunBatchOperation]: async ({
     app,
     args: { config, operationMode, library, presets },

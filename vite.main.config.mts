@@ -23,6 +23,8 @@ export default defineConfig({
     rolldownOptions: {
       external: [
         'electron',
+        // `node:sqlite` is experimental and missing from `builtinModules`.
+        'node:sqlite',
         ...builtinModules,
         ...builtinModules.map((name) => `node:${name}`),
         ...runtimeDependencies,

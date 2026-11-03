@@ -72,6 +72,7 @@
     "electron-squirrel-startup": "^1.0.0",
     "ffprobe-static": "^3.1.0",
     "fs-extra": "^11.4.1",
+    "linkedom": "^0.18.14",
     "lodash": "^4.17.21",
     "prettier": "^3.0.2",
     "react": "^19.3.1",

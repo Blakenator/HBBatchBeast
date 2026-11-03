@@ -16,6 +16,27 @@ function describe(filePath: string) {
   }
 }
 
+function listBackups(
+  backupDir: string,
+): { name: string; path: string; size: number }[] {
+  try {
+    return fs
+      .readdirSync(backupDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const filePath = path.join(backupDir, entry.name);
+        return {
+          name: entry.name,
+          path: filePath,
+          size: describe(filePath).size,
+        };
+      })
+      .sort((left, right) => right.name.localeCompare(left.name));
+  } catch {
+    return [];
+  }
+}
+
 export function collectDiagnostics(paths: AppPaths): DiagnosticsInfo {
   const logs: DiagnosticsInfo['logs'] = [];
   if (fs.existsSync(paths.logDir)) {
@@ -46,6 +67,29 @@ export function collectDiagnostics(paths: AppPaths): DiagnosticsInfo {
     }
   }
 
+  const organizerJournalPath = path.join(
+    paths.configDir,
+    'organize-journal.json',
+  );
+  const pendingPath = path.join(paths.configDir, 'organize-pending.json');
+  let pendingTransfers = 0;
+  try {
+    const pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8')) as unknown;
+    if (Array.isArray(pending)) pendingTransfers = pending.length;
+  } catch {
+    // No pending file yet.
+  }
+  const tvdbCacheDir = path.join(paths.cacheDir, 'tvdb');
+  let tvdbCacheFiles = 0;
+  try {
+    tvdbCacheFiles = fs
+      .readdirSync(tvdbCacheDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile()).length;
+  } catch {
+    // No TVDB cache yet.
+  }
+  const backups = listBackups(paths.backupDir);
+
   return {
     logDir: paths.logDir,
     configDir: paths.configDir,
@@ -54,6 +98,16 @@ export function collectDiagnostics(paths: AppPaths): DiagnosticsInfo {
     journalStatus,
     logs,
     caches,
+    organizer: {
+      journalPath: organizerJournalPath,
+      journalExists: fs.existsSync(organizerJournalPath),
+      pendingPath,
+      pendingTransfers,
+      backupDir: paths.backupDir,
+      backups,
+      tvdbCacheDir,
+      tvdbCacheFiles,
+    },
   };
 }
 
@@ -66,6 +120,16 @@ export function clearCaches(paths: AppPaths): string[] {
     cleared.push(name);
     // Keep the empty placeholder so the legacy modules can append to it.
     fs.writeFileSync(filePath, '', 'utf8');
+  }
+  const tvdbCacheDir = path.join(paths.cacheDir, 'tvdb');
+  try {
+    for (const entry of fs.readdirSync(tvdbCacheDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      fs.rmSync(path.join(tvdbCacheDir, entry.name), { force: true });
+    }
+    cleared.push('TVDB cache');
+  } catch {
+    // A missing cache folder means there is nothing to clear.
   }
   return cleared;
 }
@@ -84,7 +148,12 @@ export function assertOpenablePath(paths: AppPaths, target: string): string {
     const base = path.resolve(dir);
     return resolved === base || resolved.startsWith(base + path.sep);
   };
-  if (!inside(paths.logDir) && !inside(paths.configDir)) {
+  if (
+    !inside(paths.logDir) &&
+    !inside(paths.configDir) &&
+    !inside(paths.cacheDir) &&
+    !inside(paths.backupDir)
+  ) {
     throw new AppError('Refusing to open a path outside the app folders', {
       context: { target: resolved },
     });

@@ -21,6 +21,14 @@ export function resolveGlobalSettings(
 ): GlobalSettingsConfig {
   const legacy =
     config.configs?.[config.selected_config ?? 0]?.tab_system;
+  const plex =
+    config.app_settings?.plex &&
+    typeof config.app_settings.plex.dbPath === 'string'
+      ? {
+          dbPath: config.app_settings.plex.dbPath,
+          updateByDefault: config.app_settings.plex.updateByDefault === true,
+        }
+      : undefined;
   return {
     worker_instance_number:
       config.app_settings?.worker_instance_number ??
@@ -30,6 +38,7 @@ export function resolveGlobalSettings(
       config.app_settings?.save_worker_logs_toggle ??
       legacy?.save_worker_logs_toggle ??
       DEFAULT_GLOBAL_SETTINGS.save_worker_logs_toggle,
+    ...(plex ? { plex } : {}),
   };
 }
 

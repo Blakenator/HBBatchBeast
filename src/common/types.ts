@@ -65,10 +65,18 @@ export interface BatchTabConfig {
   container: string;
 }
 
+/** Plex Media Server database used by the organizer to read and update paths. */
+export interface PlexConnectionSettings {
+  dbPath: string;
+  updateByDefault: boolean;
+}
+
 /** App-wide preferences. Legacy files may still store these under each profile. */
 export interface GlobalSettingsConfig {
   worker_instance_number: string;
   save_worker_logs_toggle: 0 | 1;
+  /** One Plex server per machine, shared by every library. */
+  plex?: PlexConnectionSettings;
 }
 
 /**
@@ -138,6 +146,16 @@ export interface DiagnosticsInfo {
   journalStatus?: string;
   logs: { name: string; path: string; size: number }[];
   caches: { name: string; path: string; size: number; exists: boolean }[];
+  organizer?: {
+    journalPath: string;
+    journalExists: boolean;
+    pendingPath: string;
+    pendingTransfers: number;
+    backupDir: string;
+    backups: { name: string; path: string; size: number }[];
+    tvdbCacheDir: string;
+    tvdbCacheFiles: number;
+  };
 }
 
 /** Tray indicator states, shared by the renderer and the tray module. */

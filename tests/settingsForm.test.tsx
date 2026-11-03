@@ -62,6 +62,7 @@ describe('SettingsForm', () => {
       </IntlProvider>,
     );
 
+    fireEvent.click(screen.getByText('Libraries'));
     expect(screen.getAllByDisplayValue('Movies').length).toBeGreaterThan(0);
     expect(screen.getByText('Default mapping rules')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
@@ -84,12 +85,37 @@ describe('SettingsForm mapping rules', () => {
       </IntlProvider>,
     );
 
+    fireEvent.click(screen.getByText('Libraries'));
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Add stage' })[0]);
     expect(screen.getByRole('region', { name: 'Add stage' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /^Folder/ }));
     expect(screen.getByRole('combobox', { name: 'Library folder' })).toBeTruthy();
+
+    cleanup();
+  });
+});
+
+describe('SettingsForm tabs', () => {
+  it('separates global, conversion and organizer settings', () => {
+    render(
+      <IntlProvider locale="en" messages={getDefaultMessages()} defaultLocale="en">
+        <SettingsForm config={config} />
+      </IntlProvider>,
+    );
+
+    expect(screen.getByText('Plex integration')).toBeTruthy();
+    expect(screen.queryByText('Default mapping rules')).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Organizer/ }));
+    expect(screen.getByText('Naming rules')).toBeTruthy();
+    expect(screen.getByText('Safety')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Libraries/ }));
+    expect(screen.getByText('Default mapping rules')).toBeTruthy();
+    expect(screen.queryByText('Safety')).toBeNull();
 
     cleanup();
   });

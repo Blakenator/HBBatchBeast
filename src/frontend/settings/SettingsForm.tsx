@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Tab, Tabs } from 'react-bootstrap';
 import { useIntl } from 'react-intl';
 import {
@@ -13,11 +13,13 @@ import { useHandBrakePresets, useUpdateAppConfigDebounced } from './hooks';
 import { settingsMessages } from './messages';
 import { LanguageSelect } from './LanguageSelect';
 import { GlobalSystemSettings } from './GlobalSystemSettings';
+import { PlexSettings } from './PlexSettings';
 import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
 import { Icon } from '../ui/Icon';
 import type { AppIconName } from '../ui/icons';
 import { LibraryBar } from './library/LibraryBar';
 import { LibraryEditor } from './library/LibraryEditor';
+import { OrganizerSettings } from './organizer/OrganizerSettings';
 import { PresetManager } from '../presets/PresetManager';
 
 interface SettingsFormProps {
@@ -39,6 +41,7 @@ const tabTitle = (icon: AppIconName, label: string) => (
 
 export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
   const { formatMessage } = useIntl();
+  const [tab, setTab] = useState('global');
   const {
     currentLibrary,
     currentGlobalConfig,
@@ -95,9 +98,29 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
 
   const globalSettings = resolveGlobalSettings(currentGlobalConfig);
 
+  const libraryBar = (
+    <LibraryBar
+      config={currentGlobalConfig}
+      onSelect={selectLibrary}
+      onCreate={addLibrary}
+      onDuplicate={duplicateLibrary}
+      onRename={(libraryId, name) =>
+        updateLibrary(
+          (library) => ({ ...library, name: name.trim() || library.name }),
+          libraryId,
+        )
+      }
+      onDelete={deleteLibrary}
+    />
+  );
+
   return (
     <div>
-      <Tabs defaultActiveKey="libraries" className="mb-3">
+      <Tabs
+        activeKey={tab}
+        onSelect={(key) => setTab(key ?? 'global')}
+        className="mb-3"
+      >
         <Tab
           eventKey="global"
           title={tabTitle(
@@ -106,51 +129,80 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
           )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
+            {tab !== 'global' ? null : (
+              <>
             <LanguageSelect config={currentGlobalConfig} />
             <GlobalSystemSettings
               value={globalSettings}
-              onChange={(update) =>
-                mergeAppUpdate({ app_settings: update })
+              onChange={(update) => mergeAppUpdate({ app_settings: update })}
+            />
+            <PlexSettings
+              value={currentGlobalConfig.app_settings?.plex}
+              onChange={(plex) =>
+                mergeAppUpdate({
+                  app_settings: {
+                    ...currentGlobalConfig.app_settings,
+                    plex,
+                  },
+                })
               }
             />
             <div style={{ marginTop: 'var(--hb-space-lg)' }}>
               <DiagnosticsPanel />
             </div>
+              </>
+            )}
           </div>
         </Tab>
 
         <Tab
-          eventKey="libraries"
+          eventKey="convert"
           title={tabTitle(
-            'libraries',
+            'quick',
             formatMessage(settingsMessages.librarySettings),
           )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
-            <LibraryBar
-              config={currentGlobalConfig}
-              onSelect={selectLibrary}
-              onCreate={addLibrary}
-              onDuplicate={duplicateLibrary}
-              onRename={(libraryId, name) =>
-                updateLibrary(
-                  (library) => ({ ...library, name: name.trim() || library.name }),
-                  libraryId,
-                )
-              }
-              onDelete={deleteLibrary}
-            />
-            <div style={{ marginTop: 'var(--hb-space-md)' }}>
-              {currentLibrary ? (
-                <LibraryEditor
-                  config={currentGlobalConfig}
-                  library={currentLibrary}
-                  onChange={(library) =>
-                    updateLibrary(() => library, library.id)
-                  }
-                />
-              ) : null}
-            </div>
+            {tab !== 'convert' ? null : (
+              <>
+                {libraryBar}
+                <div style={{ marginTop: 'var(--hb-space-md)' }}>
+                  {currentLibrary ? (
+                    <LibraryEditor
+                      config={currentGlobalConfig}
+                      library={currentLibrary}
+                      onChange={(library) =>
+                        updateLibrary(() => library, library.id)
+                      }
+                    />
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        </Tab>
+
+        <Tab
+          eventKey="organizer"
+          title={tabTitle('libraries', 'Organizer')}
+        >
+          <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
+            {tab !== 'organizer' ? null : (
+              <>
+                {libraryBar}
+                <div style={{ marginTop: 'var(--hb-space-md)' }}>
+                  {currentLibrary ? (
+                    <OrganizerSettings
+                      config={currentGlobalConfig}
+                      library={currentLibrary}
+                      onChange={(library) =>
+                        updateLibrary(() => library, library.id)
+                      }
+                    />
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
         </Tab>
 
@@ -162,13 +214,15 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
           )}
         >
           <div style={{ paddingTop: 'var(--hb-space-sm)' }}>
-            <PresetManager
-              config={currentGlobalConfig}
-              onChange={(presets) => mergeAppUpdate({ presets })}
-              scan={presetScan.data}
-              loading={presetScan.loading}
-              onRefresh={presetScan.refresh}
-            />
+            {tab === 'presets' ? (
+              <PresetManager
+                config={currentGlobalConfig}
+                onChange={(presets) => mergeAppUpdate({ presets })}
+                scan={presetScan.data}
+                loading={presetScan.loading}
+                onRefresh={presetScan.refresh}
+              />
+            ) : null}
           </div>
         </Tab>
       </Tabs>

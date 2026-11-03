@@ -30,8 +30,14 @@ import type {
   GlobalAppConfig,
   GlobalSettingsConfig,
 } from './types';
+import type { OrganizeSettings } from './organizer/settings';
+import type { MediaType } from './organizer/types';
+import {
+  createOrganizeSettings,
+  resolveOrganizeSettings,
+} from './organizer/settings';
 
-export const APP_CONFIG_SCHEMA_VERSION = 2;
+export const APP_CONFIG_SCHEMA_VERSION = 4;
 export const DEFAULT_PRESET_ID = 'preset-default';
 export const DEFAULT_LIBRARY_ID = 'library-default';
 
@@ -78,9 +84,17 @@ export interface RunDefaults {
   low_process_priority_toggle?: 0 | 1;
 }
 
+/**
+ * One user-facing collection shared by every feature. The same library is used
+ * to convert and to organize: conversion settings stay top-level and
+ * `organize` holds the organizer defaults, so folders and filters are never
+ * duplicated between modes.
+ */
 export interface Library {
   id: string;
   name: string;
+  /** What this library holds; shared by conversion and organize. */
+  mediaType: MediaType;
   folders: FolderPair[];
   filters: FilterExpression;
   encoder: EncoderKind;
@@ -88,6 +102,8 @@ export interface Library {
   defaultPresetId: string;
   mappingRules: PresetRule[];
   defaults: RunDefaults;
+  /** Organizer defaults: metadata choices, naming rules, match fixes. */
+  organize?: OrganizeSettings;
 }
 
 export interface AppConfigV2 {
@@ -262,11 +278,18 @@ export function libraryToRuntimeConfig(
 }
 
 export function emptyLibrary(
-  options: { id?: string; name?: string; defaultPresetId?: string } = {},
+  options: {
+    id?: string;
+    name?: string;
+    defaultPresetId?: string;
+    mediaType?: MediaType;
+  } = {},
 ): Library {
+  const mediaType = options.mediaType ?? 'movies';
   return {
     id: options.id ?? createLibraryId(),
     name: options.name ?? 'New library',
+    mediaType,
     folders: [],
     filters: defaultFilterExpression(),
     encoder: 'handbrake',
@@ -277,6 +300,7 @@ export function emptyLibrary(
       temp_marker_toggle: DEFAULT_TEMP_MARKER_TOGGLE,
       included_file_types: DEFAULT_INCLUDED_FILE_TYPES,
     },
+    organize: createOrganizeSettings(mediaType),
   };
 }
 
@@ -302,11 +326,59 @@ export function createQuickLibrary(
     ...base,
     id: createLibraryId(),
     name: 'Quick conversion',
+    organize: undefined,
     defaults: {
       ...base.defaults,
       delete_source_files_toggle: 0,
       replace_original_file_always_toggle: 0,
       replace_original_file_if_converted_is_smaller_toggle: 0,
+    },
+  };
+}
+
+/**
+ * Temporary library used by Quick organize. It is never persisted: the
+ * organizer works on a copy so a one-off cleanup cannot change saved settings.
+ */
+export function createQuickOrganizeLibrary(
+  options: { mediaType?: MediaType; source?: Library } = {},
+): Library {
+  if (options.source) {
+    const copy = JSON.parse(JSON.stringify(options.source)) as Library;
+    return {
+      ...copy,
+      id: createLibraryId(),
+      name: 'Quick organize',
+      organize: resolveOrganizeSettings(copy.organize, copy.mediaType),
+    };
+  }
+  return emptyLibrary({
+    name: 'Quick organize',
+    mediaType: options.mediaType ?? 'movies',
+  });
+}
+
+/**
+ * Changes the library's media type. Naming rules follow the new type and file
+ * overrides are dropped because they no longer refer to the same media.
+ */
+export function withLibraryMediaType(
+  library: Library,
+  mediaType: MediaType,
+): Library {
+  if (library.mediaType === mediaType) return library;
+  const settings = resolveOrganizeSettings(library.organize, mediaType);
+  return {
+    ...library,
+    mediaType,
+    organize: {
+      ...settings,
+      namingRules: createOrganizeSettings(mediaType).namingRules,
+      overrides: {},
+      tvdb: {
+        ...settings.tvdb,
+        shows: mediaType === 'tv' ? (settings.tvdb?.shows ?? []) : [],
+      },
     },
   };
 }
@@ -471,4 +543,9 @@ export function libraryPresetIds(library: Library): Set<string> {
   if (library.defaultPresetId) ids.add(library.defaultPresetId);
   library.mappingRules.forEach((rule) => ids.add(rule.presetId));
   return ids;
+}
+
+/** Organizer defaults for a library, filled in when older files lack them. */
+export function libraryOrganizeSettings(library: Library): OrganizeSettings {
+  return resolveOrganizeSettings(library.organize, library.mediaType);
 }

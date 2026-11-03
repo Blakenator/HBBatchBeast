@@ -12,6 +12,7 @@ import {
   outputContainerExtension,
   presetMatchesEncoder,
   validateLibrary,
+  withLibraryMediaType,
 } from '../../../common';
 import { usesHardwarePreset } from '../presetWarnings';
 import { Combobox } from '../../ui/Combobox';
@@ -20,6 +21,7 @@ import { FolderRowsEditor } from '../FolderRowsEditor';
 import { AlignedRowsEditor } from '../AlignedRowsEditor';
 import { MappingRulesEditor } from './MappingRulesEditor';
 import { PathInput } from '../PathInput';
+import { SegmentedControl } from '../SegmentedControl';
 
 const Wrap = styled.div`
   display: grid;
@@ -194,6 +196,32 @@ export const LibraryEditor: React.FC<LibraryEditorProps> = ({
             onChange({ ...library, name: event.target.value })
           }
         />
+        <SegmentedControl
+          label="Library type"
+          value={library.mediaType}
+          onChange={(value) =>
+            onChange(
+              withLibraryMediaType(
+                library,
+                value === 'tv' ? 'tv' : 'movies',
+              ),
+            )
+          }
+          options={[
+            { value: 'movies', label: 'Movies' },
+            { value: 'tv', label: 'TV shows' },
+          ]}
+        />
+        <p
+          style={{
+            margin: 0,
+            color: 'var(--hb-textMuted)',
+            fontSize: 'var(--hb-font-xs)',
+          }}
+        >
+          The type drives the organizer's naming rules. Organizer defaults live
+          in the Organizer tab.
+        </p>
       </Section>
 
       <Section>

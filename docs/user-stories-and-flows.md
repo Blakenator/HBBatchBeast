@@ -204,6 +204,33 @@ what changed.*
 replace-attempt cache, so that I can diagnose and reset state.*
 - Log viewer lists the known logs with sensible empty states.
 
+### I9 — Organize an existing library
+
+**US-28 — Rename without converting.** *As a media collector, I want to rename files into a clean library
+layout without re-encoding them, so that files that are already fine are not touched.*
+- Organize is a peer mode to Convert on the same library; there is no separate library kind. Libraries
+  carry their media type, and quick organize runs on an unsaved copy that can be saved afterwards.
+- Nothing moves until the review plan is confirmed; the previous plan can be undone.
+- The review list is sortable, its columns can be resized, reordered and hidden (remembered), and the
+  changed part of each new name is highlighted against the old one.
+
+**US-29 — Match episodes and movies.** *As a media collector, I want the app to work out which episode or
+movie each file is, so that names are correct without manual research.*
+- A TV library root holds many shows. Show folders are detected, matched to TVDB by folder name, and the
+  match is persisted per folder; each can be changed with a prefilled search (reusing the failed
+  auto-match results) or cleared. A folder can be declared a single show instead, and any subset of
+  shows can be ticked for a scoped scan so large libraries can be organized incrementally.
+- TV files use the series matched to their show folder, with season/episode tags and title similarity, a
+  visible confidence and reason, and a manual **Fix match** per file that persists.
+- Movies use Plex's metadata when a Plex database is available, and TVDB search when it is not.
+- Resolution comes from the file itself, never from the metadata provider.
+
+**US-30 — Keep watch history when renaming.** *As a Plex user, I want renamed files to keep their watch
+state, so that history and "next episode" are not reset.*
+- Updating Plex is optional per apply. When enabled, the app stops Plex, backs up the database, updates
+  the file/directory paths in one transaction, and moves watch rows to the correct episode GUID.
+- If Plex has not scanned the new file yet, the transfer is queued and can be completed later.
+
 ## Core flows
 
 Each flow is the forward direction: what the user does, what the app shows, where it can go wrong.
@@ -304,6 +331,27 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 3. Scan; the queue shows the resolved preset and the rule that selected it.
 4. Change a rule or preset and rescan; the previous queue is discarded because it no longer describes
    the current configuration.
+
+### F12 — Organize files into a library *(P1)*
+
+1. Open **Organize** from a library card, or start **Quick organize** from the home screen (blank) or a
+   library card (seeded, never saved until you choose **Save as library**). Saved organizer defaults
+   are restored.
+2. Pick Movies or TV and add source folders. For TV choose **Detect & match shows**; each show folder is
+   listed with cover art and a TVDB match (auto from the folder name) that can be changed or cleared.
+   For movies choose Plex or TVDB metadata. The Plex database comes from Settings → Global.
+3. Adjust the ordered first-match naming rules. Template fields offer variables on `{`, insert them as
+   removable chips, and show an example line; the locked default rule handles everything else.
+4. Scan; live progress shows discovered files, then a percentage with the file/show being matched and
+   the remaining time. Review the plan with filters for changes, skips, conflicts and low confidence,
+   and search. The
+   table sorts, resizes and hides columns like the conversion queue, and highlights the changed name
+   tokens. **Fix match** corrects a row and re-plans only that row. Conflicts block Apply.
+5. Apply: confirm the move count and whether Plex is updated. If Plex is running, stop it, apply
+   without Plex, or cancel.
+6. Plex is updated (or the app reports OS-specific permission/service guidance) and restarted when the
+   app stopped it. Pending history transfers are completed after the next Plex scan.
+7. **Undo last** reverses the file moves from the journal if the result is wrong.
 
 ## Non-goals (deliberately dropped)
 
