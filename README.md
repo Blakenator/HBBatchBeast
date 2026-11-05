@@ -82,24 +82,39 @@ The Plex database is one machine-wide setting shared by every library.
    a fallback), so Plex is never required. TV episodes are resolved from two independent signals —
    the `SxxEyy` tag and the filename's episode title — with an embedded air date as a tiebreaker.
    Regional tags often disagree with the title, so conflicts are labeled and low-confidence rows stay
-   in review instead of being guessed.
+   in review instead of being guessed. For a multi-episode file the filename title is compared with
+   the joined titles of every episode in the tag, so `S01E07-E08 - The Demon in the Mattress and
+   Freaky Fred` matches instead of conflicting.
 3. Edit the ordered **naming rules**. Rules are evaluated top to bottom and the first match wins; the
    last rule is a locked default. Conditions can use media type, path, filename, extension,
    resolution, season, episode, title and year with `is`, `is not`, `contains`, `does not contain`,
    `at least` and `at most`.
    - The default TV templates are `{tag} - {name}.{ext}` inside `{show}/Season {season:02}`. When the
      source folder *is* the show, the `{show}` segment is dropped, so single-show libraries keep a
-     flat `Season NN` layout.
+     flat `Season NN` layout. A file that covers several episodes renders `{tag}` as Plex's
+     first/last range (`S01E02-E03`), renders `{episode}` as `2-3` (or `02-03` with `:02`, and just
+     `2` for a single episode), keeps `{episodeEnd}` as the last number, and joins every episode
+     title with a comma for `{name}` (`Coral Reefs, Big Blue`). Multi-episode tags are detected in the shapes release names
+     actually use: `S01E02E03`, `S01E02-E03`, `S01E02-03`, `S01 E02-E03` and `S01 E02-03`, and a
+     first/last range expands to every episode it covers.
    - Templates are chip editors: typing `{` or pressing the **Insert variable** button (`{}`) opens a
      searchable list of variables with descriptions and examples, choosing one inserts a removable
      chip, and an example line under each field shows the rendered result for every token. Tokens
      include `{show}`, `{seriesYear}`, `{tag}`, `{name}`, `{season}`, `{episode}`, `{episodeEnd}`,
      `{title}`, `{year}`, `{airDate}`, `{resolution}`, `{width}`, `{height}`, `{ext}` and the source
      file tokens. Number tokens are unpadded by default; append `:02` for zero-padded values
-     (`{season:02}`, `{episode:02}`). `{airDate}` renders `2017-10-29` and supports
+     (`{season:02}`, `{episode:02}`). `{episode}` covers multi-episode files by itself (`2-3`), so
+     no literal separator is needed. Named formats split it: `{episode:start}`, `{episode:end}` and
+     `{episode:separator}` (empty for single episodes), and a variant can carry a width, so
+     `{episode:start:02}{episode:separator}{episode:end:02}` renders `02-03` for a multi-episode
+     file and `02` for a single one. Use `{tag}` when the full `S01E02-E03` form is wanted.
+     `{episodeEnd}` remains as an alias for the last number.
+     `{airDate}` renders `2017-10-29` and supports
      `:short` (2017-10), `:year`, `:month`, `:day`, `:compact` (20171029) and `:dot` (2017.10.29).
-     `{resolution}` is the bucket label (`4K`, `1080p`, `576p`, `SD`), while `{width}`/`{height}` are
-     the probed pixel dimensions. Compatibility aliases such as `{seriesName}`, `{episodeTag}`,
+     `{resolution}` uses Plex's buckets (`8K`, `4K`, `2K`, `1080p`, `720p`, `576p`, `480p`, `SD`);
+     either dimension can reach a bucket, so 1920x800 is `1080p` and 720x480 is `480p`, and
+     dimensions within 5% below a threshold keep the higher bucket, so 1918x1072 is still `1080p`.
+     `{width}`/`{height}` are the probed pixel dimensions. Compatibility aliases such as `{seriesName}`, `{episodeTag}`,
      `{episodeName}`, `{resolutionBucket}` and `{extension}` are accepted.
    - Windows reserved names, control characters, trailing dots/spaces, filesystem-invalid
      characters and over-long names are sanitized before anything moves.
@@ -113,25 +128,42 @@ The Plex database is one machine-wide setting shared by every library.
    **Apply**. The review table
    works like the conversion queue: sortable and resizable columns whose order and visibility are
    remembered, virtualized rows, status chips (all / will rename / skipped / conflicts / low
-   confidence / match review) and search. Paths are not shown as long strings: the table uses
-   structured `Show`, `Season`, `Folder`, `Current name` and `New name` columns (TV-only columns
-   collapse for movies). The `Folder` column shows the folder before → after when a rename moves the
-   file into a different show/season folder, and the changed parts of both the folder and the file
-   name are highlighted. The **Match** column is a two-faced badge: `strong`, `weak` or `conflict` on
-   the left and the confidence percentage on the right. Hover or focus it for the weighted breakdown
-   of tag, title and air-date evidence together with the full reason. Each row has a `…` menu with
-   **Fix match** and **Open folder**. Rows whose file and folder names are already identical are
-   skipped automatically. Full paths stay in the tooltips, the table scrolls inside its panel, and
-   the page itself never grows wider.
+   confidence / match review) and search. A **Flat list / Show tree** toggle groups rows under the
+   show they matched (movies group by title): groups start collapsed with file/rename/skip/conflict
+   counts, expand individually or all at once, and auto-expand while a filter or search is active.
+   Each show header has a checkbox that selects every file in that show. Paths are not shown as long
+   strings: the table uses structured `Show`, `Season`, `Folder`,
+   `Current name` and `New name` columns (TV-only columns collapse for movies). The `Folder` column
+   shows the folder before → after when a rename moves the file into a different show/season folder,
+   and the changed parts of both the folder and the file name are highlighted. The **Match** column
+   is a two-faced badge: `strong`, `weak` or `mixed signals` on the left and the confidence percentage on
+   the right. Hover or focus it for the weighted breakdown of tag, title and air-date evidence
+   together with the full reason. Each row has a one-click **Skip** action and a `…` menu with
+   **Fix match**, **Skip file / Include file** and **Open folder**; skipping re-plans the review so
+   the file no longer reserves its target, which can clear a conflict for another row. Selecting any
+   rows, including conflicts and skipped rows, shows bulk **Rescan**, **Use best guess** and
+   **Skip** actions, plus **Select all shown** and **Clear selection**. **Rescan** re-walks the
+   parent folders of the selected rows so files added, removed or renamed on disk are picked up and
+   re-matched, then merges them back into the review. Shift-clicking a checkbox selects the visible
+   range. Rows whose file and folder names are already identical are skipped automatically. Full paths stay in the
+   tooltips, the table scrolls inside its panel, and the page itself never grows wider. The reviewed
+   plan and selection are kept in memory when leaving for Settings, Home or Convert, so returning
+   does not force a rescan. Changing naming rules re-plans from the cached matches immediately;
+   changing show matches rematches from the cached discovery result without walking the folders
+   again. Warning banners are aggregated category summaries rather than one line per file.
 5. **Fix match** on any row overrides the show, episode or movie for that file. The search starts from
    the parsed title; **Use file name** drops the exact file name (without the extension) into the
    episode filter for TV (which then picks out its `S01E02` tag) or into the movie search; the chosen
    result carries a clear checkmark, and each result is a collapsible card — clicking it selects the
-   match, while the chevron expands the full description without changing the selection. Episode
-   results are ranked by the same tag/title evidence and show a compact match badge; the extracted
-   filename title is displayed above the list, and the **New filename** preview updates with the
-   selected episode or movie before saving. The fix is saved on the library (so a later scan keeps it)
-   and re-plans only that row; **Use best guess** removes it.
+   match, while the chevron expands the full description without changing the selection. For a file
+   that holds several episodes, turn on **This file contains multiple episodes**: the cards become
+   checkboxes and the selected episodes must be consecutive within one season. A filename that
+   already contains a range preselects it automatically. Episode results are ranked by the same
+   tag/title evidence and show a compact match badge; the extracted filename title is displayed above
+   the list, and the **New filename** preview shows the resulting range before saving. The fix is
+   saved on the library (so a later scan keeps it) and re-plans only that row; **Use best guess**
+   clears the override, re-includes the file if it was skipped, and rematches from the cached scan.
+   The bulk action does the same for every selected file.
 6. **Apply** first shows a confirmation with the exact move count and whether Plex will be updated.
    **Undo last** reverses the previous file moves from its journal.
 
@@ -149,9 +181,14 @@ that Plex is stopped, writes a timestamped backup under `<userData>/backups`, an
 `media_parts.file`, the `directories` tree and external subtitle `media_streams.url` values in one
 transaction. It never writes `metadata_items`.
 
+Plex's data directory usually belongs to the `plex` service account, so scanning reads the database
+through a temporary copy in the app cache when the live file cannot be opened. If that also fails,
+the scan finishes without Plex metadata and says so in the review warnings instead of failing.
+
 Watch history is keyed by Plex's metadata GUID, not by path, so history follows the file: when a TV
 file is matched to a different episode, the watch rows are moved or merged onto the correct episode.
-If Plex has not created that episode yet, a pending transfer is recorded in
+A multi-episode file moves the history of every Plex episode association it covers, and each missing
+target adds a pending transfer. Pending transfers are recorded in
 `<userData>/organize-pending.json`; rescan Plex, then choose **Complete pending history**.
 
 When Plex is running, Apply offers three choices: **Stop Plex and continue** (best effort through
@@ -165,10 +202,17 @@ remote host, stop it there and use **Check** to recheck.
 | macOS | `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` | launchd job `com.plexapp.plexmediaserver` |
 | Linux | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` (or `~/.config/plex/...`) | `systemctl stop plexmediaserver` |
 
-The Plex data directory is usually owned by the `plex` service account. On Linux, add your user to
-the `plex` group (then sign in again) or grant an ACL; on Windows use `icacls`; on macOS adjust
-Finder/Get Info permissions. The app shows the OS-specific remediation instead of asking for
-elevation.
+The Plex data directory is usually owned by the `plex` service account. **Settings → Global** and
+the organizer's Plex panel report the database and service state as a structured issue list. When
+a permission problem remains, the panel shows the complete platform commands in a code block with
+a **Copy commands** button: `systemctl` plus `find`/`setfacl` on Linux, `launchctl` plus
+`find`/`chmod +a` on macOS, and `taskkill`/`icacls`/`start` on Windows. The commands grant your user
+ACL access to the database folder and keep Plex's ownership intact.
+
+When an elevation helper is available, **Fix automatically** runs the same sequence through the
+native administrator prompt (`pkexec` on Linux, `osascript ... with administrator privileges` on
+macOS, UAC on Windows): stop Plex, grant access, then start Plex again only if it was running. If
+the prompt is cancelled or denied, the copyable commands remain available.
 
 TVDB lookups use TVDB's public site search and all-seasons pages, so no API key is needed. Responses
 are cached under `<userData>/cache/tvdb`. TVDB data is attributed to TheTVDB in the Organize
@@ -178,7 +222,10 @@ Settings is a full page rather than a drawer, with **Global settings**, **Librar
 **Presets** tabs. The **Libraries** tab opens with a shared header — library picker, the active
 library's name and Movies/TV type, and the create/duplicate/delete actions — above two sub-tabs:
 **Encoding** (folders, encoder, presets, mapping rules, scan filters and file handling) and
-**Organizer** (metadata source, naming rules, confidence, sidecars, collisions and cleanup). The
+**Organizer** (metadata source, naming rules, confidence, name replacements, sidecars, collisions
+and cleanup). Name replacements are a customizable find/replace list applied to file and show-folder
+names before matching (for example removing `_` or mapping `Doctor Who` to `DW`); they are
+case-insensitive and never change the files on disk.
 header summary shows the selected library's type, folder count, mapping-rule count and default
 preset, and deleting a library asks for confirmation first. Language, worker count, verbose worker
 logs, the Plex database and diagnostics/log locations apply to the whole app; folders, encoding,

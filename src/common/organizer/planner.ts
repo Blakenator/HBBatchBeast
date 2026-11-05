@@ -14,7 +14,9 @@ import type { NamingRule } from './settings';
 import {
   extensionOf,
   stripExtension,
-  episodeDisplayTag,
+  episodeRangeFor,
+  episodeRangeTag,
+  type EpisodeRange,
 } from './filename';
 import { selectNamingRule, type NamingRuleContext } from './rules';
 import {
@@ -30,15 +32,24 @@ import {
   splitFolderTemplate,
   type TemplateTokens,
 } from './paths';
-import { normalizePathForComparison } from '../pathUtils';
+import { normalizePathForComparison, pathBasename } from '../pathUtils';
 
 export interface PlannedFileInput extends OrganizeSourceFile {
   parsed: ParsedMediaName;
   confidence: number;
   reason: string;
+  /** The user approved this row, so the threshold must not skip it. */
+  approved?: boolean;
+  /** Keep the source file name and only apply the rendered folder. */
+  renameFolderOnly?: boolean;
+  /** Primary (first) episode of the match. */
   episode?: TvdbEpisode;
+  /** Every episode the file contains when it is a multi-episode release. */
+  episodes?: TvdbEpisode[];
   movie?: TvdbMovie;
   plex?: PlexAssociation;
+  /** Every Plex episode association that shares the file's path. */
+  plexEpisodes?: PlexAssociation[];
   /** Tag/title/air-date evidence behind an episode match. */
   episodeMatch?: EpisodeMatchSummary;
   seriesName?: string;
@@ -62,6 +73,8 @@ export interface OrganizePlanInput {
   sidecarPolicy: 'rename' | 'skip';
   /** Paths discovered on disk, used to flag targets that already exist. */
   existingPaths?: string[];
+  /** Source paths the user explicitly skipped for this review. */
+  skippedPaths?: string[];
 }
 
 function resolveAirDate(file: PlannedFileInput): string {
@@ -76,6 +89,28 @@ function resolveAirDate(file: PlannedFileInput): string {
   return '';
 }
 
+/**
+ * `{name}` text: the matched episode title, or every title joined with a comma
+ * when the file covers several episodes.
+ */
+function episodeNamesText(file: PlannedFileInput, range: EpisodeRange): string {
+  if (range.episodeNumbers.length < 2) return file.episode?.name ?? '';
+  const byNumber = new Map<number, string>();
+  if (file.episode) {
+    byNumber.set(file.episode.episodeNumber, file.episode.name);
+  }
+  for (const episode of file.episodes ?? []) {
+    if (episode.seasonNumber !== range.seasonNumber) continue;
+    byNumber.set(episode.episodeNumber, episode.name);
+  }
+  const names = range.episodeNumbers.flatMap((number) => {
+    const name = byNumber.get(number)?.trim();
+    return name ? [name] : [];
+  });
+  if (names.length > 1) return names.join(', ');
+  return names[0] ?? file.episode?.name ?? '';
+}
+
 function tokensFor(
   file: PlannedFileInput,
   mediaType: MediaType,
@@ -84,13 +119,24 @@ function tokensFor(
   const movie = file.movie;
   const airDate = resolveAirDate(file);
   const airYear = airDate ? Number(airDate.slice(0, 4)) : undefined;
-  const episodeNumbers = file.parsed.episodeNumbers ?? [];
+  const range = episodeRangeFor(episode, file.parsed, file.episodes);
   const episodeEnd =
-    episodeNumbers.length > 1
-      ? episodeNumbers[episodeNumbers.length - 1]
+    range.episodeNumbers.length > 1
+      ? range.episodeNumbers[range.episodeNumbers.length - 1]
       : undefined;
-  const tag = episode ? episodeDisplayTag(episode) : '';
-  const episodeName = episode?.name ?? '';
+  // `{episode}` is safe to put between literal separators: `3-4` for a
+  // multi-episode file, `3` for a single one (so `{episode}-{episodeEnd}`
+  // would wrongly leave a trailing hyphen for singles).
+  const episodeValue =
+    range.episodeNumbers.length === 0
+      ? undefined
+      : range.episodeNumbers.length === 1
+        ? range.episodeNumbers[0]
+        : `${range.episodeNumbers[0]}-${
+            range.episodeNumbers[range.episodeNumbers.length - 1]
+          }`;
+  const tag = episodeRangeTag(range.seasonNumber, range.episodeNumbers);
+  const episodeName = episodeNamesText(file, range);
   const show = file.seriesName ?? '';
   const resolution = file.parsed.resolution ?? '';
   return {
@@ -104,7 +150,7 @@ function tokensFor(
     width: file.parsed.width,
     height: file.parsed.height,
     season: episode?.seasonNumber,
-    episode: episode?.episodeNumber,
+    episode: episodeValue,
     episodeEnd,
     tag,
     episodeTag: tag,
@@ -112,7 +158,7 @@ function tokensFor(
     episodeName,
     show,
     seriesName: show,
-    title: movie?.title ?? episode?.name ?? file.parsed.title,
+    title: movie?.title ?? (episodeName || file.parsed.title),
     year: movie?.year ?? airYear ?? file.parsed.year,
     airDate,
     seriesYear: file.seriesYear,
@@ -134,7 +180,13 @@ function ruleContextFor(
     resolution: file.parsed.resolution,
     seasonNumber: file.episode?.seasonNumber ?? file.parsed.seasonNumber,
     episodeNumber: file.episode?.episodeNumber ?? file.parsed.episodeNumber,
-    title: file.movie?.title ?? file.episode?.name ?? file.parsed.title,
+    title:
+      file.movie?.title ??
+      (episodeNamesText(
+        file,
+        episodeRangeFor(file.episode, file.parsed, file.episodes),
+      ) ||
+        file.parsed.title),
     year: file.movie?.year ?? file.parsed.year,
   };
 }
@@ -240,11 +292,14 @@ function uniqueInputFiles(
 export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
   const warnings: string[] = [];
   const files = uniqueInputFiles(input.files, input.caseInsensitive);
-  const used = new Set<string>(
+  const existingKeys = new Set<string>(
     (input.existingPaths ?? []).map((path) =>
       organizerComparisonKey(path, { caseInsensitive: input.caseInsensitive }),
     ),
   );
+  const used = new Set(existingKeys);
+  /** First source file that plans a given target, used for conflict wording. */
+  const targetOwners = new Map<string, string>();
   const sourceKeys = new Set(
     files.map((file) =>
       organizerComparisonKey(file.path, {
@@ -252,9 +307,21 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       }),
     ),
   );
+  const skippedKeys = new Set(
+    (input.skippedPaths ?? []).map((path) =>
+      organizerComparisonKey(path, { caseInsensitive: input.caseInsensitive }),
+    ),
+  );
   const items: OrganizePlanItem[] = [];
 
   for (const file of files) {
+    const sourceKey = organizerComparisonKey(file.path, {
+      caseInsensitive: input.caseInsensitive,
+    });
+    const manualSkip = skippedKeys.has(sourceKey);
+    const manualSkipProps = manualSkip ? { manualSkip: true as const } : {};
+    const approved = Boolean(file.approved);
+    const approvedProps = approved ? { approved: true as const } : {};
     const rule = selectNamingRule(input.rules, ruleContextFor(file, input.mediaType));
     const fallbackTarget = file.path;
     const fallbackRelative = file.relativePath;
@@ -273,11 +340,17 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       confidence: file.confidence,
       reason: file.reason,
       parsed: file.parsed,
+      ...approvedProps,
       ...(rule ? { ruleId: rule.id } : {}),
       ...(file.episode ? { episode: file.episode } : {}),
+      ...(file.episodes?.length ? { episodes: file.episodes } : {}),
       ...(file.movie ? { movie: file.movie } : {}),
       ...(file.plex ? { plex: file.plex } : {}),
+      ...(file.plexEpisodes?.length
+        ? { plexEpisodes: file.plexEpisodes }
+        : {}),
       ...(file.episodeMatch ? { episodeMatch: file.episodeMatch } : {}),
+      ...(file.renameFolderOnly ? { renameFolderOnly: true as const } : {}),
       ...(file.seriesName ? { seriesName: file.seriesName } : {}),
       ...(file.seriesYear ? { seriesYear: file.seriesYear } : {}),
       ...(showFolderName ? { showFolder: showFolderName } : {}),
@@ -289,8 +362,9 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     if (!rule) {
       items.push({
         ...base,
+        ...manualSkipProps,
         action: 'skip',
-        reason: 'No naming rule is available',
+        reason: manualSkip ? 'Skipped manually' : 'No naming rule is available',
         targetPath: fallbackTarget,
         relativeTarget: fallbackRelative,
         sidecars: [],
@@ -302,10 +376,12 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     let folderSegments: string[];
     try {
       const tokens = tokensFor(file, input.mediaType);
-      targetFilename = ensureExtension(
-        renderFileTemplate(rule.fileTemplate, tokens),
-        file.extension,
-      );
+      targetFilename = file.renameFolderOnly
+        ? file.filename
+        : ensureExtension(
+            renderFileTemplate(rule.fileTemplate, tokens),
+            file.extension,
+          );
       folderSegments = rule.folderTemplate.trim()
         ? input.mediaType === 'tv'
           ? tvFolderSegments(
@@ -318,8 +394,13 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     } catch (error) {
       items.push({
         ...base,
+        ...manualSkipProps,
         action: 'skip',
-        reason: error instanceof Error ? error.message : String(error),
+        reason: manualSkip
+          ? 'Skipped manually'
+          : error instanceof Error
+            ? error.message
+            : String(error),
         targetPath: fallbackTarget,
         relativeTarget: fallbackRelative,
         sidecars: [],
@@ -328,15 +409,21 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     }
 
     const sameFilename = targetFilename === file.filename;
-    if (file.confidence < input.confidenceThreshold && !sameFilename) {
+    if (
+      !approved &&
+      file.confidence < input.confidenceThreshold &&
+      !sameFilename
+    ) {
       items.push({
         ...base,
+        ...manualSkipProps,
         action: 'skip',
-        reason:
-          file.reason ||
-          `Confidence ${(file.confidence * 100).toFixed(0)}% is below the ${(
-            input.confidenceThreshold * 100
-          ).toFixed(0)}% threshold`,
+        reason: manualSkip
+          ? 'Skipped manually'
+          : file.reason ||
+            `Confidence ${(file.confidence * 100).toFixed(0)}% is below the ${(
+              input.confidenceThreshold * 100
+            ).toFixed(0)}% threshold`,
         targetPath: fallbackTarget,
         relativeTarget: fallbackRelative,
         sidecars: [],
@@ -363,9 +450,6 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     const targetKey = organizerComparisonKey(targetPath, {
       caseInsensitive: input.caseInsensitive,
     });
-    const sourceKey = organizerComparisonKey(file.path, {
-      caseInsensitive: input.caseInsensitive,
-    });
     const caseOnly = isCaseOnlyDifference(file.path, targetPath, {
       caseInsensitive: input.caseInsensitive,
     });
@@ -377,27 +461,36 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
 
     let action: OrganizePlanItem['action'] = 'rename';
     let reason = file.reason || 'Matched';
-    if (noChange) {
+    if (manualSkip) {
       action = 'skip';
-      reason = 'Already named';
-    } else if (used.has(targetKey) && !sourceKeys.has(targetKey)) {
-      if (sameFilename) {
+      reason = 'Skipped manually';
+    } else {
+      if (noChange) {
         action = 'skip';
         reason = 'Already named';
-      } else if (input.collisions === 'suffix') {
-        targetPath = uniqueTarget(targetPath, used, input.caseInsensitive);
-        reason = `${file.reason || 'Matched'} (collision renamed)`;
-      } else {
-        action = 'conflict';
-        reason = 'Target already exists';
+      } else if (used.has(targetKey) && !sourceKeys.has(targetKey)) {
+        if (sameFilename) {
+          action = 'skip';
+          reason = 'Already named';
+        } else if (input.collisions === 'suffix') {
+          targetPath = uniqueTarget(targetPath, used, input.caseInsensitive);
+          reason = `${file.reason || 'Matched'} (collision renamed)`;
+        } else {
+          action = 'conflict';
+          const owner = targetOwners.get(targetKey);
+          reason =
+            owner && !existingKeys.has(targetKey)
+              ? `Target name is already planned for ${pathBasename(owner)}`
+              : 'Target already exists';
+        }
       }
-    }
-    if (action === 'rename' && folderOnly) {
-      reason = 'Folder name updated; file name already correct';
+      if (action === 'rename' && folderOnly) {
+        reason = 'Folder name updated; file name already correct';
+      }
     }
 
     const sidecars =
-      action === 'rename' && input.sidecarPolicy === 'rename'
+      (action === 'rename' || manualSkip) && input.sidecarPolicy === 'rename'
         ? sidecarTargets(
             file,
             targetPath.slice(
@@ -411,13 +504,18 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
           )
         : [];
 
-    used.add(
-      organizerComparisonKey(targetPath, {
+    if (!manualSkip) {
+      const claimedKey = organizerComparisonKey(targetPath, {
         caseInsensitive: input.caseInsensitive,
-      }),
-    );
+      });
+      if (!targetOwners.has(claimedKey) && !existingKeys.has(claimedKey)) {
+        targetOwners.set(claimedKey, file.path);
+      }
+      used.add(claimedKey);
+    }
     items.push({
       ...base,
+      ...manualSkipProps,
       action,
       reason,
       targetPath,
@@ -430,15 +528,29 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
   }
 
   if (input.mediaType === 'tv') {
-    const withoutSeries = files.filter((file) => !file.seriesName);
+    const withoutSeries = files.filter(
+      (file) =>
+        !file.seriesName &&
+        !skippedKeys.has(
+          organizerComparisonKey(file.path, {
+            caseInsensitive: input.caseInsensitive,
+          }),
+        ),
+    );
     if (withoutSeries.length > 0) {
       warnings.push(
         `${withoutSeries.length} TV file(s) have no selected TVDB series.`,
       );
     }
+    // Only rows that will actually be renamed need a second look; a mixed
+    // signal that is skipped (below the threshold or by hand) is already
+    // resolved and must not keep the warning alive.
     const matchedConflicts = items.filter(
       (item) =>
-        item.episodeMatch?.conflict && !item.folderOnly && !item.noChange,
+        item.action === 'rename' &&
+        item.episodeMatch?.conflict &&
+        !item.folderOnly &&
+        !item.noChange,
     ).length;
     if (matchedConflicts > 0) {
       warnings.push(
@@ -448,6 +560,7 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
   }
   const lowConfidence = items.filter(
     (item) =>
+      !item.manualSkip &&
       !item.folderOnly &&
       !item.noChange &&
       item.confidence !== undefined &&

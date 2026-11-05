@@ -302,6 +302,131 @@ describe('Plex writer', () => {
     }
   });
 
+  it('updates every part and moves history for a multi-episode range', () => {
+    createPlexFixture();
+    const source = path.join(
+      root,
+      'plex',
+      'TV Shows',
+      'Blue Planet II',
+      'Blue.Planet.II.S01E01-E02.mkv',
+    );
+    const target = path.join(
+      root,
+      'plex',
+      'TV Shows',
+      'Blue Planet II',
+      'Season 01',
+      'S01E03-E04 - Coral Reefs.mkv',
+    );
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      UPDATE media_parts SET file = '${source}' WHERE id IN (51, 53);
+      INSERT INTO metadata_items VALUES
+        (44, 2, 41, 4, 3, 'plex://episode/3', 'Coral Reefs', 2017, NULL, '2021-01-08 20:14:57'),
+        (45, 2, 41, 4, 4, 'plex://episode/4', 'Big Blue', 2017, NULL, '2021-01-08 20:14:57');
+      INSERT INTO media_items VALUES (54, 44, 3840, 2160), (56, 45, 3840, 2160);
+      INSERT INTO media_parts VALUES
+        (55, 54, '${path.join(root, 'plex', 'TV Shows', 'Blue Planet II', 'E03.mkv')}', 200, NULL, NULL),
+        (57, 56, '${path.join(root, 'plex', 'TV Shows', 'Blue Planet II', 'E04.mkv')}', 200, NULL, NULL);
+      INSERT INTO metadata_item_settings VALUES
+        (3, 1, 'plex://episode/2', 3, 700, '2021-01-09 20:14:57', 0, NULL, NULL, NULL, '2021-01-02', NULL, 1);
+    `);
+    db.close();
+
+    const association = (partId: number, episodeNumber: number) => ({
+      metadataItemId: 42,
+      mediaItemId: 50,
+      mediaPartId: partId,
+      guid: `plex://episode/${episodeNumber}`,
+      seasonNumber: 1,
+      episodeNumber,
+      showId: 40,
+      showTitle: 'Blue Planet II',
+      librarySectionId: 2,
+      libraryRoot: path.join(root, 'plex', 'TV Shows'),
+      directoryId: 200,
+      directoryPath: 'Blue Planet II',
+      watchCount: 0,
+      watchStates: [],
+    });
+    const plan: OrganizePlan = {
+      mediaType: 'tv',
+      sourceRoots: [path.join(root, 'plex', 'TV Shows', 'Blue Planet II')],
+      items: [
+        {
+          id: source,
+          mediaType: 'tv',
+          sourcePath: source,
+          targetPath: target,
+          relativeTarget: 'Season 01/S01E03-E04 - Coral Reefs.mkv',
+          action: 'rename',
+          confidence: 1,
+          reason: 'Manual multi-episode match',
+          episode: {
+            tag: 'S01E03',
+            name: 'Coral Reefs',
+            seasonNumber: 1,
+            episodeNumber: 3,
+          },
+          episodes: [
+            {
+              tag: 'S01E03',
+              name: 'Coral Reefs',
+              seasonNumber: 1,
+              episodeNumber: 3,
+            },
+            {
+              tag: 'S01E04',
+              name: 'Big Blue',
+              seasonNumber: 1,
+              episodeNumber: 4,
+            },
+          ],
+          plex: association(51, 1),
+          plexEpisodes: [association(51, 1), association(53, 2)],
+          sidecars: [],
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      warnings: [],
+    };
+
+    const result = updatePlexFromPlan(plan, {
+      dbPath,
+      backupDir: path.join(root, 'backups'),
+      pendingPath: path.join(root, 'pending.json'),
+      platform: 'linux',
+      caseInsensitive: false,
+    });
+    expect(result.updated).toBe(2);
+    expect(result.historyMoved).toBeGreaterThan(0);
+
+    const updated = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const parts = updated
+        .prepare('SELECT id, file FROM media_parts WHERE id IN (51, 53) ORDER BY id')
+        .all() as unknown as { id: number; file: string }[];
+      expect(parts.map((part) => part.file)).toEqual([target, target]);
+
+      const third = updated
+        .prepare("SELECT view_count FROM metadata_item_settings WHERE guid = 'plex://episode/3'")
+        .get() as { view_count: number } | undefined;
+      const fourth = updated
+        .prepare("SELECT view_count FROM metadata_item_settings WHERE guid = 'plex://episode/4'")
+        .get() as { view_count: number } | undefined;
+      expect(third?.view_count).toBe(2);
+      expect(fourth?.view_count).toBe(3);
+
+      const old = updated
+        .prepare("SELECT COUNT(*) AS count FROM metadata_item_settings WHERE guid IN ('plex://episode/1', 'plex://episode/2')")
+        .get() as { count: number };
+      expect(old.count).toBe(0);
+    } finally {
+      updated.close();
+    }
+  });
+
   it('queues a history transfer when the correct episode does not exist yet', () => {
     createPlexFixture(false);
     const pendingPath = path.join(root, 'pending.json');

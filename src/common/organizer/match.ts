@@ -17,6 +17,11 @@ import { episodeDisplayTag, episodeTag, titleComparisonKey } from './filename';
 export interface EpisodeMatchOptions {
   /** TVDB series name, used to remove the show title from the filename title. */
   seriesName?: string;
+  /**
+   * Episodes of the same series. Supplying them lets a multi-episode tag
+   * compare the filename title against every joined episode title.
+   */
+  episodes?: readonly TvdbEpisode[];
 }
 
 export const NAME_MATCH_THRESHOLD = 0.78;
@@ -178,6 +183,37 @@ function episodeLabel(episode: TvdbEpisode): string {
   return `${episodeDisplayTag(episode)} - ${episode.name}`;
 }
 
+/**
+ * The title a filename is compared against. A multi-episode tag names every
+ * episode it covers, so the first candidate compares against all their titles
+ * joined with a comma.
+ */
+function comparableEpisodeTitle(
+  episode: TvdbEpisode,
+  parsed: ParsedMediaName,
+  catalog: readonly TvdbEpisode[] | undefined,
+): string {
+  if (!catalog || catalog.length === 0) return episode.name;
+  const numbers = parsedEpisodeNumbers(parsed);
+  if (
+    numbers.length < 2 ||
+    parsed.seasonNumber !== episode.seasonNumber ||
+    numbers[0] !== episode.episodeNumber
+  ) {
+    return episode.name;
+  }
+  const names = new Map(
+    catalog
+      .filter((candidate) => candidate.seasonNumber === episode.seasonNumber)
+      .map((candidate) => [candidate.episodeNumber, candidate.name]),
+  );
+  const titles = numbers.flatMap((number) => {
+    const name = names.get(number)?.trim();
+    return name ? [name] : [];
+  });
+  return titles.length > 1 ? titles.join(', ') : episode.name;
+}
+
 function sameEpisode(left: TvdbEpisode, right: TvdbEpisode): boolean {
   if (left.id && right.id) return left.id === right.id;
   return (
@@ -267,8 +303,13 @@ export function scoreEpisode(
       ? 'correct'
       : 'incorrect';
   const nameText = episodeNameText(parsed, options.seriesName);
+  const candidateTitle = comparableEpisodeTitle(
+    episode,
+    parsed,
+    options.episodes,
+  );
   const nameSimilarityValue = nameText
-    ? nameSimilarity(nameText, episode.name)
+    ? nameSimilarity(nameText, candidateTitle)
     : 0;
   const nameState: EpisodeAxisState = !nameText
     ? 'missing'
@@ -374,9 +415,10 @@ export function rankEpisodes(
   limit = 5,
   options: EpisodeMatchOptions = {},
 ): EpisodeCandidate[] {
+  const scoring = { ...options, episodes };
   return episodes
     .map((episode) => {
-      const scored = scoreEpisode(parsed, episode, options);
+      const scored = scoreEpisode(parsed, episode, scoring);
       return { episode, ...scored };
     })
     .sort(
@@ -417,7 +459,10 @@ export function resolveEpisode(
   }
   const ranked = episodes
     .map((episode) => {
-      const scored = scoreEpisode(parsed, episode, options);
+      const scored = scoreEpisode(parsed, episode, {
+        ...options,
+        episodes,
+      });
       return { episode, ...scored };
     })
     .sort(

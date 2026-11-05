@@ -35,6 +35,7 @@ const PLACEHOLDER_FILES = [
   'ErrorLog.txt',
   'fileConversionLog.txt',
   'Scans.txt',
+  'OrganizeLog.txt',
 ];
 
 export function appPaths({

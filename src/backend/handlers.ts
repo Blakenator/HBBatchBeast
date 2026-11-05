@@ -14,6 +14,7 @@ import {
   userPresetFiles,
 } from './helpers';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { dialog, net, shell } from 'electron';
 import {
@@ -55,6 +56,7 @@ import {
   clearCaches,
   clearRunJournal,
   collectDiagnostics,
+  logOrganizeFailure,
 } from './helpers/diagnostics';
 import { probeMedia } from './helpers/probeMedia';
 import { TvdbClient } from './organizer/tvdb/client';
@@ -68,10 +70,16 @@ import {
 import { completePendingHistoryTransfers } from './organizer/plex/writer';
 import {
   plexDatabaseCandidates,
-  plexPermissionRemediation,
+  plexExecutableCandidates,
   plexServiceHint,
-  plexServiceInstructions,
 } from './organizer/plex/environment';
+import {
+  attemptPlexAutoFix,
+  canAutoFixPlex,
+  plexAccessState,
+  plexIssues,
+  plexRemediation,
+} from './organizer/plex/remediation';
 import {
   detectPlexService,
   startPlexService,
@@ -243,6 +251,50 @@ function getTvdbClient(app: Electron.App): TvdbClient {
   return tvdbClient;
 }
 
+function currentUserName(): string {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return process.env.USER ?? process.env.USERNAME ?? 'your user';
+  }
+}
+
+function resolvedPlexExecutable(app: Electron.App): string | undefined {
+  return plexExecutableCandidates({
+    platform: process.platform,
+    env: process.env,
+    home: app.getPath('home'),
+    exists: fs.existsSync,
+  })[0];
+}
+
+function plexRemediationInput(
+  app: Electron.App,
+  dbPath: string,
+  status: { running: boolean; kind: OrganizePlexCheck['serviceKind'] },
+  exists: boolean,
+  writable: boolean,
+  folderWritable: boolean,
+) {
+  const user = currentUserName();
+  const home = app.getPath('home');
+  const executable = resolvedPlexExecutable(app);
+  return {
+    platform: process.platform,
+    dbPath,
+    user,
+    exists,
+    writable,
+    folderWritable,
+    running: status.running,
+    serviceKind: status.kind,
+    ...(executable ? { executable } : {}),
+    home,
+    env: process.env,
+    existsOnDisk: fs.existsSync,
+  };
+}
+
 async function inspectPlexDatabase(
   app: Electron.App,
   requestedPath: string,
@@ -250,25 +302,27 @@ async function inspectPlexDatabase(
   const dbPath = path.resolve(
     expandHomePath(requestedPath, app.getPath('home')),
   );
-  let writable = false;
-  try {
-    fs.accessSync(dbPath, fs.constants.W_OK);
-    writable = true;
-  } catch {
-    // The remediation message below tells the user how to grant access.
-  }
+  const access = plexAccessState(process.platform, dbPath);
   const status = await detectPlexService(process.platform);
+  const exists = fs.existsSync(dbPath);
+  const input = plexRemediationInput(
+    app,
+    dbPath,
+    status,
+    exists,
+    access.writable,
+    access.folderWritable,
+  );
   return {
     path: dbPath,
-    exists: fs.existsSync(dbPath),
-    writable,
+    exists,
+    writable: access.writable,
+    folderWritable: access.folderWritable,
     running: status.running,
     serviceKind: status.kind,
-    serviceInstructions: plexServiceInstructions(process.platform),
-    permissionRemediation: plexPermissionRemediation(
-      process.platform,
-      dbPath,
-    ),
+    issues: plexIssues(input),
+    remediation: plexRemediation(input),
+    canAutoFix: canAutoFixPlex(input),
   };
 }
 
@@ -341,15 +395,6 @@ export const BackendHandlers: BackendSyncHandlersType<
       platform: process.platform,
       databaseCandidates,
       serviceKind: plexServiceHint(process.platform),
-      serviceInstructions: plexServiceInstructions(process.platform),
-      ...(databaseCandidates[0]
-        ? {
-            permissionRemediation: plexPermissionRemediation(
-              process.platform,
-              databaseCandidates[0],
-            ),
-          }
-        : {}),
     };
   },
   [PROMISE_CHANNEL.OrganizeCheckPlex]: ({ app, args }) =>
@@ -359,9 +404,29 @@ export const BackendHandlers: BackendSyncHandlersType<
       await stopPlexService(process.platform);
       await waitForPlexStopped(process.platform, 10_000);
     } else if (args.action === 'start') {
-      await startPlexService(process.platform);
+      await startPlexService(
+        process.platform,
+        undefined,
+        resolvedPlexExecutable(app),
+      );
     }
     return inspectPlexDatabase(app, args.path);
+  },
+  [PROMISE_CHANNEL.OrganizeFixPlex]: async ({ app, args }) => {
+    const before = await inspectPlexDatabase(app, args.path);
+    const input = plexRemediationInput(
+      app,
+      before.path,
+      { running: before.running, kind: before.serviceKind },
+      before.exists,
+      before.writable,
+      before.folderWritable ?? before.writable,
+    );
+    const steps = await attemptPlexAutoFix(input);
+    return {
+      check: await inspectPlexDatabase(app, args.path),
+      steps,
+    };
   },
   [PROMISE_CHANNEL.OrganizeSearchSeries]: ({ app, args }) =>
     getTvdbClient(app).searchSeries(args.query),
@@ -392,24 +457,34 @@ export const BackendHandlers: BackendSyncHandlersType<
       restorePlex: args?.restorePlex === true,
     }),
   [PROMISE_CHANNEL.OrganizeCompletePending]: async ({ app, args }) => {
-    const status = await detectPlexService(process.platform);
-    if (status.running) {
-      throw new AppError(
-        `Plex Media Server is running. ${plexServiceInstructions(process.platform)}`,
-      );
-    }
     const paths = prepareAppPaths(app);
     const dbPath = path.resolve(
       expandHomePath(args.dbPath, app.getPath('home')),
     );
-    try {
-      fs.accessSync(dbPath, fs.constants.W_OK);
-    } catch {
+    const exists = fs.existsSync(dbPath);
+    const status = await detectPlexService(process.platform);
+    if (status.running) {
+      const remediation = plexRemediation(
+        plexRemediationInput(app, dbPath, status, exists, true, true),
+      );
       throw new AppError(
-        `HBBatchBeast cannot write the Plex database. ${plexPermissionRemediation(
-          process.platform,
+        `Plex Media Server is running.\n\n${remediation.script}`,
+      );
+    }
+    const access = plexAccessState(process.platform, dbPath);
+    if (!access.writable) {
+      const remediation = plexRemediation(
+        plexRemediationInput(
+          app,
           dbPath,
-        )}`,
+          status,
+          exists,
+          access.writable,
+          access.folderWritable,
+        ),
+      );
+      throw new AppError(
+        `HBBatchBeast cannot write the Plex database.\n\n${remediation.script}`,
       );
     }
     const result = completePendingHistoryTransfers({
@@ -457,10 +532,15 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
         tvdbClient: getTvdbClient(app),
         ...(plexDbPath ? { plexDbPath } : {}),
         ...(args.scope && args.scope.length > 0 ? { scope: args.scope } : {}),
+        ...(args.reuseScanId ? { reuseScanId: args.reuseScanId } : {}),
+        ...(args.rescanFolders && args.rescanFolders.length > 0
+          ? { rescanFolders: args.rescanFolders }
+          : {}),
         onProgress,
       });
       onComplete(plan);
     } catch (error) {
+      logOrganizeFailure(prepareAppPaths(app), error);
       onError(
         error instanceof AppError
           ? error

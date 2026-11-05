@@ -25,7 +25,7 @@ import {
   PROMISE_CHANNEL,
   diffNameSegments,
   diffTargetName,
-  episodeDisplayTag,
+  episodeSelectionTag,
   pathDirname,
   type DiffSegment,
   type MediaType,
@@ -36,12 +36,14 @@ import {
   titleComparisonKey,
 } from '../../common';
 import { useBackend } from '../helpers';
+import { SegmentedControl } from '../settings/SegmentedControl';
 import { Button, IconButton } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import type { AppIconName } from '../ui/icons';
 import { MatchBadge } from './MatchBadge';
 
 type PlanFilter = 'all' | 'rename' | 'skip' | 'conflict' | 'low' | 'review';
+type PlanView = 'flat' | 'grouped';
 
 const FILTERS: { value: PlanFilter; label: string }[] = [
   { value: 'all', label: 'All files' },
@@ -69,7 +71,7 @@ const DEFAULT_COLUMN_SIZES: Record<string, number> = {
   rule: 92,
   action: 90,
   plex: 84,
-  fix: 44,
+  fix: 80,
 };
 
 const DEFAULT_VISIBILITY: ColumnVisibilityState = {
@@ -204,11 +206,117 @@ const BodyRow = styled.div<{ $conflict: boolean }>`
   }
 `;
 
-const Cell = styled.div<{ $align?: 'left' | 'right' }>`
+const Cell = styled.div<{
+  $align?: 'left' | 'right';
+  $indent?: number;
+  $select?: boolean;
+}>`
   min-width: 0;
-  padding: 0 var(--hb-space-sm);
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-right: ${({ $select }) =>
+    $select ? '0' : 'var(--hb-space-sm)'};
+  padding-left: ${({ $indent, $select }) =>
+    $select ? '0' : `calc(var(--hb-space-sm) + ${$indent ?? 0}px)`};
+  height: ${({ $select }) => ($select ? '100%' : 'auto')};
   overflow: hidden;
   text-align: ${({ $align }) => ($align === 'right' ? 'right' : 'left')};
+`;
+
+const SelectCellLabel = styled.label`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+`;
+
+const GroupSelection = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 ${DEFAULT_COLUMN_SIZES.select}px;
+  height: 100%;
+`;
+
+const GroupRow = styled.div`
+  position: sticky;
+  top: ${HEADER_HEIGHT}px;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  height: ${ROW_HEIGHT}px;
+  width: 100%;
+  border-bottom: 1px solid var(--hb-border);
+  background: var(--hb-surfaceMuted);
+  font-size: var(--hb-font-sm);
+`;
+
+const GroupCell = styled.div`
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+`;
+
+const GroupButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  padding: 0 var(--hb-space-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--hb-surface);
+  }
+
+  &:hover span[data-group-stats] {
+    background: var(--hb-surface);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--hb-focus);
+    outline-offset: -2px;
+  }
+`;
+
+const GroupName = styled.span`
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+`;
+
+const GroupStats = styled.span`
+  position: sticky;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hb-space-sm);
+  margin-left: auto;
+  padding-left: var(--hb-space-sm);
+  background: var(--hb-surfaceMuted);
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-xs);
+  white-space: nowrap;
+`;
+
+const RowActionGroup = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 `;
 
 const EllipsisText = styled.span`
@@ -339,6 +447,7 @@ interface StoredLayout {
   visibility?: ColumnVisibilityState;
   order?: ColumnOrderState;
   sizing?: ColumnSizingState;
+  view?: PlanView;
 }
 
 function loadLayout(): StoredLayout {
@@ -366,7 +475,9 @@ function loadLayout(): StoredLayout {
         if (typeof value === 'number' && Number.isFinite(value)) sizing[key] = value;
       }
     }
-    return { visibility, order, sizing };
+    const view: PlanView | undefined =
+      parsed.view === 'grouped' ? 'grouped' : parsed.view === 'flat' ? 'flat' : undefined;
+    return { visibility, order, sizing, ...(view ? { view } : {}) };
   } catch {
     return {};
   }
@@ -401,6 +512,15 @@ function splitPath(value: string): { directory: string; name: string } {
     directory: value.slice(0, separator + 1),
     name: value.slice(separator + 1),
   };
+}
+
+/** Parses a 0-100 percentage filter; empty input means "no limit". */
+function parsePercent(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.min(100, Math.max(0, parsed));
 }
 
 function DiffSegments({
@@ -441,10 +561,107 @@ function ruleLabel(
   return index === rules.length - 1 ? 'Default' : rule.name || `Rule ${index + 1}`;
 }
 
+interface PlanGroupMeta {
+  key: string;
+  name: string;
+  year?: number;
+}
+
+function groupMetaFor(item: OrganizePlanItem): PlanGroupMeta {
+  const name =
+    item.mediaType === 'tv'
+      ? (item.seriesName ?? item.showFolder)
+      : (item.movie?.title ?? item.showFolder);
+  if (!name) return { key: '__unmatched__', name: 'Unmatched files' };
+  const year = item.mediaType === 'tv' ? item.seriesYear : item.movie?.year;
+  return {
+    key: `${name.toLowerCase()}\u0000${year ?? ''}`,
+    name,
+    ...(year ? { year } : {}),
+  };
+}
+
+interface PlanGroupStats {
+  total: number;
+  rename: number;
+  skip: number;
+  conflict: number;
+  low: number;
+}
+
+/**
+ * Rewrites that are still applied even though their tag/title evidence
+ * disagrees. These belong to the conflicts review together with target path
+ * collisions; a mixed signal that is skipped (below the threshold) does not.
+ */
+function needsConflictReview(
+  item: OrganizePlanItem,
+  confidenceThreshold: number,
+): boolean {
+  return (
+    item.action === 'rename' &&
+    item.episodeMatch?.conflict === true &&
+    !item.folderOnly &&
+    !item.noChange &&
+    (item.confidence ?? 0) >= confidenceThreshold
+  );
+}
+
+function groupStatsFor(
+  items: OrganizePlanItem[],
+  confidenceThreshold: number,
+): PlanGroupStats {
+  const stats: PlanGroupStats = {
+    total: items.length,
+    rename: 0,
+    skip: 0,
+    conflict: 0,
+    low: 0,
+  };
+  for (const item of items) {
+    stats[item.action] += 1;
+    if (needsConflictReview(item, confidenceThreshold)) stats.conflict += 1;
+    if (
+      !item.folderOnly &&
+      !item.noChange &&
+      !item.manualSkip &&
+      item.confidence !== undefined &&
+      item.confidence < confidenceThreshold
+    ) {
+      stats.low += 1;
+    }
+  }
+  return stats;
+}
+
+const GroupSelectCheckbox: React.FC<{
+  checked: boolean;
+  indeterminate: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}> = ({ checked, indeterminate, label, onChange }) => {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label={label}
+      checked={checked}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
+};
+
 const RowActionsMenu: React.FC<{
   item: OrganizePlanItem;
   onFixMatch: (item: OrganizePlanItem) => void;
-}> = ({ item, onFixMatch }) => {
+  onSkipChange: (item: OrganizePlanItem, skip: boolean) => void;
+  onApprove: (item: OrganizePlanItem) => void;
+  onFolderOnly: (item: OrganizePlanItem) => void;
+}> = ({ item, onFixMatch, onSkipChange, onApprove, onFolderOnly }) => {
   const popoverId = useId();
   const [open, setOpen] = useState(false);
   const openFolder = useBackend({
@@ -498,6 +715,41 @@ const RowActionsMenu: React.FC<{
             </RowActionButton>
             <RowActionButton
               type="button"
+              disabled={
+                item.approved ||
+                (!item.episode && !item.episodes?.length && !item.movie)
+              }
+              onClick={() => {
+                setOpen(false);
+                onApprove(item);
+              }}
+            >
+              {item.approved ? 'Match approved' : 'Approve match'}
+            </RowActionButton>
+            <RowActionButton
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onFolderOnly(item);
+              }}
+            >
+              {item.renameFolderOnly
+                ? 'Rename file too'
+                : 'Rename folder only'}
+            </RowActionButton>
+            {(item.action !== 'skip' || item.manualSkip) && (
+              <RowActionButton
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onSkipChange(item, !item.manualSkip);
+                }}
+              >
+                {item.manualSkip ? 'Include file' : 'Skip file'}
+              </RowActionButton>
+            )}
+            <RowActionButton
+              type="button"
               disabled={!folder}
               onClick={() => void openContainingFolder()}
             >
@@ -522,6 +774,11 @@ interface OrganizePlanTableProps {
   selected: Set<string>;
   onSelectedChange: (next: Set<string>) => void;
   onFixMatch: (item: OrganizePlanItem) => void;
+  onSkipChange: (item: OrganizePlanItem, skip: boolean) => void;
+  onBulkAction: (
+    action: 'skip' | 'useBestGuess' | 'rescan' | 'approve' | 'folderOnly',
+    items: OrganizePlanItem[],
+  ) => void;
 }
 
 /**
@@ -536,16 +793,80 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
   selected,
   onSelectedChange,
   onFixMatch,
+  onSkipChange,
+  onBulkAction,
 }) => {
   const columnsPopoverId = useId();
   const [filter, setFilter] = useState<PlanFilter>('all');
   const [search, setSearch] = useState('');
+  const [minPercent, setMinPercent] = useState('');
+  const [maxPercent, setMaxPercent] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const draggingRef = useRef<string | null>(null);
   const didDrag = useRef(false);
   const resizingRef = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
+  // Group headers use CSS sticky; the scroll offset only windows the rows that
+  // belong to each open group.
+  const [scrollTop, setScrollTop] = useState(0);
+  // A static width lets the header row stick to the left edge as well, so its
+  // checkbox and name stay visible while the columns scroll horizontally.
+  const [viewportWidth, setViewportWidth] = useState(0);
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const measure = () => setViewportWidth(element.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    // Quantise to whole rows: the sticky headers move in CSS, so windowing
+    // only has to re-render when the visible row range changes.
+    const next =
+      Math.max(
+        0,
+        Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT) * ROW_HEIGHT,
+      );
+    setScrollTop((current) => (current === next ? current : next));
+  };
+
+  const selectRow = (
+    event: React.MouseEvent<HTMLInputElement>,
+    itemId: string,
+  ) => {
+    event.preventDefault();
+    const currentSelected = selectedRef.current;
+    const ids = visibleItemIdsRef.current;
+    const currentIndex = ids.indexOf(itemId);
+    const shouldSelect = !currentSelected.has(itemId);
+    const next = new Set(currentSelected);
+    if (event.shiftKey && lastClickedId.current) {
+      const anchorIndex = ids.indexOf(lastClickedId.current);
+      if (anchorIndex >= 0 && currentIndex >= 0) {
+        const start = Math.min(anchorIndex, currentIndex);
+        const end = Math.max(anchorIndex, currentIndex);
+        for (const id of ids.slice(start, end + 1)) {
+          if (shouldSelect) next.add(id);
+          else next.delete(id);
+        }
+        onSelectedChange(next);
+        return;
+      }
+    }
+    if (shouldSelect) next.add(itemId);
+    else next.delete(itemId);
+    lastClickedId.current = itemId;
+    onSelectedChange(next);
+  };
 
   /**
    * Starts a column resize. Header cells are drag sources for reordering, so
@@ -572,6 +893,12 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     [mediaType],
   );
   const [initialLayout] = useState(loadLayout);
+  const [view, setView] = useState<PlanView>(initialLayout.view ?? 'flat');
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const lastClickedId = useRef<string | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const visibleItemIdsRef = useRef<string[]>([]);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>(
     initialLayout.visibility ?? defaultVisibility,
   );
@@ -584,11 +911,31 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
 
   useEffect(() => {
     const timer = setTimeout(
-      () => saveLayout({ visibility: columnVisibility, order: columnOrder, sizing: columnSizing }),
+      () =>
+        saveLayout({
+          visibility: columnVisibility,
+          order: columnOrder,
+          sizing: columnSizing,
+          view,
+        }),
       250,
     );
     return () => clearTimeout(timer);
-  }, [columnVisibility, columnOrder, columnSizing]);
+  }, [columnVisibility, columnOrder, columnSizing, view]);
+
+  const minConfidence = parsePercent(minPercent);
+  const maxConfidence = parsePercent(maxPercent);
+  const filtersActive =
+    filter !== 'all' ||
+    search.trim() !== '' ||
+    minPercent.trim() !== '' ||
+    maxPercent.trim() !== '';
+  const clearFilters = () => {
+    setFilter('all');
+    setSearch('');
+    setMinPercent('');
+    setMaxPercent('');
+  };
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -596,7 +943,13 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     return plan.items.filter((item) => {
       if (filter === 'rename' && item.action !== 'rename') return false;
       if (filter === 'skip' && item.action !== 'skip') return false;
-      if (filter === 'conflict' && item.action !== 'conflict') return false;
+      if (
+        filter === 'conflict' &&
+        item.action !== 'conflict' &&
+        !needsConflictReview(item, settings.confidenceThreshold)
+      ) {
+        return false;
+      }
       if (
         filter === 'review' &&
         (!item.episodeMatch?.conflict || item.folderOnly || item.noChange)
@@ -614,6 +967,16 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
       ) {
         return false;
       }
+      const percent =
+        item.confidence === undefined
+          ? undefined
+          : Math.round(item.confidence * 100);
+      if (minConfidence !== undefined) {
+        if (percent === undefined || percent < minConfidence) return false;
+      }
+      if (maxConfidence !== undefined) {
+        if (percent === undefined || percent > maxConfidence) return false;
+      }
       if (!needle) return true;
       return [
         item.sourcePath,
@@ -622,6 +985,8 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
         item.showFolder,
         item.seriesName,
         item.episode?.name,
+        ...(item.episodes ?? []).map((episode) => episode.name),
+        episodeSelectionTag(item.episode, item.parsed, item.episodes),
         item.movie?.title,
         item.reason,
       ]
@@ -635,7 +1000,14 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           );
         });
     });
-  }, [filter, plan.items, search, settings.confidenceThreshold]);
+  }, [
+    filter,
+    maxConfidence,
+    minConfidence,
+    plan.items,
+    search,
+    settings.confidenceThreshold,
+  ]);
 
   const columns = useMemo(
     () =>
@@ -649,18 +1021,15 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           cell: (info) => {
             const item = info.row.original;
             return (
-              <input
-                type="checkbox"
-                aria-label={`Select ${item.sourcePath}`}
-                checked={selected.has(item.id)}
-                disabled={item.action !== 'rename'}
-                onChange={(event) => {
-                  const next = new Set(selected);
-                  if (event.target.checked) next.add(item.id);
-                  else next.delete(item.id);
-                  onSelectedChange(next);
-                }}
-              />
+              <SelectCellLabel>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${item.sourcePath}`}
+                  checked={selected.has(item.id)}
+                  onChange={() => {}}
+                  onClick={(event) => selectRow(event, item.id)}
+                />
+              </SelectCellLabel>
             );
           },
         }),
@@ -779,6 +1148,10 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           sortFn: 'basic',
           cell: (info) => {
             const item = info.row.original;
+            const matchLabel =
+              episodeSelectionTag(item.episode, item.parsed, item.episodes) ||
+              item.movie?.title ||
+              '';
             return (
               <div
                 style={{
@@ -804,27 +1177,27 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
                     threshold={settings.confidenceThreshold}
                     summary={item.episodeMatch}
                     reason={item.reason}
-                    label={
-                      item.episode
-                        ? episodeDisplayTag(item.episode)
-                        : (item.movie?.title ?? 'Match')
-                    }
+                    label={matchLabel || 'Match'}
                   />
                 )}
+                {item.approved && (
+                  <StateChip
+                    $color="var(--hb-success)"
+                    role="img"
+                    aria-label="Match approved"
+                    title="Match approved"
+                  >
+                    <Icon name="passed" size="xs" />
+                  </StateChip>
+                )}
                 <EllipsisText
-                  title={
-                    item.episode
-                      ? episodeDisplayTag(item.episode)
-                      : (item.movie?.title ?? '')
-                  }
+                  title={matchLabel}
                   style={{
                     color: 'var(--hb-textMuted)',
                     fontSize: 'var(--hb-font-xs)',
                   }}
                 >
-                  {item.episode
-                    ? episodeDisplayTag(item.episode)
-                    : (item.movie?.title ?? '')}
+                  {matchLabel}
                 </EllipsisText>
               </div>
             );
@@ -845,21 +1218,36 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           cell: (info) => {
             const tone = actionTone[info.getValue()];
             return (
-              <StateChip $color={tone.color}>
+              <StateChip
+                $color={tone.color}
+                title={info.row.original.reason}
+              >
                 <Icon name={tone.icon} size="xs" />
                 {tone.label}
               </StateChip>
             );
           },
         }),
-        columnHelper.accessor((row) => row.plex?.watchCount ?? -1, {
+        columnHelper.accessor((row) => {
+          const associations = row.plexEpisodes?.length
+            ? row.plexEpisodes
+            : row.plex
+              ? [row.plex]
+              : [];
+          return associations.length > 0
+            ? associations.reduce(
+                (total, association) => total + association.watchCount,
+                0,
+              )
+            : -1;
+        }, {
           id: 'plex',
           header: 'Plex',
           size: DEFAULT_COLUMN_SIZES.plex,
           sortFn: 'basic',
           cell: (info) =>
-            info.row.original.plex
-              ? `${info.row.original.plex.watchCount} view(s)`
+            info.getValue() >= 0
+              ? `${info.getValue()} view(s)`
               : 'not in Plex',
         }),
         columnHelper.display({
@@ -867,18 +1255,41 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           header: '',
           size: DEFAULT_COLUMN_SIZES.fix,
           enableSorting: false,
-          cell: (info) => (
-            <RowActionsMenu
-              item={info.row.original}
-              onFixMatch={onFixMatch}
-            />
-          ),
+          cell: (info) => {
+            const item = info.row.original;
+            return (
+              <RowActionGroup>
+                {(item.action !== 'skip' || item.manualSkip) && (
+                  <IconButton
+                    icon={item.manualSkip ? 'add' : 'excluded'}
+                    label={
+                      item.manualSkip
+                        ? `Include ${item.sourceRelativePath}`
+                        : `Skip ${item.sourceRelativePath}`
+                    }
+                    onClick={() => onSkipChange(item, !item.manualSkip)}
+                  />
+                )}
+                <RowActionsMenu
+                  item={item}
+                  onFixMatch={onFixMatch}
+                  onSkipChange={onSkipChange}
+                  onApprove={(target) => onBulkAction('approve', [target])}
+                  onFolderOnly={(target) =>
+                    onBulkAction('folderOnly', [target])
+                  }
+                />
+              </RowActionGroup>
+            );
+          },
         }),
       ]),
     [
       mediaType,
+      onBulkAction,
       onFixMatch,
       onSelectedChange,
+      onSkipChange,
       selected,
       settings.confidenceThreshold,
       settings.namingRules,
@@ -906,12 +1317,123 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
   });
 
   const tableRows = table.getRowModel().rows;
+  type TableRow = (typeof tableRows)[number];
+  const selectedRows = useMemo(
+    () =>
+      tableRows
+        .filter((row) => selected.has(row.id))
+        .map((row) => row.original),
+    [selected, tableRows],
+  );
+  const showGroups = useMemo(() => {
+    if (view !== 'grouped') return [];
+    const groups = new Map<
+      string,
+      { key: string; name: string; year?: number; rows: TableRow[] }
+    >();
+    for (const row of tableRows) {
+      const meta = groupMetaFor(row.original);
+      const group = groups.get(meta.key) ?? {
+        key: meta.key,
+        name: meta.name,
+        ...(meta.year ? { year: meta.year } : {}),
+        rows: [],
+      };
+      group.rows.push(row);
+      groups.set(meta.key, group);
+    }
+    return [...groups.values()].sort((left, right) =>
+      left.name.localeCompare(right.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    );
+  }, [tableRows, view]);
+
+  type ShowGroup = (typeof showGroups)[number];
+  type DisplayEntry =
+    | { kind: 'group'; group: ShowGroup; open: boolean }
+    | { kind: 'item'; row: TableRow; depth: number };
+
+  const showGroupsRef = useRef(showGroups);
+  showGroupsRef.current = showGroups;
+  const groupKeySignature = JSON.stringify(showGroups.map((group) => group.key));
+  useEffect(() => {
+    if (view !== 'grouped') return;
+    if (
+      filter === 'all' &&
+      !search.trim() &&
+      !minPercent.trim() &&
+      !maxPercent.trim()
+    ) {
+      return;
+    }
+    const keys = showGroupsRef.current.map((group) => group.key);
+    if (keys.length === 0) return;
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const key of keys) {
+        if (!next.has(key)) {
+          next.add(key);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [filter, groupKeySignature, maxPercent, minPercent, search, view]);
+
+  const displayRows = useMemo<DisplayEntry[]>(() => {
+    if (view !== 'grouped') {
+      return tableRows.map((row) => ({ kind: 'item' as const, row, depth: 0 }));
+    }
+    const rows: DisplayEntry[] = [];
+    for (const group of showGroups) {
+      const open = expandedGroups.has(group.key);
+      rows.push({ kind: 'group', group, open });
+      if (!open) continue;
+      for (const row of group.rows) {
+        rows.push({ kind: 'item', row, depth: 1 });
+      }
+    }
+    return rows;
+  }, [expandedGroups, showGroups, tableRows, view]);
+
+  // Group wrappers keep normal flow so their headers can be CSS-sticky, while
+  // the rows inside each open group are windowed to the viewport.
+  const groupLayout = useMemo(() => {
+    let top = 0;
+    return showGroups.map((group) => {
+      const open = expandedGroups.has(group.key);
+      const height = ROW_HEIGHT * (1 + (open ? group.rows.length : 0));
+      const layout = { group, open, top, height };
+      top += height;
+      return layout;
+    });
+  }, [expandedGroups, showGroups]);
+  const groupedHeight = groupLayout.reduce(
+    (sum, layout) => sum + layout.height,
+    0,
+  );
+  const windowTop = scrollTop - OVERSCAN * ROW_HEIGHT;
+  const windowBottom = scrollTop + VIEWPORT_HEIGHT + OVERSCAN * ROW_HEIGHT;
+
+  visibleItemIdsRef.current = displayRows.flatMap((entry) =>
+    entry.kind === 'item' ? [entry.row.id] : [],
+  );
+
   const rowVirtualizer = useVirtualizer({
-    count: tableRows.length,
+    count: displayRows.length,
     getScrollElement: () => viewport.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
-    getItemKey: (index) => tableRows[index]?.id ?? index,
+    getItemKey: (index) => {
+      const entry = displayRows[index];
+      if (!entry) return index;
+      return entry.kind === 'group'
+        ? `group:${entry.group.key}`
+        : `row:${entry.row.id}`;
+    },
     scrollMargin: HEADER_HEIGHT,
   });
 
@@ -927,6 +1449,9 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
         : `${column.getSize()}px`,
     )
     .join(' ');
+  const indentColumnId = visibleColumns.find(
+    (column) => column.id !== 'select',
+  )?.id;
 
   const moveColumn = (id: string, delta: number) => {
     setColumnOrder((current) => {
@@ -969,6 +1494,178 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     setColumnSizing({});
   };
 
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const allGroupsExpanded =
+    showGroups.length > 0 &&
+    showGroups.every((group) => expandedGroups.has(group.key));
+
+  const toggleAllGroups = () => {
+    setExpandedGroups(
+      allGroupsExpanded
+        ? new Set()
+        : new Set(showGroups.map((group) => group.key)),
+    );
+  };
+
+  const renderGroupRow = (
+    entry: Extract<DisplayEntry, { kind: 'group' }>,
+  ) => {
+    const stats = groupStatsFor(
+      entry.group.rows.map((row) => row.original),
+      settings.confidenceThreshold,
+    );
+    const label = `${entry.group.name}${
+      entry.group.year ? ` (${entry.group.year})` : ''
+    }`;
+    const detail = [
+      `${stats.total} file(s)`,
+      `${stats.rename} will rename`,
+      `${stats.skip} skipped`,
+      `${stats.conflict} conflict(s)`,
+      `${stats.low} low confidence`,
+    ].join(', ');
+    const groupIds = entry.group.rows.map((row) => row.id);
+    const selectedCount = groupIds.filter((id) => selected.has(id)).length;
+    const allSelected =
+      groupIds.length > 0 && selectedCount === groupIds.length;
+    const someSelected = selectedCount > 0 && !allSelected;
+
+    const headerContent = (
+      <>
+        <Icon
+          name={entry.open ? 'collapse' : 'expand'}
+          size="xs"
+          tone="muted"
+        />
+        <Icon name="folder" size="sm" tone="muted" />
+        <GroupName>{entry.group.name}</GroupName>
+        {entry.group.year && <Muted>{entry.group.year}</Muted>}
+        <GroupStats data-group-stats>
+          <span>{stats.total} file(s)</span>
+          {stats.rename > 0 && (
+            <StateChip
+              $color={actionTone.rename.color}
+              role="img"
+              aria-label={`${stats.rename} will rename`}
+              title={`${stats.rename} will rename`}
+            >
+              <Icon name={actionTone.rename.icon} size="xs" />
+              {stats.rename}
+            </StateChip>
+          )}
+          {stats.skip > 0 && (
+            <StateChip
+              $color={actionTone.skip.color}
+              role="img"
+              aria-label={`${stats.skip} skipped`}
+              title={`${stats.skip} skipped`}
+            >
+              <Icon name={actionTone.skip.icon} size="xs" />
+              {stats.skip}
+            </StateChip>
+          )}
+          {stats.conflict > 0 && (
+            <StateChip
+              $color={actionTone.conflict.color}
+              role="img"
+              aria-label={`${stats.conflict} conflict(s)`}
+              title={`${stats.conflict} conflict(s)`}
+            >
+              <Icon name={actionTone.conflict.icon} size="xs" />
+              {stats.conflict}
+            </StateChip>
+          )}
+          {stats.low > 0 && (
+            <StateChip
+              $color="var(--hb-warning)"
+              role="img"
+              aria-label={`${stats.low} low confidence`}
+              title={`${stats.low} low confidence`}
+            >
+              <Icon name="warning" size="xs" />
+              {stats.low}
+            </StateChip>
+          )}
+        </GroupStats>
+      </>
+    );
+
+    return (
+      <GroupRow
+        key={`group:${entry.group.key}`}
+        role="row"
+        style={{
+          width:
+            viewportWidth > 0
+              ? Math.min(viewportWidth, totalWidth)
+              : '100%',
+        }}
+      >
+        <GroupCell role="gridcell" aria-colspan={visibleColumns.length}>
+          <GroupSelection>
+            <GroupSelectCheckbox
+              checked={allSelected}
+              indeterminate={someSelected}
+              label={`Select all files for ${label}`}
+              onChange={(checked) => {
+                const next = new Set(selected);
+                for (const id of groupIds) {
+                  if (checked) next.add(id);
+                  else next.delete(id);
+                }
+                onSelectedChange(next);
+              }}
+            />
+          </GroupSelection>
+          <GroupButton
+            type="button"
+            aria-expanded={entry.open}
+            aria-label={`${entry.open ? 'Collapse' : 'Expand'} ${label}, ${detail}`}
+            title={label}
+            onClick={() => toggleGroup(entry.group.key)}
+          >
+            {headerContent}
+          </GroupButton>
+        </GroupCell>
+      </GroupRow>
+    );
+  };
+
+  const renderItemRow = (row: TableRow, depth: number, offsetY: number) => {
+    const item = row.original;
+    return (
+      <BodyRow
+        key={row.id}
+        role="row"
+        $conflict={item.action === 'conflict'}
+        style={{
+          transform: `translateY(${offsetY}px)`,
+          gridTemplateColumns: gridTemplate,
+          width: '100%',
+        }}
+      >
+        {row.getVisibleCells().map((cell) => (
+          <Cell
+            key={cell.id}
+            role="gridcell"
+            $select={cell.column.id === 'select'}
+            $indent={depth > 0 && cell.column.id === indentColumnId ? 14 : 0}
+          >
+            <table.FlexRender cell={cell} />
+          </Cell>
+        ))}
+      </BodyRow>
+    );
+  };
+
   return (
     <div style={{ minWidth: 0, maxWidth: '100%' }}>
       <Toolbar role="group" aria-label="Review filters">
@@ -983,6 +1680,52 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
             {option.label}
           </FilterButton>
         ))}
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--hb-space-xs)',
+            padding: '0 var(--hb-space-sm)',
+            border: '1px solid var(--hb-border)',
+            borderRadius: 'var(--hb-radius-sm)',
+            background: 'var(--hb-surface)',
+            height: 28,
+          }}
+        >
+          <Muted>Confidence</Muted>
+          <input
+            className="form-control form-control-sm"
+            style={{ width: 68, height: 22, padding: '0 4px' }}
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            inputMode="numeric"
+            placeholder="Min %"
+            aria-label="Minimum confidence percentage"
+            value={minPercent}
+            onChange={(event) => setMinPercent(event.target.value)}
+          />
+          <span aria-hidden="true">–</span>
+          <input
+            className="form-control form-control-sm"
+            style={{ width: 68, height: 22, padding: '0 4px' }}
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            inputMode="numeric"
+            placeholder="Max %"
+            aria-label="Maximum confidence percentage"
+            value={maxPercent}
+            onChange={(event) => setMaxPercent(event.target.value)}
+          />
+        </span>
+        {filtersActive && (
+          <Button compact variant="ghost" icon="close" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
         <input
           className="form-control form-control-sm"
           style={{ maxWidth: 220 }}
@@ -991,6 +1734,98 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
+        <SegmentedControl
+          label="Review view"
+          value={view}
+          onChange={(value) => setView(value === 'grouped' ? 'grouped' : 'flat')}
+          options={[
+            { value: 'flat', label: 'Flat list' },
+            {
+              value: 'grouped',
+              label: mediaType === 'tv' ? 'Show tree' : 'Title tree',
+            },
+          ]}
+        />
+        {view === 'grouped' && showGroups.length > 0 && (
+          <Button
+            compact
+            variant="ghost"
+            icon={allGroupsExpanded ? 'collapse' : 'expand'}
+            onClick={toggleAllGroups}
+          >
+            {allGroupsExpanded ? 'Collapse all' : 'Expand all'}
+          </Button>
+        )}
+        {tableRows.length > 0 && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 'var(--hb-space-xs)',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Muted>{selectedRows.length} selected</Muted>
+            {selectedRows.length < tableRows.length && (
+              <Button
+                compact
+                variant="ghost"
+                icon="add"
+                onClick={() =>
+                  onSelectedChange(new Set(tableRows.map((row) => row.id)))
+                }
+              >
+                Select all shown
+              </Button>
+            )}
+            {selectedRows.length > 0 && (
+              <>
+                <Button
+                  compact
+                  variant="ghost"
+                  icon="rescan"
+                  title="Rescan the parent folders of the selected files"
+                  onClick={() => onBulkAction('rescan', selectedRows)}
+                >
+                  Rescan ({selectedRows.length})
+                </Button>
+                <Button
+                  compact
+                  variant="secondary"
+                  icon="refresh"
+                  onClick={() => onBulkAction('useBestGuess', selectedRows)}
+                >
+                  Use best guess ({selectedRows.length})
+                </Button>
+                <Button
+                  compact
+                  variant="secondary"
+                  icon="passed"
+                  title="Approve the current matches so they stay renames"
+                  onClick={() => onBulkAction('approve', selectedRows)}
+                >
+                  Approve ({selectedRows.length})
+                </Button>
+                <Button
+                  compact
+                  variant="ghost"
+                  icon="excluded"
+                  onClick={() => onBulkAction('skip', selectedRows)}
+                >
+                  Skip ({selectedRows.length})
+                </Button>
+                <Button
+                  compact
+                  variant="ghost"
+                  icon="close"
+                  onClick={() => onSelectedChange(new Set())}
+                >
+                  Clear selection
+                </Button>
+              </>
+            )}
+          </span>
+        )}
         <span
           style={{
             marginLeft: 'auto',
@@ -1079,10 +1914,11 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
       <Viewport
         ref={viewport}
         role="grid"
-        aria-rowcount={tableRows.length + 1}
+        aria-rowcount={displayRows.length + 1}
         aria-colcount={visibleColumns.length}
         aria-label="Organize review"
         tabIndex={0}
+        onScroll={handleScroll}
       >
         <TableHeader
           role="row"
@@ -1219,33 +2055,48 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
 
         <Body
           style={{
-            height: `${rowVirtualizer.getTotalSize()}px`,
+            height: `${
+              view === 'grouped'
+                ? groupedHeight
+                : rowVirtualizer.getTotalSize()
+            }px`,
             minWidth: totalWidth,
           }}
         >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = tableRows[virtualRow.index];
-            if (!row) return null;
-            const item = row.original;
-            return (
-              <BodyRow
-                key={row.id}
-                role="row"
-                $conflict={item.action === 'conflict'}
-                style={{
-                  transform: `translateY(${virtualRow.start}px)`,
-                  gridTemplateColumns: gridTemplate,
-                  width: '100%',
-                }}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <Cell key={cell.id} role="gridcell">
-                    <table.FlexRender cell={cell} />
-                  </Cell>
-                ))}
-              </BodyRow>
-            );
-          })}
+          {view === 'grouped'
+            ? groupLayout.map((layout) => (
+                <div
+                  key={layout.group.key}
+                  style={{ position: 'relative', height: layout.height }}
+                >
+                  {renderGroupRow({
+                    kind: 'group',
+                    group: layout.group,
+                    open: layout.open,
+                  })}
+                  {layout.open &&
+                    layout.group.rows.map((row, index) => {
+                      const offsetY = ROW_HEIGHT * (index + 1);
+                      const rowTop = layout.top + offsetY;
+                      if (
+                        rowTop + ROW_HEIGHT < windowTop ||
+                        rowTop > windowBottom
+                      ) {
+                        return null;
+                      }
+                      return renderItemRow(row, 1, offsetY);
+                    })}
+                </div>
+              ))
+            : rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const entry = displayRows[virtualRow.index];
+                if (!entry || entry.kind !== 'item') return null;
+                return renderItemRow(
+                  entry.row,
+                  entry.depth,
+                  virtualRow.start - HEADER_HEIGHT,
+                );
+              })}
         </Body>
       </Viewport>
 

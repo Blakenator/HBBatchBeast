@@ -7,12 +7,25 @@ import {
   AppConfigV2,
   Library,
   PROMISE_CHANNEL,
+  approvePlanItems,
   applyPlanOverride,
+  carryPlanRowFlags,
+  setPlanFolderOnly,
+  applyPlanSkips,
+  applyPlanBestGuess,
+  mergeRescannedPlan,
   clearOverride,
   createFolderId,
   libraryOrganizeSettings,
+  organizeLibrarySignature,
+  organizeMatchSignature,
+  organizePlanSignature,
   organizerIsPathInside,
+  overrideFor,
+  pathDirname,
+  replanPlan,
   resolveGlobalSettings,
+  resolveShowMapping,
   setOverride,
   withLibraryMediaType,
   type MediaType,
@@ -20,20 +33,46 @@ import {
   type OrganizeMatchOverride,
   type OrganizePlan,
   type OrganizePlanItem,
+  type OrganizePlexCheck,
   type OrganizeScanProgress,
   type OrganizeScanScope,
   type OrganizeSettings,
+  type PlexFixStep,
 } from '../../common';
-import { useBackend, useBackendAsync } from '../helpers';
+import { useBackend, useBackendAsync, backendFailure } from '../helpers';
 import { formatDuration } from '../run/format';
 import { Button } from '../ui/Button';
 import { Panel } from '../ui/Panel';
+import {
+  PlexCommandBlock,
+  PlexStatusReport,
+} from '../ui/PlexStatusReport';
 import { SegmentedControl } from '../settings/SegmentedControl';
 import { MatchFixModal } from './MatchFixModal';
 import { NamingRulesEditor } from './NamingRulesEditor';
 import { OrganizePlanTable } from './OrganizePlanTable';
 import { ShowMappings } from './ShowMappings';
+import {
+  readOrganizeSession,
+  saveOrganizeSession,
+  type OrganizeStep,
+} from './organizeSession';
 import { describeOrganizeScanError } from './scanError';
+
+const MAX_VISIBLE_WARNINGS = 8;
+const MAX_VISIBLE_SCOPE = 7;
+const MAX_VISIBLE_FAILURES = 6;
+
+function compactWarnings(warnings: string[]): {
+  visible: string[];
+  hidden: number;
+} {
+  const unique = [...new Set(warnings.filter(Boolean))];
+  return {
+    visible: unique.slice(0, MAX_VISIBLE_WARNINGS),
+    hidden: Math.max(0, unique.length - MAX_VISIBLE_WARNINGS),
+  };
+}
 
 interface OrganizePageProps {
   config: AppConfigV2;
@@ -47,17 +86,13 @@ interface OrganizePageProps {
   onSaveAsLibrary?: (library: Library) => Promise<Library | void> | Library | void;
 }
 
-interface PlexStatus {
-  exists: boolean;
-  writable: boolean;
-  running: boolean;
-  serviceInstructions: string;
-  permissionRemediation: string;
-}
-
 interface OrganizeScanRunnerProps {
   library: Library;
   scope?: OrganizeScanScope[];
+  /** Reuses cached discovery data instead of walking the folders again. */
+  reuseScanId?: string;
+  /** Walks only these folders again for a partial rescan. */
+  rescanFolders?: string[];
   onProgress: (progress: OrganizeScanProgress) => void;
   onComplete: (plan: OrganizePlan) => void;
   onError: (message: string) => void;
@@ -71,12 +106,16 @@ interface OrganizeScanRunnerProps {
 const OrganizeScanRunner: React.FC<OrganizeScanRunnerProps> = ({
   library,
   scope,
+  reuseScanId,
+  rescanFolders,
   onProgress,
   onComplete,
   onError,
 }) => {
   const [scanLibrary] = useState(library);
   const [scanScope] = useState(scope);
+  const [scanCacheId] = useState(reuseScanId);
+  const [scanFolders] = useState(rescanFolders);
   const handlers = useRef({ onProgress, onComplete, onError });
   handlers.current = { onProgress, onComplete, onError };
   const scan = useBackendAsync({
@@ -84,6 +123,10 @@ const OrganizeScanRunner: React.FC<OrganizeScanRunnerProps> = ({
     props: {
       library: scanLibrary,
       ...(scanScope && scanScope.length > 0 ? { scope: scanScope } : {}),
+      ...(scanCacheId ? { reuseScanId: scanCacheId } : {}),
+      ...(scanFolders && scanFolders.length > 0
+        ? { rescanFolders: scanFolders }
+        : {}),
     },
     skip: false,
     onInit: (progress) => handlers.current.onProgress(progress),
@@ -258,16 +301,64 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   onBack,
   onSaveAsLibrary,
 }) => {
+  const [initialSession] = useState(() => {
+    const stored = readOrganizeSession(library.id);
+    if (!stored) return undefined;
+    return stored.librarySignature === organizeLibrarySignature(library)
+      ? stored
+      : undefined;
+  });
   const [current, setCurrent] = useState<Library>(library);
-  const [step, setStep] = useState<'setup' | 'rules' | 'review'>('setup');
   const settings = libraryOrganizeSettings(current);
+  const [step, setStep] = useState<OrganizeStep>(initialSession?.step ?? 'setup');
+  const [plan, setPlan] = useState<OrganizePlan | undefined>(initialSession?.plan);
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(initialSession?.selected ?? []),
+  );
+  const [scope, setScope] = useState<OrganizeScanScope[]>(
+    initialSession?.scope ?? [],
+  );
   const plex = resolveGlobalSettings(config).plex;
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingSave = useRef<Library | null>(null);
+  const planTimer = useRef<number | undefined>(undefined);
+  /**
+   * Rows to force onto their best match once a recalculation returns. A
+   * recalculated plan applies the settings' confidence threshold, which would
+   * otherwise turn a requested best guess back into a skip.
+   */
+  const pendingBestGuess = useRef<Set<string>>(new Set());
+  const latestSession = useRef<{
+    libraryId: string;
+    step: OrganizeStep;
+    plan: OrganizePlan | undefined;
+    selected: Set<string>;
+    scope: OrganizeScanScope[];
+    settings: OrganizeSettings;
+    mediaType: MediaType;
+    librarySignature: string;
+  }>({
+    libraryId: current.id,
+    step,
+    plan,
+    selected,
+    scope,
+    settings,
+    mediaType: current.mediaType,
+    librarySignature: organizeLibrarySignature(current),
+  });
+  latestSession.current = {
+    libraryId: current.id,
+    step,
+    plan,
+    selected,
+    scope,
+    settings,
+    mediaType: current.mediaType,
+    librarySignature: organizeLibrarySignature(current),
+  };
 
   const [newFolder, setNewFolder] = useState('');
-  const [plan, setPlan] = useState<OrganizePlan>();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [applyResult, setApplyResult] = useState<OrganizeApplyResult>();
   const [confirm, setConfirm] = useState<{
     items: OrganizePlanItem[];
@@ -278,12 +369,18 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   const [busy, setBusy] = useState<string>();
   const [scanning, setScanning] = useState(false);
   const [scanToken, setScanToken] = useState(0);
+  const [scanMode, setScanMode] = useState<
+    'fresh' | 'recalculate' | 'rescan'
+  >('fresh');
+  const [reuseScanId, setReuseScanId] = useState<string>();
+  /** Parent folders of the rows picked for a partial rescan. */
+  const [rescanFolders, setRescanFolders] = useState<string[]>([]);
   const [scanProgress, setScanProgress] = useState<OrganizeScanProgress>();
-  const [scope, setScope] = useState<OrganizeScanScope[]>([]);
   const [updatePlex, setUpdatePlex] = useState(
     plex?.updateByDefault ?? false,
   );
-  const [plexStatus, setPlexStatus] = useState<PlexStatus>();
+  const [plexStatus, setPlexStatus] = useState<OrganizePlexCheck>();
+  const [plexFixSteps, setPlexFixSteps] = useState<PlexFixStep[]>();
 
   const pickPath = useBackend({
     channel: PROMISE_CHANNEL.PickPath,
@@ -299,6 +396,10 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   });
   const controlPlex = useBackend({
     channel: PROMISE_CHANNEL.OrganizeControlPlex,
+    skip: true,
+  });
+  const fixPlex = useBackend({
+    channel: PROMISE_CHANNEL.OrganizeFixPlex,
     skip: true,
   });
   const undoLast = useBackend({
@@ -317,18 +418,43 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   useEffect(() => {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      const hadPendingPlan = planTimer.current !== undefined;
+      if (planTimer.current) window.clearTimeout(planTimer.current);
       const pending = pendingSave.current;
       if (pending) {
         void Promise.resolve(updateRef.current(pending)).catch(() => {});
       }
+      const latest = latestSession.current;
+      const finalPlan =
+        hadPendingPlan && latest.plan
+          ? replanPlan(latest.plan, {
+              settings: latest.settings,
+              mediaType: latest.mediaType,
+              caseInsensitive: latest.settings.caseInsensitive ?? false,
+            })
+          : latest.plan;
+      saveOrganizeSession({
+        libraryId: latest.libraryId,
+        step: latest.step,
+        plan: finalPlan,
+        selected: [...latest.selected],
+        scope: latest.scope,
+        matchSignature: organizeMatchSignature(latest.settings),
+        planSignature: organizePlanSignature(latest.settings),
+        librarySignature: latest.librarySignature,
+        updatedAt: Date.now(),
+      });
     };
   }, []);
 
-  const commit = (next: Library) => {
+  const commit = (next: Library, options: { keepPlan?: boolean } = {}) => {
     setCurrent(next);
-    // Any settings change can move targets, so an old plan is no longer valid.
-    setPlan(undefined);
-    setSelected(new Set());
+    if (!options.keepPlan) {
+      if (planTimer.current) window.clearTimeout(planTimer.current);
+      planTimer.current = undefined;
+      setPlan(undefined);
+      setSelected(new Set());
+    }
     pendingSave.current = next;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
@@ -339,8 +465,44 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     }, 400);
   };
 
+  /**
+   * Persists an organizer settings change and recalculates the existing review
+   * when possible: match inputs rematch in the backend, naming inputs replan
+   * locally.
+   */
   const commitSettings = (next: OrganizeSettings) => {
-    commit({ ...current, organize: next });
+    const matchChanged =
+      organizeMatchSignature(next) !== organizeMatchSignature(settings);
+    const planChanged =
+      organizePlanSignature(next) !== organizePlanSignature(settings);
+    commit({ ...current, organize: next }, { keepPlan: true });
+    if (!plan) return;
+    if (matchChanged) {
+      if (planTimer.current) window.clearTimeout(planTimer.current);
+      planTimer.current = undefined;
+      if (plan.scanId) {
+        recalculateMatches(plan.scanId);
+      } else {
+        setPlan(undefined);
+        toast.info('Scan the library again to apply the new show matches.');
+      }
+      return;
+    }
+    if (planChanged) {
+      if (planTimer.current) window.clearTimeout(planTimer.current);
+      planTimer.current = window.setTimeout(() => {
+        planTimer.current = undefined;
+        setPlan((previous) =>
+          previous
+            ? replanPlan(previous, {
+                settings: next,
+                mediaType: current.mediaType,
+                caseInsensitive: next.caseInsensitive ?? false,
+              })
+            : previous,
+        );
+      }, 200);
+    }
   };
 
   const changeMediaType = (value: string) => {
@@ -408,15 +570,26 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     commit({ ...current, folders: remaining, organize: nextSettings });
   };
 
+  /**
+   * Toasts the reason a sync IPC call failed. Reports `true` so callers can
+   * stop; the hooks also resolve to `undefined` when the bridge rejects.
+   */
+  const reportFailure = (
+    result: { error?: unknown } | undefined,
+    fallback: string,
+  ): boolean => {
+    const message = backendFailure(result, fallback);
+    if (!message) return false;
+    toast.error(message);
+    return true;
+  };
+
   const browseFolder = async () => {
     const result = await pickPath.refetch({
       kind: 'folder',
       title: 'Choose a source folder to organize',
     });
-    if (result.error) {
-      toast.error(result.error.message);
-      return;
-    }
+    if (reportFailure(result, 'Could not open the folder picker.')) return;
     const selectedPath = result.data?.paths[0];
     if (selectedPath) addFolder(selectedPath);
   };
@@ -424,11 +597,65 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   const checkPlexDatabase = async () => {
     if (!plex?.dbPath) return;
     const result = await checkPlex.refetch({ path: plex.dbPath });
-    if (result.error) {
-      toast.error(result.error.message);
-      return;
+    if (reportFailure(result, 'Could not check the Plex database.')) return;
+    if (result.data) {
+      setPlexStatus(result.data);
+      setPlexFixSteps(undefined);
     }
-    if (result.data) setPlexStatus(result.data);
+  };
+
+  const runPlexAutoFix = async () => {
+    if (!plex?.dbPath) return;
+    setBusy('plexFix');
+    try {
+      const result = await fixPlex.refetch({ path: plex.dbPath });
+      if (
+        reportFailure(result, 'Could not fix the Plex database access.')
+      ) {
+        return;
+      }
+      if (result.data) {
+        setPlexStatus(result.data.check);
+        setPlexFixSteps(result.data.steps);
+        if (
+          plexPrompt &&
+          result.data.check.writable &&
+          !result.data.check.running
+        ) {
+          const items = plexPrompt;
+          setPlexPrompt(undefined);
+          setConfirm({ items, updatePlex: true });
+        }
+      } else {
+        toast.error('Could not fix the Plex database access.');
+      }
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const recheckPlexAndContinue = async () => {
+    if (!plex?.dbPath || !plexPrompt) return;
+    setBusy('check');
+    try {
+      const result = await checkPlex.refetch({ path: plex.dbPath });
+      if (reportFailure(result, 'Could not re-check the Plex database.')) {
+        return;
+      }
+      if (!result.data) {
+        toast.error('Could not re-check the Plex database.');
+        return;
+      }
+      setPlexStatus(result.data);
+      setPlexFixSteps(undefined);
+      if (result.data.writable && !result.data.running) {
+        const items = plexPrompt;
+        setPlexPrompt(undefined);
+        setConfirm({ items, updatePlex: true });
+      }
+    } finally {
+      setBusy(undefined);
+    }
   };
 
   const scan = () => {
@@ -436,11 +663,49 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
       toast.info('Add a source folder first.');
       return;
     }
+    pendingBestGuess.current = new Set();
     setApplyResult(undefined);
+    if (planTimer.current) window.clearTimeout(planTimer.current);
+    planTimer.current = undefined;
     setScanProgress(undefined);
+    setScanMode('fresh');
+    setReuseScanId(undefined);
+    setRescanFolders([]);
     setScanning(true);
     setScanToken((token) => token + 1);
   };
+
+  function recalculateMatches(scanId: string) {
+    setScanProgress(undefined);
+    setScanMode('recalculate');
+    setReuseScanId(scanId);
+    setRescanFolders([]);
+    setScanning(true);
+    setScanToken((token) => token + 1);
+  }
+
+  /**
+   * Walks the parent folders of the selected rows again so added, removed and
+   * renamed files in those folders are picked up and re-matched.
+   */
+  function rescanFoldersFor(items: OrganizePlanItem[]) {
+    const folders = [
+      ...new Set(
+        items.map((item) => pathDirname(item.sourcePath)).filter(Boolean),
+      ),
+    ];
+    if (folders.length === 0) return;
+    pendingBestGuess.current = new Set();
+    setApplyResult(undefined);
+    if (planTimer.current) window.clearTimeout(planTimer.current);
+    planTimer.current = undefined;
+    setScanProgress(undefined);
+    setScanMode('rescan');
+    setReuseScanId(undefined);
+    setRescanFolders(folders);
+    setScanning(true);
+    setScanToken((token) => token + 1);
+  }
 
   const selectedItems = useMemo(
     () =>
@@ -458,12 +723,16 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
       setBusy('check');
       try {
         const result = await checkPlex.refetch({ path: plex.dbPath });
-        if (result.error) {
-          toast.error(result.error.message);
+        if (reportFailure(result, 'Could not check the Plex database.')) {
           return;
         }
-        if (result.data) setPlexStatus(result.data);
-        if (result.data?.running) {
+        if (!result.data) {
+          toast.error('Could not check the Plex database.');
+          return;
+        }
+        setPlexStatus(result.data);
+        setPlexFixSteps(undefined);
+        if (result.data.running || !result.data.writable) {
           setPlexPrompt(items);
           return;
         }
@@ -484,6 +753,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setBusy('apply');
     setConfirm(undefined);
     setPlexPrompt(undefined);
+    setApplyResult(undefined);
     try {
       const subset: OrganizePlan = {
         ...plan,
@@ -497,23 +767,32 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
         plan: subset,
         updatePlex: withPlex,
       });
-      if (result.error) {
-        toast.error(result.error.message);
-        return;
-      }
+      if (reportFailure(result, 'Could not apply the organize plan.')) return;
       if (result.data) {
-        setApplyResult(result.data);
+        const applied = result.data;
+        setApplyResult(applied);
+        // Keep the rows whose move failed in the review so their error stays
+        // visible and the user can retry them.
+        const attempts = new Set(items.map((item) => item.id));
+        const failedPaths = new Set(applied.failed.map((failure) => failure.path));
         setPlan((previous) =>
           previous
             ? {
                 ...previous,
                 items: previous.items.filter(
-                  (item) => !items.some((applied) => applied.id === item.id),
+                  (item) =>
+                    !attempts.has(item.id) || failedPaths.has(item.sourcePath),
                 ),
               }
             : previous,
         );
-        setSelected(new Set());
+        setSelected(
+          new Set(
+            items
+              .filter((item) => failedPaths.has(item.sourcePath))
+              .map((item) => item.id),
+          ),
+        );
       }
     } finally {
       setBusy(undefined);
@@ -528,13 +807,20 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
         action: 'stop',
         path: plex.dbPath,
       });
-      if (result.error) {
-        toast.error(result.error.message);
+      if (reportFailure(result, 'Could not stop Plex.')) return;
+      if (!result.data) {
+        toast.error('Could not stop Plex.');
         return;
       }
-      if (result.data) setPlexStatus(result.data);
-      if (result.data?.running) {
+      setPlexStatus(result.data);
+      if (result.data.running) {
         toast.error('Plex is still running. Stop it manually and try again.');
+        return;
+      }
+      if (!result.data.writable) {
+        toast.info(
+          'Plex is stopped, but the database or its folder is still read-only. Fix access before applying.',
+        );
         return;
       }
       setPlexPrompt(undefined);
@@ -548,10 +834,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setBusy('undo');
     try {
       const result = await undoLast.refetch({});
-      if (result.error) {
-        toast.error(result.error.message);
-        return;
-      }
+      if (reportFailure(result, 'Could not undo the last apply.')) return;
       if (result.data) {
         toast.success(`Reversed ${result.data.reversed} file move(s).`);
         for (const warning of result.data.warnings) toast.warning(warning);
@@ -566,8 +849,12 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setBusy('pending');
     try {
       const result = await completePending.refetch({ dbPath: plex.dbPath });
-      if (result.error) {
-        toast.error(result.error.message);
+      if (
+        reportFailure(
+          result,
+          'Could not complete the pending history transfers.',
+        )
+      ) {
         return;
       }
       if (result.data) {
@@ -589,9 +876,11 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     const nextSettings = override
       ? setOverride(settings, item.sourcePath, override, caseInsensitive)
       : clearOverride(settings, item.sourcePath, caseInsensitive);
-    commit({ ...current, organize: nextSettings });
-    // `commit` clears the stale plan; re-apply it for this one row afterwards.
-    if (plan) {
+    const matchChanged =
+      organizeMatchSignature(nextSettings) !== organizeMatchSignature(settings);
+    commit({ ...current, organize: nextSettings }, { keepPlan: true });
+    if (plan && override) {
+      // Re-plan only this row; other review decisions stay untouched.
       setPlan(
         applyPlanOverride(plan, item.id, override, {
           settings: nextSettings,
@@ -599,11 +888,293 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
           caseInsensitive,
         }),
       );
+    } else if (plan) {
+      // Use best guess: drop the override and any skip, then keep this row's
+      // top-ranked match even when it scored below the confidence threshold.
+      const skipped = new Set(
+        plan.items
+          .filter(
+            (candidate) => candidate.manualSkip && candidate.id !== item.id,
+          )
+          .map((candidate) => candidate.id),
+      );
+      const basePlan = applyPlanSkips(plan, skipped, {
+        settings: nextSettings,
+        mediaType: current.mediaType,
+        caseInsensitive,
+      });
+      const replanOptions = {
+        settings: nextSettings,
+        mediaType: current.mediaType,
+        caseInsensitive,
+      };
+      if (matchChanged) {
+        // The stored match was the manual override, so the automatic one has
+        // to come back from the cached scan before it can be promoted.
+        setPlan(basePlan);
+        if (plan.scanId) {
+          pendingBestGuess.current = new Set([item.id]);
+          recalculateMatches(plan.scanId);
+        } else {
+          setPlan(undefined);
+          toast.info('Scan the library again to restore the automatic match.');
+        }
+      } else {
+        const promoted = applyPlanBestGuess(basePlan, [item.id], replanOptions);
+        setPlan(promoted);
+        if (promoted === basePlan) {
+          toast.info(
+            'No automatic match is available for this file. Pick an episode or movie to fix it manually.',
+          );
+        }
+      }
     }
     setFixItem(undefined);
   };
 
+  const skipItem = (item: OrganizePlanItem, skip: boolean) => {
+    if (!plan) return;
+    const skipped = new Set(
+      plan.items.filter((candidate) => candidate.manualSkip).map((candidate) => candidate.id),
+    );
+    if (skip) skipped.add(item.id);
+    else skipped.delete(item.id);
+    setPlan(
+      applyPlanSkips(plan, skipped, {
+        settings,
+        mediaType: current.mediaType,
+        caseInsensitive: settings.caseInsensitive ?? false,
+      }),
+    );
+    if (skip && selected.has(item.id)) {
+      const next = new Set(selected);
+      next.delete(item.id);
+      setSelected(next);
+    }
+  };
+
+  const runBulkAction = (
+    action: 'skip' | 'useBestGuess' | 'rescan' | 'approve' | 'folderOnly',
+    items: OrganizePlanItem[],
+  ) => {
+    if (!plan || items.length === 0) return;
+    if (action === 'rescan') {
+      rescanFoldersFor(items);
+      return;
+    }
+    if (action === 'skip') {
+      const skipped = new Set(
+        plan.items
+          .filter((candidate) => candidate.manualSkip)
+          .map((candidate) => candidate.id),
+      );
+      for (const item of items) skipped.add(item.id);
+      setPlan(
+        applyPlanSkips(plan, skipped, {
+          settings,
+          mediaType: current.mediaType,
+          caseInsensitive: settings.caseInsensitive ?? false,
+        }),
+      );
+      setSelected(new Set());
+      return;
+    }
+    if (action === 'approve') {
+      // Approval behaves like saving the row's current match: the override
+      // keeps the episode/movie on later scans, and the plan flag keeps the row
+      // a rename across replans in this review.
+      const caseInsensitive = settings.caseInsensitive ?? false;
+      let nextSettings = settings;
+      for (const item of items) {
+        if (overrideFor(nextSettings, item.sourcePath, caseInsensitive)) continue;
+        let override: OrganizeMatchOverride | undefined;
+        if (item.mediaType === 'tv') {
+          const folder = current.folders.find((candidate) =>
+            organizerIsPathInside(item.sourcePath, candidate.source, {
+              caseInsensitive,
+            }),
+          );
+          const series = folder
+            ? resolveShowMapping(
+                nextSettings,
+                folder.id,
+                item.sourceRelativePath,
+                { caseInsensitive },
+              )?.series
+            : undefined;
+          if (series && (item.episode || item.episodes?.length)) {
+            override = {
+              series,
+              ...(item.episode ? { episode: item.episode } : {}),
+              ...(item.episodes?.length ? { episodes: item.episodes } : {}),
+            };
+          }
+        } else if (item.movie) {
+          override = { movie: item.movie };
+        }
+        if (override) {
+          nextSettings = setOverride(
+            nextSettings,
+            item.sourcePath,
+            override,
+            caseInsensitive,
+          );
+        }
+      }
+      if (nextSettings !== settings) {
+        commit({ ...current, organize: nextSettings }, { keepPlan: true });
+      }
+      setPlan(
+        approvePlanItems(
+          plan,
+          items.map((item) => item.id),
+          {
+            settings: nextSettings,
+            mediaType: current.mediaType,
+            caseInsensitive,
+          },
+        ),
+      );
+      return;
+    }
+    if (action === 'folderOnly') {
+      // Toggle: a selection that is entirely folder-only goes back to the
+      // template file name.
+      const allFolderOnly = items.every(
+        (item) =>
+          plan.items.find((candidate) => candidate.id === item.id)
+            ?.renameFolderOnly,
+      );
+      setPlan(
+        setPlanFolderOnly(
+          plan,
+          items.map((item) => item.id),
+          !allFolderOnly,
+          {
+            settings,
+            mediaType: current.mediaType,
+            caseInsensitive: settings.caseInsensitive ?? false,
+          },
+        ),
+      );
+      return;
+    }
+    const caseInsensitive = settings.caseInsensitive ?? false;
+    let nextSettings = settings;
+    for (const item of items) {
+      nextSettings = clearOverride(
+        nextSettings,
+        item.sourcePath,
+        caseInsensitive,
+      );
+    }
+    const selectedIds = new Set(items.map((item) => item.id));
+    const manualSkips = plan.items
+      .filter((candidate) => candidate.manualSkip)
+      .map((candidate) => candidate.id);
+    const remainingSkips = manualSkips.filter((id) => !selectedIds.has(id));
+    const skipChanged = remainingSkips.length !== manualSkips.length;
+    const matchChanged =
+      organizeMatchSignature(nextSettings) !== organizeMatchSignature(settings);
+    const basePlan = skipChanged
+      ? applyPlanSkips(plan, remainingSkips, {
+          settings: nextSettings,
+          mediaType: current.mediaType,
+          caseInsensitive,
+        })
+      : plan;
+    commit({ ...current, organize: nextSettings }, { keepPlan: true });
+    if (matchChanged) {
+      // Cleared overrides have to be re-matched against the cached scan; the
+      // requested best guesses are promoted again when that plan arrives.
+      setPlan(basePlan);
+      if (plan.scanId) {
+        pendingBestGuess.current = selectedIds;
+        recalculateMatches(plan.scanId);
+      } else {
+        setPlan(undefined);
+        toast.info(
+          'Scan the library again to restore the automatic matches.',
+        );
+      }
+      return;
+    }
+    const promoted = applyPlanBestGuess(basePlan, selectedIds, {
+      settings: nextSettings,
+      mediaType: current.mediaType,
+      caseInsensitive,
+    });
+    setPlan(promoted);
+    if (promoted === basePlan) {
+      toast.info(
+        'The selected file(s) have no automatic match to use. Fix them manually.',
+      );
+    }
+  };
+
+  const matchSignature = organizeMatchSignature(settings);
+  const planSignature = organizePlanSignature(settings);
+  const librarySignature = organizeLibrarySignature(current);
+  useEffect(() => {
+    saveOrganizeSession({
+      libraryId: current.id,
+      step,
+      plan,
+      selected: [...selected],
+      scope,
+      matchSignature,
+      planSignature,
+      librarySignature,
+      updatedAt: Date.now(),
+    });
+  }, [
+    current.id,
+    librarySignature,
+    matchSignature,
+    plan,
+    planSignature,
+    scope,
+    selected,
+    step,
+  ]);
+
+  useEffect(() => {
+    setPlexStatus(undefined);
+    setPlexFixSteps(undefined);
+  }, [plex?.dbPath]);
+
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    if (!initialSession?.plan || !plan) return;
+    if (
+      initialSession.matchSignature &&
+      initialSession.matchSignature !== organizeMatchSignature(settings)
+    ) {
+      if (plan.scanId) recalculateMatches(plan.scanId);
+      else {
+        setPlan(undefined);
+        toast.info('Show matches changed. Scan the library again to apply them.');
+      }
+      return;
+    }
+    if (
+      initialSession.planSignature &&
+      initialSession.planSignature !== organizePlanSignature(settings)
+    ) {
+      setPlan(
+        replanPlan(plan, {
+          settings,
+          mediaType: current.mediaType,
+          caseInsensitive: settings.caseInsensitive ?? false,
+        }),
+      );
+    }
+  }, []);
+
   const plexConfigured = Boolean(plex?.dbPath);
+  const warnings = compactWarnings(plan?.warnings ?? []);
 
   return (
     <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
@@ -628,20 +1199,65 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
         )}
       </div>
 
-      {applyResult && (
-        <Alert variant="success">
-          Renamed {applyResult.renamed.length} file(s).
-          {applyResult.plexUpdated > 0
-            ? ` Updated ${applyResult.plexUpdated} Plex item(s); moved ${applyResult.historyMoved} history row(s).`
-            : ''}
-          {applyResult.pendingHistoryTransfers > 0
-            ? ` ${applyResult.pendingHistoryTransfers} history transfer(s) are waiting for a Plex rescan.`
-            : ''}
-          {applyResult.failed.length > 0
-            ? ` ${applyResult.failed.length} move(s) failed.`
-            : ''}
-        </Alert>
-      )}
+      {applyResult && (() => {
+        const failures = applyResult.failed;
+        const applyWarnings = applyResult.warnings.filter(
+          (warning) => !(plan?.warnings ?? []).includes(warning),
+        );
+        return (
+          <Alert variant={failures.length > 0 ? 'danger' : 'success'}>
+            <div>
+              Renamed {applyResult.renamed.length} file(s).
+              {applyResult.plexUpdated > 0
+                ? ` Updated ${applyResult.plexUpdated} Plex item(s); moved ${applyResult.historyMoved} history row(s).`
+                : ''}
+              {applyResult.pendingHistoryTransfers > 0
+                ? ` ${applyResult.pendingHistoryTransfers} history transfer(s) are waiting for a Plex rescan.`
+                : ''}
+              {failures.length > 0
+                ? ` ${failures.length} move(s) failed; those files stay in the review.`
+                : ''}
+            </div>
+            {failures.length > 0 && (
+              <ul
+                style={{
+                  margin: 'var(--hb-space-xs) 0 0',
+                  paddingLeft: '1.2rem',
+                }}
+              >
+                {failures.slice(0, MAX_VISIBLE_FAILURES).map((failure) => (
+                  <li
+                    key={failure.path}
+                    style={{ overflowWrap: 'anywhere' }}
+                  >
+                    <strong>{failure.path}</strong> — {failure.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {failures.length > MAX_VISIBLE_FAILURES && (
+              <div>
+                and {failures.length - MAX_VISIBLE_FAILURES} more failed
+                move(s)…
+              </div>
+            )}
+            {applyWarnings.length > 0 && (
+              <ul
+                style={{
+                  margin: 'var(--hb-space-xs) 0 0',
+                  paddingLeft: '1.2rem',
+                }}
+              >
+                {applyWarnings
+                  .slice(0, MAX_VISIBLE_WARNINGS)
+                  .map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+              </ul>
+            )}
+          </Alert>
+        );
+      })()}
 
       <Stepper role="tablist" aria-label="Organize steps">
         {(
@@ -792,14 +1408,12 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
             )}
           </div>
           {plexStatus && (
-            <div style={{ fontSize: 'var(--hb-font-xs)', color: 'var(--hb-textMuted)' }}>
-              {plexStatus.running ? 'Plex is running.' : 'Plex is stopped.'}{' '}
-              {plexStatus.running
-                ? plexStatus.serviceInstructions
-                : plexStatus.writable
-                  ? 'The database is writable.'
-                  : plexStatus.permissionRemediation}
-            </div>
+            <PlexStatusReport
+              check={plexStatus}
+              fixing={busy === 'plexFix'}
+              fixSteps={plexFixSteps}
+              onAutoFix={() => void runPlexAutoFix()}
+            />
           )}
         </div>
       </Panel>
@@ -833,17 +1447,29 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
           {plexPrompt && (
             <Alert variant="warning" className="mb-0">
               <div>
-                Plex Media Server is running and must be stopped before the
-                database can be updated.
+                {plexStatus?.running
+                  ? 'Plex Media Server is running and must be stopped before the database can be updated.'
+                  : 'HBBatchBeast cannot write the Plex database.'}
               </div>
               <div style={{ display: 'flex', gap: 'var(--hb-space-xs)', marginTop: 'var(--hb-space-sm)', flexWrap: 'wrap' }}>
+                {plexStatus?.running && (
+                  <Button
+                    compact
+                    variant="secondary"
+                    onClick={() => void stopPlexAndApply(plexPrompt)}
+                    disabled={busy !== undefined}
+                  >
+                    Stop Plex and continue
+                  </Button>
+                )}
                 <Button
                   compact
-                  variant="secondary"
-                  onClick={() => void stopPlexAndApply(plexPrompt)}
+                  variant="ghost"
+                  icon="scan"
+                  onClick={() => void recheckPlexAndContinue()}
                   disabled={busy !== undefined}
                 >
-                  Stop Plex and continue
+                  Recheck
                 </Button>
                 <Button
                   compact
@@ -866,9 +1492,45 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                   Cancel
                 </Button>
               </div>
-              {plexStatus?.serviceInstructions && (
-                <div style={{ marginTop: 'var(--hb-space-xs)', fontSize: 'var(--hb-font-xs)' }}>
-                  {plexStatus.serviceInstructions}
+              {plexStatus && (
+                <div
+                  style={{
+                    marginTop: 'var(--hb-space-sm)',
+                    display: 'grid',
+                    gap: 'var(--hb-space-xs)',
+                  }}
+                >
+                  {!plexStatus.writable && plexStatus.canAutoFix && (
+                    <div>
+                      <Button
+                        compact
+                        variant="secondary"
+                        icon="fix"
+                        onClick={() => void runPlexAutoFix()}
+                        disabled={busy !== undefined}
+                      >
+                        {busy === 'plexFix'
+                          ? 'Fixing…'
+                          : 'Fix database access automatically'}
+                      </Button>
+                    </div>
+                  )}
+                  <PlexCommandBlock
+                    steps={
+                      plexStatus.writable
+                        ? plexStatus.remediation.steps.filter(
+                            (step) => step.id === 'stop-service',
+                          )
+                        : plexStatus.remediation.steps.filter(
+                            (step) => step.id === 'grant-access',
+                          )
+                    }
+                    summary={
+                      plexStatus.writable
+                        ? 'Stop Plex, then choose Stop Plex and continue.'
+                        : 'Grant access to the database folder, then continue.'
+                    }
+                  />
                 </div>
               )}
             </Alert>
@@ -908,11 +1570,28 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
 
           {scope.length > 0 && (
             <Alert variant="info" className="mb-0">
-              Scan limited to{' '}
-              <strong>
-                {scope.map((show) => show.name ?? show.subpath).join(', ')}
-              </strong>
-              . Choose “Scan the whole library” in step 1 to scan everything.
+              <div>
+                Scan limited to {scope.length} show folder
+                {scope.length === 1 ? '' : 's'}:
+              </div>
+              <ul
+                style={{
+                  margin: 'var(--hb-space-xs) 0',
+                  paddingLeft: '1.2rem',
+                }}
+              >
+                {scope.slice(0, MAX_VISIBLE_SCOPE).map((show) => (
+                  <li key={`${show.folderId}:${show.subpath}`}>
+                    {show.name ?? show.subpath}
+                  </li>
+                ))}
+              </ul>
+              {scope.length > MAX_VISIBLE_SCOPE && (
+                <div>and {scope.length - MAX_VISIBLE_SCOPE} more…</div>
+              )}
+              <div>
+                Choose “Scan the whole library” in step 1 to scan everything.
+              </div>
             </Alert>
           )}
 
@@ -993,11 +1672,14 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
 
           {plan && (
             <>
-              {plan.warnings.length > 0 && (
+              {warnings.visible.length > 0 && (
                 <Alert variant="warning" className="mb-0">
-                  {plan.warnings.map((warning) => (
+                  {warnings.visible.map((warning) => (
                     <div key={warning}>{warning}</div>
                   ))}
+                  {warnings.hidden > 0 && (
+                    <div>{warnings.hidden} more warning(s) are hidden.</div>
+                  )}
                 </Alert>
               )}
               <OrganizePlanTable
@@ -1007,6 +1689,8 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 selected={selected}
                 onSelectedChange={setSelected}
                 onFixMatch={setFixItem}
+                onSkipChange={skipItem}
+                onBulkAction={runBulkAction}
               />
               {plan.items.some((item) => item.action === 'conflict') && (
                 <Alert variant="danger" className="mb-0">
@@ -1060,16 +1744,71 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
           key={scanToken}
           library={current}
           scope={scope}
+          reuseScanId={scanMode === 'recalculate' ? reuseScanId : undefined}
+          rescanFolders={scanMode === 'rescan' ? rescanFolders : undefined}
           onProgress={setScanProgress}
           onComplete={(next) => {
-            setPlan(next);
-            setSelected(
-              new Set(
-                next.items
+            if (scanMode === 'rescan' && plan) {
+              const merged = mergeRescannedPlan(plan, next, rescanFolders, {
+                settings,
+                mediaType: current.mediaType,
+                caseInsensitive: settings.caseInsensitive ?? false,
+              });
+              const available = new Set(merged.items.map((item) => item.id));
+              setSelected(
+                new Set([...selected].filter((id) => available.has(id))),
+              );
+              setPlan(merged);
+              toast.info(
+                `Rescanned ${next.items.length} file(s) in ${rescanFolders.length} folder(s).`,
+              );
+            } else if (scanMode === 'recalculate' && plan) {
+              const skips = plan.items
+                .filter((item) => item.manualSkip)
+                .map((item) => item.id);
+              const recalculated =
+                skips.length > 0
+                  ? applyPlanSkips(next, skips, {
+                      settings,
+                      mediaType: current.mediaType,
+                      caseInsensitive: settings.caseInsensitive ?? false,
+                    })
+                  : next;
+              const withRowFlags = carryPlanRowFlags(plan, recalculated, {
+                settings,
+                mediaType: current.mediaType,
+                caseInsensitive: settings.caseInsensitive ?? false,
+              });
+              const bestGuessIds = pendingBestGuess.current;
+              pendingBestGuess.current = new Set();
+              const withBestGuess =
+                bestGuessIds.size > 0
+                  ? applyPlanBestGuess(withRowFlags, bestGuessIds, {
+                      settings,
+                      mediaType: current.mediaType,
+                      caseInsensitive: settings.caseInsensitive ?? false,
+                    })
+                  : withRowFlags;
+              const renameIds = new Set(
+                withBestGuess.items
                   .filter((item) => item.action === 'rename')
                   .map((item) => item.id),
-              ),
-            );
+              );
+              setSelected(
+                new Set([...selected].filter((id) => renameIds.has(id))),
+              );
+              setPlan(withBestGuess);
+            } else {
+              pendingBestGuess.current = new Set();
+              setPlan(next);
+              setSelected(
+                new Set(
+                  next.items
+                    .filter((item) => item.action === 'rename')
+                    .map((item) => item.id),
+                ),
+              );
+            }
             setScanProgress(undefined);
             setScanning(false);
           }}

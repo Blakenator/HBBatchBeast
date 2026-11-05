@@ -1,10 +1,7 @@
 import path from 'path';
+import type { PlexServiceKind } from '../../../common/organizer/types';
 
-export type PlexServiceKind =
-  | 'systemd'
-  | 'launchd'
-  | 'windows-process'
-  | 'manual';
+export type { PlexServiceKind };
 
 export interface PlexEnvironmentInput {
   platform: NodeJS.Platform;
@@ -100,17 +97,101 @@ export function plexServiceName(
   return 'plexmediaserver';
 }
 
-export function plexPermissionRemediation(
+export interface PlexExecutableInput {
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  exists?: (candidate: string) => boolean;
+}
+
+/** Places a platform keeps the Plex Media Server executable, best first. */
+export function plexExecutableCandidates(
+  input: PlexExecutableInput,
+): string[] {
+  const join = platformPath(input.platform);
+  const candidates: string[] = [];
+  if (input.platform === 'win32') {
+    const programFiles = input.env.ProgramFiles ?? 'C:\\Program Files';
+    const programFilesX86 = input.env['ProgramFiles(x86)'];
+    const localAppData = input.env.LOCALAPPDATA;
+    candidates.push(
+      join.join(
+        programFiles,
+        'Plex',
+        'Plex Media Server',
+        'Plex Media Server.exe',
+      ),
+    );
+    if (programFilesX86) {
+      candidates.push(
+        join.join(
+          programFilesX86,
+          'Plex',
+          'Plex Media Server',
+          'Plex Media Server.exe',
+        ),
+      );
+    }
+    if (localAppData) {
+      candidates.push(
+        join.join(
+          localAppData,
+          'Plex',
+          'Plex Media Server',
+          'Plex Media Server.exe',
+        ),
+        join.join(
+          localAppData,
+          'Programs',
+          'Plex',
+          'Plex Media Server',
+          'Plex Media Server.exe',
+        ),
+      );
+    }
+  } else if (input.platform === 'darwin') {
+    candidates.push(
+      '/Applications/Plex Media Server.app/Contents/MacOS/Plex Media Server',
+      join.join(
+        input.home,
+        'Applications',
+        'Plex Media Server.app',
+        'Contents',
+        'MacOS',
+        'Plex Media Server',
+      ),
+    );
+  } else {
+    candidates.push(
+      '/usr/lib/plexmediaserver/Plex Media Server',
+      '/opt/plexmediaserver/Plex Media Server',
+    );
+  }
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate)) return false;
+    seen.add(candidate);
+    return input.exists ? input.exists(candidate) : true;
+  });
+}
+
+export function plexStartInstructions(
   platform: NodeJS.Platform,
-  databasePath: string,
+  executable?: string,
 ): string {
   if (platform === 'win32') {
-    return `Grant write access to "${databasePath}" with icacls, or run HBBatchBeast as the Windows user that owns the Plex data.`;
+    const target =
+      executable ??
+      '%ProgramFiles%\\Plex\\Plex Media Server\\Plex Media Server.exe';
+    return `Run 'cmd /c start "" "${target}"' in a terminal, or start Plex from the Start menu.`;
   }
   if (platform === 'darwin') {
-    return `Ensure HBBatchBeast runs as the macOS user that owns "${databasePath}", or grant write permission in Finder/Get Info.`;
+    return 'Run "launchctl start com.plexapp.plexmediaserver" in Terminal, or start Plex from its menu bar icon.';
   }
-  return `Grant write access to "${databasePath}" (for example, add your user to the "plex" group and sign in again, or use setfacl).`;
+  if (platform === 'linux') {
+    return 'Run "sudo systemctl start plexmediaserver" in a terminal.';
+  }
+  return 'Start Plex Media Server manually.';
 }
 
 export function plexServiceInstructions(

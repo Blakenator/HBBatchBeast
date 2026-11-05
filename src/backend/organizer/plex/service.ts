@@ -3,6 +3,7 @@ import {
   plexServiceInstructions,
   plexServiceName,
   plexServiceHint,
+  plexStartInstructions,
   type PlexServiceKind,
 } from './environment';
 
@@ -15,6 +16,7 @@ export interface CommandResult {
 export type CommandRunner = (
   file: string,
   args: string[],
+  options?: { timeoutMs?: number },
 ) => Promise<CommandResult>;
 
 export interface PlexServiceStatus {
@@ -23,12 +25,12 @@ export interface PlexServiceStatus {
   detail?: string;
 }
 
-const defaultRunner: CommandRunner = (file, args) =>
+export const defaultRunner: CommandRunner = (file, args, options) =>
   new Promise((resolve) => {
     execFile(
       file,
       args,
-      { timeout: 10_000, windowsHide: true },
+      { timeout: options?.timeoutMs ?? 10_000, windowsHide: true },
       (error, stdout, stderr) => {
         resolve({
           stdout: String(stdout ?? ''),
@@ -137,7 +139,7 @@ export async function startPlexService(
     const result = await run('systemctl', ['start', plexServiceName(platform)]);
     return result.code === 0
       ? { ok: true, message: 'Plex Media Server started.' }
-      : { ok: false, message: plexServiceInstructions(platform) };
+      : { ok: false, message: plexStartInstructions(platform, windowsExecutable) };
   }
   if (platform === 'darwin') {
     const result = await run('launchctl', [
@@ -146,7 +148,7 @@ export async function startPlexService(
     ]);
     return result.code === 0
       ? { ok: true, message: 'Plex Media Server started.' }
-      : { ok: false, message: plexServiceInstructions(platform) };
+      : { ok: false, message: plexStartInstructions(platform, windowsExecutable) };
   }
   if (platform === 'win32' && windowsExecutable) {
     try {
@@ -158,10 +160,10 @@ export async function startPlexService(
       child.unref();
       return { ok: true, message: 'Plex Media Server started.' };
     } catch {
-      return { ok: false, message: plexServiceInstructions(platform) };
+      return { ok: false, message: plexStartInstructions(platform, windowsExecutable) };
     }
   }
-  return { ok: false, message: plexServiceInstructions(platform) };
+  return { ok: false, message: plexStartInstructions(platform, windowsExecutable) };
 }
 
 export async function waitForPlexStopped(

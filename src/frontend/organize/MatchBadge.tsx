@@ -8,6 +8,12 @@ import type {
 
 type MatchBand = 'strong' | 'weak' | 'conflict';
 
+const BAND_LABELS: Record<MatchBand, string> = {
+  strong: 'strong',
+  weak: 'weak',
+  conflict: 'mixed signals',
+};
+
 const TONES: Record<MatchBand, { color: string; surface: string }> = {
   strong: {
     color: 'var(--hb-success)',
@@ -212,10 +218,10 @@ export const MatchBadge: React.FC<MatchBadgeProps> = ({
       <Split
         type="button"
         $tone={tone}
-        aria-label={`${label ?? 'Match'} ${band} ${percent}`}
+        aria-label={`${label ?? 'Match'} ${BAND_LABELS[band]} ${percent}`}
         onClick={(event) => event.stopPropagation()}
       >
-        <Lead $tone={tone}>{band}</Lead>
+        <Lead $tone={tone}>{BAND_LABELS[band]}</Lead>
         <Value>{percent}</Value>
       </Split>
     </OverlayTrigger>

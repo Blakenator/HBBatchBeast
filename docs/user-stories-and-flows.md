@@ -220,13 +220,19 @@ movie each file is, so that names are correct without manual research.*
 - A TV library root holds many shows. Show folders are detected, matched to TVDB by folder name, and the
   match is persisted per folder; each can be changed with a prefilled search (reusing the failed
   auto-match results) or cleared. A folder can be declared a single show instead, and any subset of
-  shows can be ticked for a scoped scan so large libraries can be organized incrementally.
+  shows can be ticked for a scoped scan so large libraries can be organized incrementally. The show
+  list is searchable by show/series/folder, filterable by match status, folder and current selection,
+  and offers select-all-visible and clear controls with a compact scan-scope summary.
 - TV files use the series matched to their show folder. Each file resolves two independent signals —
   the `SxxEyy` tag and the filename's episode title — with an embedded air date as a tiebreaker.
   Confidence is a transparent weighted mix, conflicts are labeled, and weak conflicts stay in review
-  instead of being guessed. The review table shows a two-faced `strong`/`weak`/`conflict` badge with
+  instead of being guessed. The review table shows a two-faced `strong`/`weak`/`mixed signals` badge with
   a hover/focus breakdown, and **Fix match** ranks episode results with the same evidence and previews
   the resulting filename for the current selection.
+- Files that hold several episodes can be marked as multi-episode in **Fix match**: the selection is
+  a consecutive run within one season, a range already present in the filename is preselected, and
+  the rendered tag follows Plex's first/last form (`S01E02-E03`). Plex history moves for every
+  episode the file covers.
 - Specials always use `S00`/`Season 00`; generated names strip filesystem-invalid characters.
 - Each review row has a `…` menu with **Fix match** and **Open folder**.
 - Rows whose rendered file and folder names are already identical are skipped automatically.
@@ -348,18 +354,30 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
    saved until you choose **Save as library**). Saved organizer defaults are restored.
 2. Pick Movies or TV and add source folders. For TV choose **Detect & match shows**; each show folder is
    listed with cover art and a TVDB match (auto from the folder name) that can be changed or cleared.
-   For movies choose Plex or TVDB metadata. The Plex database comes from Settings → Global.
+   Search and match-status/folder filters narrow the list, and select-all-visible/clear controls scope
+   the next scan without changing saved matches. For movies choose Plex or TVDB metadata. The Plex
+   database comes from Settings → Global.
 3. Adjust the ordered first-match naming rules. Template fields offer variables on `{`, insert them as
    removable chips, and show an example line; the locked default rule handles everything else.
 4. Scan; live progress shows discovered files, then a percentage with the file/show being matched and
-   the remaining time. Review the plan with filters for changes, skips, conflicts and low confidence,
-   and search. The
-   table sorts, resizes and hides columns like the conversion queue, and highlights the changed name
-   tokens. **Fix match** corrects a row and re-plans only that row. Conflicts block Apply.
+   the remaining time. Review the plan with quick filters for changes, skips, conflicts and low
+   confidence, a min/max confidence percentage range, and search. When the scan is limited to show
+   folders, the review lists them as bullets (first seven, then “and N more…”). The
+   table sorts, resizes and hides columns like the conversion queue, keeps each show header sticky
+   while its files scroll, and highlights the changed name
+   tokens. **Fix match** corrects a row and **Approve match** saves its current match like a saved
+   match (so it survives rescans and replans) — both re-plan only that row, and both are also
+   available for the whole selection from the toolbar. **Rename folder only** moves a row into its
+   templated folder while keeping the current file name.
+   Conflicts block Apply.
 5. Apply: confirm the move count and whether Plex is updated. If Plex is running, stop it, apply
-   without Plex, or cancel.
-6. Plex is updated (or the app reports OS-specific permission/service guidance) and restarted when the
-   app stopped it. Pending history transfers are completed after the next Plex scan.
+   without Plex, or cancel. Failed moves are listed with their file path and error, and stay in the
+   review so they can be retried.
+6. Plex is updated and restarted when the app stopped it. If the database is not writable or Plex
+   cannot be stopped, the panel lists each issue with a full platform command block (copyable) and,
+   where a native elevation helper exists, a **Fix automatically** action that stops Plex, grants
+   your user ACL access and restarts Plex. Pending history transfers are completed after the next
+   Plex scan.
 7. **Undo last** reverses the file moves from the journal if the result is wrong.
 
 ## Non-goals (deliberately dropped)

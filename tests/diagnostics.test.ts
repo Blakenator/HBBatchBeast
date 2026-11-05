@@ -12,6 +12,7 @@ import {
   clearCaches,
   clearRunJournal,
   collectDiagnostics,
+  logOrganizeFailure,
 } from '../src/backend/helpers/diagnostics';
 
 let root: string;
@@ -31,6 +32,26 @@ afterEach(() => {
 });
 
 describe('diagnostics helpers', () => {
+  it('logs the most specific organize failure for the diagnostics panel', () => {
+    logOrganizeFailure(paths, {
+      message: 'error',
+      inner: {
+        message: 'Organize scan failed',
+        inner: { message: 'attempt to write a readonly database' },
+      },
+    });
+
+    const log = fs.readFileSync(
+      path.join(paths.logDir, 'OrganizeLog.txt'),
+      'utf8',
+    );
+    expect(log).toContain('Organize scan failed');
+    expect(log).toContain('attempt to write a readonly database');
+    expect(collectDiagnostics(paths).logs.map((entry) => entry.name)).toContain(
+      'OrganizeLog.txt',
+    );
+  });
+
   it('lists log files with sizes and marks cache files', () => {
     fs.writeFileSync(path.join(paths.logDir, 'ErrorLog.txt'), 'x'.repeat(2048));
 

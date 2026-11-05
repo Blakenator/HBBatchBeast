@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { Alert, Form, Modal, Spinner } from 'react-bootstrap';
 import {
   PROMISE_CHANNEL,
   episodeDisplayTag,
   episodeNameText,
+  episodeRangeTag,
   organizerIsPathInside,
   overrideFor,
   parseMediaFilename,
@@ -13,6 +14,7 @@ import {
   rankEpisodes,
   resolveEpisode,
   resolveShowMapping,
+  sortEpisodes,
   titleComparisonKey,
   type EpisodeMatchSummary,
   type Library,
@@ -233,6 +235,23 @@ function sameEpisode(left: TvdbEpisode, right: TvdbEpisode): boolean {
   );
 }
 
+/** Multi-episode files must be a consecutive run within one season. */
+function episodeRangeProblem(
+  episodes: readonly TvdbEpisode[],
+): string | undefined {
+  if (episodes.length < 2) return undefined;
+  const season = episodes[0].seasonNumber;
+  if (episodes.some((episode) => episode.seasonNumber !== season)) {
+    return 'Multi-episode files must stay within one season.';
+  }
+  for (let index = 1; index < episodes.length; index += 1) {
+    if (episodes[index].episodeNumber !== episodes[index - 1].episodeNumber + 1) {
+      return 'Select consecutive episodes from the same season.';
+    }
+  }
+  return undefined;
+}
+
 interface SelectableRowProps {
   selected: boolean;
   onSelect: () => void;
@@ -241,6 +260,7 @@ interface SelectableRowProps {
   leading?: React.ReactNode;
   badge?: React.ReactNode;
   cover?: React.ReactNode;
+  multi?: boolean;
 }
 
 /**
@@ -255,6 +275,7 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
   leading,
   badge,
   cover,
+  multi = false,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const long = (description?.length ?? 0) > 100;
@@ -272,6 +293,16 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
           }
         }}
       >
+        {multi && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${title}`}
+            checked={selected}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            onChange={onSelect}
+          />
+        )}
         {cover}
         {leading}
         <RowText>
@@ -283,7 +314,7 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
             </DescriptionPreview>
           )}
         </RowText>
-        {selected && (
+        {selected && !multi && (
           <SelectedMark role="img" aria-label="Selected">
             <Icon name="passed" size="sm" />
           </SelectedMark>
@@ -440,7 +471,27 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     originalSeries,
   );
   const effectiveSeries = series ?? originalSeries;
-  const [episode, setEpisode] = useState<TvdbEpisode | undefined>(item.episode);
+  const parsedMedia = useMemo(
+    () =>
+      item.parsed ??
+      parseMediaFilename(fileNameQuery(item), item.sourceRelativePath),
+    [item],
+  );
+  const [selectedEpisodes, setSelectedEpisodes] = useState<TvdbEpisode[]>(() =>
+    item.episodes?.length
+      ? sortEpisodes(item.episodes)
+      : item.episode
+        ? [item.episode]
+        : [],
+  );
+  const [multiEpisode, setMultiEpisode] = useState(
+    item.episodes
+      ? item.episodes.length > 1
+      : (parsedMedia.episodeNumbers?.length ?? 0) > 1,
+  );
+  const [multiError, setMultiError] = useState<string>();
+  const autoPreselectFor = useRef<string | undefined>(undefined);
+  const episode = selectedEpisodes[0];
   const [movie, setMovie] = useState<TvdbMovie | undefined>(item.movie);
   const [changingShow, setChangingShow] = useState(!originalSeries);
   const [episodes, setEpisodes] = useState<TvdbEpisode[]>([]);
@@ -499,12 +550,75 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     // Only the slug and media type change what is loaded.
   }, [effectiveSeries?.slug, mediaType]);
 
-  const parsedMedia = useMemo(
-    () =>
-      item.parsed ??
-      parseMediaFilename(fileNameQuery(item), item.sourceRelativePath),
-    [item],
-  );
+  // A filename that already names a range should keep it without a manual fix.
+  useEffect(() => {
+    const slug = effectiveSeries?.slug;
+    // A stored selection is authoritative, including an explicit single fix.
+    if (item.episodes) return;
+    if (!multiEpisode || !slug || episodes.length === 0) return;
+    if (autoPreselectFor.current === slug) return;
+    autoPreselectFor.current = slug;
+    const numbers = parsedMedia.episodeNumbers;
+    if (!numbers || numbers.length < 2) return;
+    const season = item.episode?.seasonNumber ?? parsedMedia.seasonNumber;
+    if (
+      item.episode &&
+      item.episode.episodeNumber !== numbers[0]
+    ) {
+      return;
+    }
+    const matches = episodes.filter(
+      (candidate) =>
+        candidate.seasonNumber === season &&
+        numbers.includes(candidate.episodeNumber),
+    );
+    if (matches.length < 2) return;
+    setSelectedEpisodes((current) => {
+      if (current.length > 1) return current;
+      const merged = sortEpisodes([...current, ...matches]);
+      return episodeRangeProblem(merged) ? current : merged;
+    });
+  }, [
+    effectiveSeries?.slug,
+    episodes,
+    item.episode,
+    item.episodes,
+    multiEpisode,
+    parsedMedia,
+  ]);
+
+  const chooseEpisode = (candidate: TvdbEpisode) => {
+    if (!multiEpisode) {
+      setSelectedEpisodes([candidate]);
+      setMultiError(undefined);
+      return;
+    }
+    if (selectedEpisodes.some((entry) => sameEpisode(entry, candidate))) {
+      if (selectedEpisodes.length === 1) return;
+      setSelectedEpisodes(
+        selectedEpisodes.filter((entry) => !sameEpisode(entry, candidate)),
+      );
+      setMultiError(undefined);
+      return;
+    }
+    const next = sortEpisodes([...selectedEpisodes, candidate]);
+    const problem = episodeRangeProblem(next);
+    if (problem) {
+      setMultiError(problem);
+      return;
+    }
+    setSelectedEpisodes(next);
+    setMultiError(undefined);
+  };
+
+  const toggleMultiEpisode = (enabled: boolean) => {
+    setMultiEpisode(enabled);
+    setMultiError(undefined);
+    if (!enabled) {
+      setSelectedEpisodes((current) => current.slice(0, 1));
+    }
+  };
+
   const rankedEpisodes = useMemo(
     () =>
       rankEpisodes(parsedMedia, episodes, episodes.length, {
@@ -544,14 +658,18 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     episodeNameText(parsedMedia, effectiveSeries?.name);
   const previewOverride = useMemo<OrganizeMatchOverride | undefined>(() => {
     const selectedSeries = series ?? originalSeries;
-    const ready = mediaType === 'tv' ? Boolean(episode) : Boolean(movie);
+    const ready =
+      mediaType === 'tv' ? selectedEpisodes.length > 0 : Boolean(movie);
     if (!ready) return undefined;
     return {
       ...(selectedSeries ? { series: selectedSeries } : {}),
       ...(episode ? { episode } : {}),
+      ...(mediaType === 'tv' && selectedEpisodes.length > 0
+        ? { episodes: selectedEpisodes }
+        : {}),
       ...(movie ? { movie } : {}),
     };
-  }, [episode, mediaType, movie, originalSeries, series]);
+  }, [episode, mediaType, movie, originalSeries, selectedEpisodes, series]);
   const previewFilename = useMemo(() => {
     if (!previewOverride) return undefined;
     const target = previewTargetForItem(item, previewOverride, {
@@ -596,6 +714,9 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     onSave({
       ...(series ? { series } : {}),
       ...(episode ? { episode } : {}),
+      ...(mediaType === 'tv' && selectedEpisodes.length > 0
+        ? { episodes: selectedEpisodes }
+        : {}),
       ...(movie ? { movie } : {}),
     });
   };
@@ -676,10 +797,32 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                 autoSearch
                 onSelect={(next) => {
                   setSeries(next);
-                  setEpisode(undefined);
+                  setSelectedEpisodes([]);
+                  setMultiError(undefined);
                   setChangingShow(false);
                 }}
               />
+            )}
+
+            <Form.Check
+              type="switch"
+              id="fix-multi-episode"
+              label="This file contains multiple episodes"
+              checked={multiEpisode}
+              onChange={(event) =>
+                toggleMultiEpisode(event.target.checked)
+              }
+            />
+            {multiEpisode && (
+              <Muted style={{ whiteSpace: 'normal' }}>
+                Select every episode in the file. Episodes must be consecutive
+                and in one season; the first episode sets the title.
+              </Muted>
+            )}
+            {multiError && (
+              <Alert variant="warning" className="mb-0" role="alert">
+                {multiError}
+              </Alert>
             )}
 
             <Form.Group>
@@ -691,6 +834,17 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                 onChange={(event) => setEpisodeFilter(event.target.value)}
               />
             </Form.Group>
+            {multiEpisode && selectedEpisodes.length > 1 && (
+              <FilenamePreview>
+                Multi-episode:{' '}
+                <strong>
+                  {episodeRangeTag(
+                    selectedEpisodes[0].seasonNumber,
+                    selectedEpisodes.map((entry) => entry.episodeNumber),
+                  )}
+                </strong>
+              </FilenamePreview>
+            )}
             {previewFilename && (
               <FilenamePreview>
                 New filename: <strong>{previewFilename}</strong>
@@ -715,10 +869,11 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                 {filteredEpisodes.slice(0, 200).map((candidate) => (
                   <SelectableRow
                     key={`${candidate.id ?? candidate.tag}-${candidate.episodeNumber}`}
-                    selected={
-                      episode ? sameEpisode(episode, candidate) : false
-                    }
-                    onSelect={() => setEpisode(candidate)}
+                    multi={multiEpisode}
+                    selected={selectedEpisodes.some((entry) =>
+                      sameEpisode(entry, candidate),
+                    )}
+                    onSelect={() => chooseEpisode(candidate)}
                     title={candidate.name}
                     badge={(() => {
                       const match = matchesByEpisode.get(

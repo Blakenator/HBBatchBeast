@@ -245,6 +245,38 @@ describe('episode tiebreakers', () => {
     });
   });
 
+  it('scores a joined title across a multi-episode tag', () => {
+    const courage: TvdbEpisode[] = [
+      {
+        tag: 'S01E07',
+        name: 'The Demon in the Mattress',
+        seasonNumber: 1,
+        episodeNumber: 7,
+      },
+      {
+        tag: 'S01E08',
+        name: 'Freaky Fred',
+        seasonNumber: 1,
+        episodeNumber: 8,
+      },
+    ];
+    const result = resolveEpisode(
+      parseMediaFilename(
+        'Courage the Cowardly Dog - S01 E07-E08 - The Demon in the Mattress and Freaky Fred (1080p).mp4',
+      ),
+      courage,
+      { seriesName: 'Courage the Cowardly Dog' },
+    );
+
+    expect(result.episode?.tag).toBe('S01E07');
+    expect(result.summary).toMatchObject({
+      tag: 'correct',
+      name: 'correct',
+      conflict: false,
+    });
+    expect(result.summary?.nameSimilarity ?? 0).toBeGreaterThan(0.85);
+  });
+
   it('strips a numerically different series name', () => {
     const result = resolveEpisode(
       parseMediaFilename('Blue.Planet.2.S01E02.The.Deep.mkv'),

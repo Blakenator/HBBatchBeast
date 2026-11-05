@@ -18,6 +18,7 @@ import type {
   OrganizePendingResult,
   OrganizePlan,
   OrganizePlexCheck,
+  OrganizePlexFixResult,
   OrganizeScanProgress,
   OrganizeScanScope,
   OrganizePlexEnvironment,
@@ -52,6 +53,7 @@ export enum PROMISE_CHANNEL {
   OrganizeGetPlexEnvironment = 'ORGANIZE_GET_PLEX_ENVIRONMENT',
   OrganizeCheckPlex = 'ORGANIZE_CHECK_PLEX',
   OrganizeControlPlex = 'ORGANIZE_CONTROL_PLEX',
+  OrganizeFixPlex = 'ORGANIZE_FIX_PLEX',
   OrganizeSearchSeries = 'ORGANIZE_SEARCH_SERIES',
   OrganizeSearchMovies = 'ORGANIZE_SEARCH_MOVIES',
   OrganizeLoadEpisodes = 'ORGANIZE_LOAD_EPISODES',
@@ -145,6 +147,10 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
     props: { action: 'status' | 'stop' | 'start'; path: string };
     result: OrganizePlexCheck;
   };
+  [PROMISE_CHANNEL.OrganizeFixPlex]: {
+    props: { path: string };
+    result: OrganizePlexFixResult;
+  };
   [PROMISE_CHANNEL.OrganizeSearchSeries]: {
     props: { query: string };
     result: TvdbSeriesRef[];
@@ -193,7 +199,14 @@ export interface BackendAsyncApi extends BackendAsyncApiType<ASYNC_CHANNEL> {
     completeResult: RunState;
   };
   [ASYNC_CHANNEL.OrganizeScan]: {
-    props: { library: Library; scope?: OrganizeScanScope[] };
+    props: {
+      library: Library;
+      scope?: OrganizeScanScope[];
+      /** Reuse cached discovery data from a previous scan. */
+      reuseScanId?: string;
+      /** Absolute folders to walk again for a partial rescan. */
+      rescanFolders?: string[];
+    };
     initResult: OrganizeScanProgress;
     progressResult: OrganizeScanProgress;
     completeResult: OrganizePlan;

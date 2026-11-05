@@ -17,7 +17,7 @@ const WINDOWS_RESERVED =
 const INVALID_SEGMENT_CHARS = /[<>:"/\\|?*]/g;
 const DRIVE_PATH = /^[a-zA-Z]:($|[/\\])/;
 const UNC_PATH = /^[/\\]{2}/;
-const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::([a-zA-Z][a-zA-Z0-9_]*|\d+))?\}/g;
+const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+(?::[a-zA-Z0-9_]+)?))?\}/g;
 const utf8 = new TextEncoder();
 
 export class OrganizePathError extends Error {

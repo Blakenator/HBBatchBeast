@@ -34,8 +34,7 @@ const Spacer = styled.div`
 
 const Main = styled.main`
   padding: var(--hb-space-xl);
-  max-width: 1200px;
-  margin: 0 auto;
+  min-width: 0;
 `;
 
 interface AppShellProps {

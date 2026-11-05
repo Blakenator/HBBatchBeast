@@ -9,3 +9,5 @@ export * from './diff';
 export * from './overrides';
 export * from './templateTokens';
 export * from './planner';
+export * from './sessionSignatures';
+export * from './replacements';

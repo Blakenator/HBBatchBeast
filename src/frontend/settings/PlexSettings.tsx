@@ -3,10 +3,13 @@ import styled from 'styled-components';
 import { Alert, Form } from 'react-bootstrap';
 import {
   PROMISE_CHANNEL,
+  type OrganizePlexCheck,
   type PlexConnectionSettings,
+  type PlexFixStep,
 } from '../../common';
-import { useBackend } from '../helpers';
+import { useBackend, backendFailure, backendErrorMessage } from '../helpers';
 import { Button } from '../ui/Button';
+import { PlexStatusReport } from '../ui/PlexStatusReport';
 import { PathInput } from './PathInput';
 
 const Wrap = styled.section`
@@ -51,19 +54,20 @@ export const PlexSettings: React.FC<PlexSettingsProps> = ({
     channel: PROMISE_CHANNEL.OrganizeCheckPlex,
     skip: true,
   });
-  const [status, setStatus] = useState<{
-    exists: boolean;
-    writable: boolean;
-    running: boolean;
-    serviceInstructions: string;
-    permissionRemediation: string;
-  }>();
+  const fix = useBackend({
+    channel: PROMISE_CHANNEL.OrganizeFixPlex,
+    skip: true,
+  });
+  const [status, setStatus] = useState<OrganizePlexCheck>();
+  const [fixSteps, setFixSteps] = useState<PlexFixStep[]>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const candidates = environment.data?.databaseCandidates ?? [];
 
   useEffect(() => {
     setStatus(undefined);
+    setFixSteps(undefined);
     setError(undefined);
   }, [value?.dbPath]);
 
@@ -79,15 +83,41 @@ export const PlexSettings: React.FC<PlexSettingsProps> = ({
     if (!dbPath.trim()) return;
     setBusy(true);
     setError(undefined);
+    setFixSteps(undefined);
     try {
       const result = await check.refetch({ path: dbPath });
-      if (result.error) {
-        setError(result.error.message);
+      const failure = backendFailure(result, 'Could not check the Plex database.');
+      if (failure) {
+        setError(failure);
         return;
       }
       setStatus(result.data);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const runAutoFix = async () => {
+    if (!dbPath.trim()) return;
+    setFixing(true);
+    setError(undefined);
+    setFixSteps(undefined);
+    try {
+      const result = await fix.refetch({ path: dbPath });
+      const failure = backendFailure(
+        result,
+        'Could not fix the Plex database access.',
+      );
+      if (failure) {
+        setError(failure);
+        return;
+      }
+      if (result.data) {
+        setStatus(result.data.check);
+        setFixSteps(result.data.steps);
+      }
+    } finally {
+      setFixing(false);
     }
   };
 
@@ -150,27 +180,17 @@ export const PlexSettings: React.FC<PlexSettingsProps> = ({
         </Alert>
       )}
       {status && (
-        <Alert
-          variant={
-            status.exists && status.writable && !status.running
-              ? 'success'
-              : 'warning'
-          }
-          className="mb-0"
-        >
-          <div>
-            {status.exists ? 'Database found.' : 'Database not found.'}{' '}
-            {status.writable ? 'Writable.' : 'Not writable.'}{' '}
-            {status.running ? 'Plex is running.' : 'Plex is stopped.'}
-          </div>
-          {!status.writable && <div>{status.permissionRemediation}</div>}
-          {status.running && <div>{status.serviceInstructions}</div>}
-        </Alert>
+        <PlexStatusReport
+          check={status}
+          fixing={fixing}
+          fixSteps={fixSteps}
+          onAutoFix={() => void runAutoFix()}
+        />
       )}
       {environment.error && (
         <Muted>
           Could not look for a Plex database automatically:{' '}
-          {environment.error.message}
+          {backendErrorMessage(environment.error) ?? 'unknown error'}
         </Muted>
       )}
     </Wrap>

@@ -196,3 +196,110 @@ describe('TVDB client', () => {
     await expect(client.loadEpisodes('x')).rejects.toThrow(/503/);
   });
 });
+
+describe('TVDB search batching', () => {
+  it('sends multiple queries in one request and maps results by index', async () => {
+    const bodies: unknown[] = [];
+    const client = new TvdbClient({
+      cacheDir,
+      minIntervalMs: 0,
+      fetchImpl: async (_url, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return new Response(
+          JSON.stringify({
+            results: [
+              { hits: searchPayload.results[0].hits },
+              {
+                hits: [
+                  {
+                    primary_type: 'series',
+                    id: 2,
+                    name: 'Planet Earth',
+                    slug: 'planet-earth',
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const results = await client.searchMany(['family guy', 'planet earth']);
+
+    expect(bodies).toHaveLength(1);
+    expect(
+      (bodies[0] as { requests: { params: { query: string } }[] }).requests.map(
+        (request) => request.params.query,
+      ),
+    ).toEqual(['family guy', 'planet earth']);
+    expect(results[0].series[0]?.name).toBe('Family Guy');
+    expect(results[1].series[0]?.name).toBe('Planet Earth');
+  });
+
+  it('retries missing batch answers one query at a time', async () => {
+    const bodies: { requests: unknown[] }[] = [];
+    const client = new TvdbClient({
+      cacheDir,
+      minIntervalMs: 0,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          requests: { params: { query: string } }[];
+        };
+        bodies.push(body);
+        const query = body.requests[0]?.params.query;
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                hits:
+                  query === 'planet earth'
+                    ? [
+                        {
+                          primary_type: 'series',
+                          id: 2,
+                          name: 'Planet Earth',
+                          slug: 'planet-earth',
+                        },
+                      ]
+                    : searchPayload.results[0].hits,
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const results = await client.searchMany(['family guy', 'planet earth']);
+
+    expect(bodies.length).toBeGreaterThan(1);
+    expect(results[0].series[0]?.name).toBe('Family Guy');
+    expect(results[1].series[0]?.name).toBe('Planet Earth');
+  });
+
+  it('deduplicates identical searches that are in flight', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = new TvdbClient({
+      cacheDir,
+      minIntervalMs: 0,
+      fetchImpl: async () => {
+        calls += 1;
+        await gate;
+        return new Response(JSON.stringify(searchPayload), { status: 200 });
+      },
+    });
+
+    const first = client.search('family guy');
+    const second = client.search('family guy');
+    release();
+    await Promise.all([first, second]);
+
+    expect(calls).toBe(1);
+  });
+});

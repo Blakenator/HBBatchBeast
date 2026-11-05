@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   plexDatabaseCandidates,
-  plexPermissionRemediation,
   plexServiceHint,
   plexServiceInstructions,
   plexServiceName,
+  plexStartInstructions,
   resolvePlexEnvironment,
 } from '../src/backend/organizer/plex/environment';
 import {
@@ -91,19 +91,15 @@ describe('Plex environment', () => {
     }).databaseCandidates).toHaveLength(2);
   });
 
-  it('gives OS-specific permission and service instructions', () => {
-    expect(plexPermissionRemediation('linux', '/var/lib/plex.db')).toContain(
-      'plex',
-    );
-    expect(plexPermissionRemediation('darwin', '/Users/ada/plex.db')).toContain(
-      'macOS',
-    );
-    expect(plexPermissionRemediation('win32', 'C:\\plex.db')).toContain(
-      'icacls',
-    );
-    expect(plexServiceInstructions('linux')).toContain('systemctl');
+  it('gives OS-specific service instructions', () => {
+    expect(plexServiceInstructions('linux')).toContain('systemctl stop');
     expect(plexServiceInstructions('darwin')).toContain('launchd');
     expect(plexServiceInstructions('win32')).toContain('tray');
+    expect(plexStartInstructions('linux')).toContain('systemctl start');
+    expect(plexStartInstructions('darwin')).toContain('launchctl start');
+    expect(plexStartInstructions('win32', 'C:\\Plex\\Plex.exe')).toContain(
+      'C:\\Plex\\Plex.exe',
+    );
   });
 });
 

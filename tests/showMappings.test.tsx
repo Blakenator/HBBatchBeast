@@ -89,6 +89,96 @@ function detectionWithCandidates() {
   };
 }
 
+function multiShowDetection() {
+  return {
+    data: {
+      folders: [
+        {
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: 'Show A',
+          name: 'Show A',
+          mediaCount: 1,
+          candidates: [],
+        },
+        {
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: 'Show B',
+          name: 'Show B',
+          mediaCount: 2,
+          series,
+          autoMatched: true,
+        },
+        {
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: 'Blue Planet II 2017',
+          name: 'Blue Planet II 2017',
+          mediaCount: 3,
+          series,
+        },
+      ],
+      warnings: [],
+    },
+  };
+}
+
+function twoFolderLibrary(): Library {
+  return {
+    ...emptyLibrary({ id: 'lib', name: 'TV', mediaType: 'tv' }),
+    folders: [
+      { id: 'folder-1', source: '/media/tv', destination: '' },
+      { id: 'folder-2', source: '/media/movies', destination: '' },
+    ],
+    organize: createOrganizeSettings('tv'),
+  };
+}
+
+function twoFolderDetection() {
+  return {
+    data: {
+      folders: [
+        {
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: 'Show A',
+          name: 'Show A',
+          mediaCount: 1,
+        },
+        {
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: 'Show B',
+          name: 'Show B',
+          mediaCount: 2,
+        },
+        {
+          folderId: 'folder-2',
+          root: '/media/movies',
+          subpath: 'Show C',
+          name: 'Show C',
+          mediaCount: 1,
+        },
+        {
+          folderId: 'folder-2',
+          root: '/media/movies',
+          subpath: 'Show D',
+          name: 'Show D',
+          mediaCount: 2,
+        },
+      ],
+      warnings: [],
+    },
+  };
+}
+
+function scanCheckbox(name: string) {
+  return screen.queryByRole('checkbox', {
+    name: `Include ${name} in the next scan`,
+  });
+}
+
 describe('ShowMappings', () => {
   it('opens the search with the folder query and the failed auto-match results', async () => {
     mockRefetch.mockResolvedValue(detectionWithCandidates());
@@ -155,7 +245,9 @@ describe('ShowMappings', () => {
     render(<Harness onChange={vi.fn()} onScopeChange={onScopeChange} />);
     fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
 
-    const boxes = await screen.findAllByRole('checkbox', { name: 'Scan only' });
+    const boxes = await screen.findAllByRole('checkbox', {
+      name: /Include .* in the next scan/,
+    });
     expect(boxes).toHaveLength(2);
     fireEvent.click(boxes[0]);
     expect(onScopeChange).toHaveBeenLastCalledWith([
@@ -178,6 +270,161 @@ describe('ShowMappings', () => {
       screen.getByRole('button', { name: /Scan the whole library/ }),
     );
     expect(onScopeChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it('filters the show list by search and match status', async () => {
+    mockRefetch.mockResolvedValue(multiShowDetection());
+    render(<Harness onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show A/ });
+
+    expect(
+      screen.getByText(/3 of 3 shows · scanning the whole library/),
+    ).toBeTruthy();
+
+    const search = screen.getByRole('textbox', {
+      name: 'Filter shows by name or series',
+    });
+    fireEvent.change(search, { target: { value: 'show a' } });
+    expect(scanCheckbox('Show A')).toBeTruthy();
+    expect(scanCheckbox('Show B')).toBeNull();
+    expect(scanCheckbox('Blue Planet II 2017')).toBeNull();
+    expect(
+      screen.getByText(/1 of 3 shows · scanning the whole library/),
+    ).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Needs matching/ }));
+    expect(scanCheckbox('Show A')).toBeTruthy();
+    expect(scanCheckbox('Show B')).toBeNull();
+    expect(scanCheckbox('Blue Planet II 2017')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Auto-matched/ }));
+    expect(scanCheckbox('Show A')).toBeNull();
+    expect(scanCheckbox('Show B')).toBeTruthy();
+    expect(scanCheckbox('Blue Planet II 2017')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Matched/ }));
+    expect(scanCheckbox('Show A')).toBeNull();
+    expect(scanCheckbox('Show B')).toBeNull();
+    expect(scanCheckbox('Blue Planet II 2017')).toBeTruthy();
+  });
+
+  it('selects only the visible shows and keeps them selected while filtering', async () => {
+    mockRefetch.mockResolvedValue(multiShowDetection());
+    const onScopeChange = vi.fn();
+    render(<Harness onChange={vi.fn()} onScopeChange={onScopeChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show A/ });
+
+    const search = screen.getByRole('textbox', {
+      name: 'Filter shows by name or series',
+    });
+    fireEvent.change(search, { target: { value: 'show a' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Select all shown' }));
+    expect(onScopeChange).toHaveBeenLastCalledWith([
+      { folderId: 'folder-1', subpath: 'Show A', name: 'Show A' },
+    ]);
+
+    fireEvent.change(search, { target: { value: 'show b' } });
+    expect(scanCheckbox('Show A')).toBeNull();
+    expect(scanCheckbox('Show B')).toBeTruthy();
+    expect(
+      screen.getByText(
+        /1 selected for the next scan \(1 hidden by filters\)/,
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(onScopeChange).toHaveBeenLastCalledWith([]);
+    fireEvent.change(search, { target: { value: '' } });
+    expect(scanCheckbox('Show A')).toBeTruthy();
+    expect((scanCheckbox('Show B') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('selects all visible shows per folder', async () => {
+    mockRefetch.mockResolvedValue(twoFolderDetection());
+    const onScopeChange = vi.fn();
+    render(
+      <Harness
+        initial={twoFolderLibrary()}
+        onChange={vi.fn()}
+        onScopeChange={onScopeChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show A/ });
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select all visible shows in tv for the next scan',
+      }),
+    );
+    expect(onScopeChange).toHaveBeenLastCalledWith([
+      { folderId: 'folder-1', subpath: 'Show A', name: 'Show A' },
+      { folderId: 'folder-1', subpath: 'Show B', name: 'Show B' },
+    ]);
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select all visible shows in movies for the next scan',
+      }),
+    );
+    expect(onScopeChange.mock.calls.at(-1)?.[0]).toHaveLength(4);
+  });
+
+  it('narrows the list to the selected shows and one folder', async () => {
+    mockRefetch.mockResolvedValue(twoFolderDetection());
+    render(
+      <Harness initial={twoFolderLibrary()} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show C/ });
+
+    fireEvent.click(scanCheckbox('Show C')!);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Selected only' }));
+    expect(scanCheckbox('Show C')).toBeTruthy();
+    expect(scanCheckbox('Show A')).toBeNull();
+    expect(scanCheckbox('Show D')).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Selected only' }));
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'Filter shows by folder' }),
+      { target: { value: 'folder-2' } },
+    );
+    expect(scanCheckbox('Show C')).toBeTruthy();
+    expect(scanCheckbox('Show D')).toBeTruthy();
+    expect(scanCheckbox('Show A')).toBeNull();
+  });
+
+  it('caps long scan scopes in the summary', async () => {
+    mockRefetch.mockResolvedValue(twoFolderDetection());
+    render(<Harness initial={twoFolderLibrary()} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show A/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select all shown' }));
+    expect(screen.getByText(/\+1 more/)).toBeTruthy();
+  });
+
+  it('offers a way back when no shows match', async () => {
+    mockRefetch.mockResolvedValue(multiShowDetection());
+    render(<Harness onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Detect & match shows/ }));
+    await screen.findByRole('checkbox', { name: /Include Show A/ });
+
+    fireEvent.change(
+      screen.getByRole('textbox', {
+        name: 'Filter shows by name or series',
+      }),
+      { target: { value: 'zzz' } },
+    );
+    expect(
+      screen.getByText('No shows match the current search and filters.'),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(scanCheckbox('Show A')).toBeTruthy();
   });
 
   it('can treat the whole library folder as one show', async () => {

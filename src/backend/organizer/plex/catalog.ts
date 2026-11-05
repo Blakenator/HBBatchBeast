@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { PlexWatchState } from '../../../common/organizer/types';
 
@@ -387,6 +390,80 @@ export function readPlexCatalog(dbPath: string): PlexCatalog {
   } finally {
     db.close();
   }
+}
+
+export interface PlexCatalogLoad {
+  catalog?: PlexCatalog;
+  /** Why the database could not be read; absent when it was read. */
+  error?: Error;
+}
+
+/**
+ * Copies the database (and any WAL/SHM sidecars) into the app cache so it can
+ * be read without write access to Plex's data directory.
+ */
+function copyDatabase(dbPath: string, cacheDir: string): string | undefined {
+  const copyPath = path.join(
+    cacheDir,
+    `plex-catalog-${randomUUID()}.db`,
+  );
+  const copied: string[] = [];
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.copyFileSync(dbPath, copyPath);
+    copied.push(copyPath);
+    for (const suffix of ['-wal', '-shm']) {
+      const sidecar = `${dbPath}${suffix}`;
+      if (!fs.existsSync(sidecar)) continue;
+      fs.copyFileSync(sidecar, `${copyPath}${suffix}`);
+      copied.push(`${copyPath}${suffix}`);
+    }
+    return copyPath;
+  } catch {
+    for (const file of copied) {
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        // Best effort.
+      }
+    }
+    return undefined;
+  }
+}
+
+function removeCopy(copyPath: string): void {
+  for (const file of [copyPath, `${copyPath}-wal`, `${copyPath}-shm`]) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
+/**
+ * Reads the Plex catalog for a scan. Even a read-only connection needs to
+ * touch the WAL, which fails when Plex's data directory belongs to the Plex
+ * service account, so the database is copied into the cache and re-read there.
+ */
+export function loadPlexCatalog(dbPath: string, cacheDir: string): PlexCatalogLoad {
+  try {
+    return { catalog: readPlexCatalog(dbPath) };
+  } catch (error) {
+    const copyPath = copyDatabase(dbPath, cacheDir);
+    if (!copyPath) return { error: asError(error) };
+    try {
+      return { catalog: readPlexCatalog(copyPath) };
+    } catch (copyError) {
+      return { error: asError(copyError) };
+    } finally {
+      removeCopy(copyPath);
+    }
+  }
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 export function findEpisodeGuid(

@@ -1,4 +1,6 @@
+import { randomUUID } from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { move } from 'fs-extra';
 import type { AppPaths } from '../helpers/appPaths';
@@ -12,47 +14,62 @@ import type {
   ParsedMediaName,
   OrganizeScanProgress,
   OrganizeScanScope,
+  MediaType,
   PlexAssociation,
   TvdbEpisode,
   TvdbMovie,
+  TvdbSeriesRef,
 } from '../../common/organizer/types';
-import type { OrganizeSettings } from '../../common/organizer/settings';
+import type {
+  OrganizeMatchOverride,
+  OrganizeSettings,
+} from '../../common/organizer/settings';
 import {
   buildOrganizePlan,
   isCaseInsensitivePlatform,
   organizerComparisonKey,
   findShowMapping,
   overrideFor,
-  parseMediaFilename,
+  applyNameReplacements,
+  parseMediaFilenameWithReplacements,
   pickBestSeries,
   guessSeriesQuery,
   normalizeSubpath,
   rankMovies,
-  resolutionLabel,
+  resolutionBucket,
   resolveEpisode,
   resolveOrganizeSettings,
   resolveShowMapping,
+  sortEpisodes,
+  episodeRangeFor,
   type DetectedShow,
+  type PlannedFileInput,
 } from '../../common/organizer';
 import { expandHomePath, isPathInside } from '../../common/pathUtils';
 import { SIDECAR_EXTENSIONS, isMediaExtension } from '../../common/organizer/filename';
 import { TvdbClient } from './tvdb/client';
+import { mapWithConcurrency } from './concurrency';
 import {
-  readPlexCatalog,
+  loadPlexCatalog,
   type PlexCatalog,
   type PlexEpisodeFile,
   type PlexMovieFile,
 } from './plex/catalog';
-import {
-  plexPermissionRemediation,
-  plexServiceInstructions,
-} from './plex/environment';
+import { plexAccessState, plexRemediation } from './plex/remediation';
 import { detectPlexService } from './plex/service';
 import {
   completePendingHistoryTransfers,
   updatePlexFromPlan,
   type PlexUpdateResult,
 } from './plex/writer';
+
+function plexUser(): string {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return process.env.USER ?? process.env.USERPROFILE ?? 'your user';
+  }
+}
 
 const SKIPPED_DIRECTORIES = new Set([
   '@eaDir',
@@ -77,6 +94,61 @@ export interface OrganizePlanOptions {
   onProgress?: (progress: OrganizeScanProgress) => void;
   /** Restricts the scan to the selected show folders. */
   scope?: OrganizeScanScope[];
+  /** Reuses discovery/probe results from an earlier scan instead of walking. */
+  reuseScanId?: string;
+  /**
+   * Absolute folders to walk again for a partial rescan. Matching and planning
+   * are limited to the files found there, so the caller can splice the result
+   * into an existing plan.
+   */
+  rescanFolders?: string[];
+  /** Bounds parallel file probing/matching; defaults to the CPU-derived cap. */
+  matchConcurrency?: number;
+}
+
+interface OrganizeScanCache {
+  id: string;
+  libraryId: string;
+  mediaType: MediaType;
+  scopeKey: string;
+  files: OrganizeSourceFile[];
+  roots: string[];
+  warnings: string[];
+  probeCache: Map<string, ProbeDimensions>;
+  createdAt: number;
+}
+
+const scanCaches = new Map<string, OrganizeScanCache>();
+const MAX_SCAN_CACHES = 8;
+
+function defaultMatchConcurrency(): number {
+  const cpus = os.availableParallelism?.() ?? os.cpus().length;
+  return Math.max(2, Math.min(8, cpus));
+}
+
+function scopeKey(scope?: OrganizeScanScope[]): string {
+  return JSON.stringify(
+    (scope ?? [])
+      .map((entry) => ({
+        folderId: entry.folderId,
+        subpath: entry.subpath,
+      }))
+      .sort((left, right) =>
+        `${left.folderId}:${left.subpath}`.localeCompare(
+          `${right.folderId}:${right.subpath}`,
+        ),
+      ),
+  );
+}
+
+function rememberScanCache(cache: OrganizeScanCache): void {
+  scanCaches.set(cache.id, cache);
+  const entries = [...scanCaches.values()].sort(
+    (left, right) => left.createdAt - right.createdAt,
+  );
+  for (const stale of entries.slice(0, Math.max(0, entries.length - MAX_SCAN_CACHES))) {
+    scanCaches.delete(stale.id);
+  }
 }
 
 export interface OrganizeApplyOptions {
@@ -185,16 +257,47 @@ function findMovieAssociation(
   );
 }
 
-function findEpisodeAssociation(
+/**
+ * TVDB episodes for every episode a filename tag covers, so a multi-episode
+ * file can show and name all of its titles.
+ */
+function episodesForRange(
+  episodes: TvdbEpisode[],
+  primary: TvdbEpisode | undefined,
+  parsed: ParsedMediaName,
+): TvdbEpisode[] | undefined {
+  if (!primary) return undefined;
+  const range = episodeRangeFor(primary, parsed);
+  if (range.episodeNumbers.length < 2) return undefined;
+  const byNumber = new Map(
+    episodes
+      .filter((episode) => episode.seasonNumber === range.seasonNumber)
+      .map((episode) => [episode.episodeNumber, episode]),
+  );
+  const selected = range.episodeNumbers.flatMap((number) => {
+    const match = byNumber.get(number);
+    return match ? [match] : [];
+  });
+  return selected.length > 1 ? selected : undefined;
+}
+
+function findEpisodeAssociations(
   files: PlexEpisodeFile[],
   filePath: string,
   caseInsensitive: boolean,
-): PlexEpisodeFile | undefined {
-  return files.find(
-    (file) =>
-      organizerComparisonKey(file.file, { caseInsensitive }) ===
-      organizerComparisonKey(filePath, { caseInsensitive }),
-  );
+): PlexEpisodeFile[] {
+  const pathKey = organizerComparisonKey(filePath, { caseInsensitive });
+  return files
+    .filter(
+      (file) =>
+        organizerComparisonKey(file.file, { caseInsensitive }) === pathKey,
+    )
+    .sort(
+      (left, right) =>
+        left.seasonNumber - right.seasonNumber ||
+        left.episodeNumber - right.episodeNumber ||
+        left.mediaPartId - right.mediaPartId,
+    );
 }
 
 async function walkDirectory(
@@ -262,13 +365,42 @@ function attachSidecars(
   }
 }
 
+/**
+ * Maps absolute folders onto the library structure so a partial rescan walks
+ * exactly those folders (and anything nested inside them).
+ */
+function scopeForRescanFolders(
+  library: Library,
+  folders: string[],
+  home: string,
+): OrganizeScanScope[] | undefined {
+  const targets = folders
+    .map((folder) => folder.trim())
+    .filter(Boolean)
+    .map((folder) => path.resolve(expandHomePath(folder, home)));
+  if (targets.length === 0) return undefined;
+  const scope: OrganizeScanScope[] = [];
+  for (const folder of library.folders) {
+    const source = expandHomePath(folder.source, home).trim();
+    if (!source) continue;
+    const root = path.resolve(source);
+    for (const target of targets) {
+      if (!isPathInside(target, root)) continue;
+      scope.push({
+        folderId: folder.id,
+        subpath: normalizeSubpath(path.relative(root, target)),
+      });
+    }
+  }
+  return scope.length > 0 ? scope : undefined;
+}
+
 async function scanLibraryFiles(
   library: Library,
   home: string,
   onDiscovered?: (discovered: number, currentFile: string) => void,
   scope?: OrganizeScanScope[],
-): Promise<{ files: OrganizeSourceFile[]; warnings: string[]; roots: string[] }> {
-  const files: OrganizeSourceFile[] = [];
+): Promise<{ files: OrganizeSourceFile[]; warnings: string[]; roots: string[] }> {  const files: OrganizeSourceFile[] = [];
   const warnings: string[] = [];
   const roots: string[] = [];
   const selected = scope && scope.length > 0 ? scope : undefined;
@@ -382,9 +514,22 @@ export async function detectShowFolders(options: {
     options.library.mediaType,
   );
   const home = options.home ?? '';
-  const folders: DetectedShow[] = [];
+  const replacements = settings.nameReplacements ?? [];
   const warnings: string[] = [];
 
+  interface PendingShow {
+    folderId: string;
+    root: string;
+    subpath: string;
+    name: string;
+    mediaCount: number;
+    query: string;
+  }
+  type Entry =
+    | { kind: 'ready'; show: DetectedShow }
+    | { kind: 'pending'; show: PendingShow };
+
+  const entries: Entry[] = [];
   for (const folder of options.library.folders) {
     const source = expandHomePath(folder.source, home).trim();
     if (!source) continue;
@@ -398,14 +543,19 @@ export async function detectShowFolders(options: {
     // otherwise win, so detection reports the root only.
     const rootMapping = findShowMapping(settings, folder.id, '');
     if (rootMapping) {
-      folders.push({
-        folderId: folder.id,
-        root,
-        subpath: '',
-        name: path.basename(root),
-        mediaCount: await countMediaFiles(root, true),
-        series: rootMapping.series,
-        query: guessSeriesQuery(path.basename(root)).query,
+      entries.push({
+        kind: 'ready',
+        show: {
+          folderId: folder.id,
+          root,
+          subpath: '',
+          name: path.basename(root),
+          mediaCount: await countMediaFiles(root, true),
+          series: rootMapping.series,
+          query: guessSeriesQuery(
+            applyNameReplacements(path.basename(root), replacements),
+          ).query,
+        },
       });
       continue;
     }
@@ -415,13 +565,15 @@ export async function detectShowFolders(options: {
     if (direct > 0) {
       shows.push({ subpath: '', name: path.basename(root), mediaCount: direct });
     } else {
-      let entries: import('fs').Dirent[];
+      let directoryEntries: import('fs').Dirent[];
       try {
-        entries = await fs.promises.readdir(root, { withFileTypes: true });
+        directoryEntries = await fs.promises.readdir(root, {
+          withFileTypes: true,
+        });
       } catch {
-        entries = [];
+        directoryEntries = [];
       }
-      for (const entry of entries) {
+      for (const entry of directoryEntries) {
         if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) {
           continue;
         }
@@ -442,36 +594,104 @@ export async function detectShowFolders(options: {
     }
 
     for (const show of shows) {
-      const guess = guessSeriesQuery(show.name);
+      const guess = guessSeriesQuery(
+        applyNameReplacements(show.name, replacements),
+      );
       const existing = findShowMapping(settings, folder.id, show.subpath);
       if (existing) {
-        folders.push({
-          folderId: folder.id,
-          root,
-          ...show,
-          series: existing.series,
-          query: guess.query,
+        entries.push({
+          kind: 'ready',
+          show: {
+            folderId: folder.id,
+            root,
+            ...show,
+            series: existing.series,
+            query: guess.query,
+          },
         });
         continue;
       }
-      try {
-        const candidates = await options.tvdbClient.searchSeries(guess.query);
-        const match = pickBestSeries(candidates, guess);
-        folders.push({
+      entries.push({
+        kind: 'pending',
+        show: {
           folderId: folder.id,
           root,
           ...show,
           query: guess.query,
-          candidates: candidates.slice(0, 8),
-          ...(match ? { series: match.series, autoMatched: true } : {}),
-        });
-      } catch (error) {
-        warnings.push(
-          `${show.name}: TVDB search failed (${error instanceof Error ? error.message : String(error)}).`,
-        );
-        folders.push({ folderId: folder.id, root, ...show, query: guess.query });
+        },
+      });
+    }
+  }
+
+  const pending = entries.flatMap((entry) =>
+    entry.kind === 'pending' ? [entry.show] : [],
+  );
+  const candidatesByIndex: TvdbSeriesRef[][] = [];
+  const searchErrors = new Map<number, string>();
+  if (pending.length > 0) {
+    try {
+      const searched = await options.tvdbClient.searchMany(
+        pending.map((show) => show.query),
+      );
+      for (const [index, result] of searched.entries()) {
+        candidatesByIndex[index] = result.series;
+      }
+    } catch {
+      // One failed batch must not abort detection; retry each query on its own.
+      for (const [index, show] of pending.entries()) {
+        try {
+          candidatesByIndex[index] = await options.tvdbClient.searchSeries(
+            show.query,
+          );
+        } catch (error) {
+          searchErrors.set(
+            index,
+            error instanceof Error ? error.message : String(error),
+          );
+          candidatesByIndex[index] = [];
+        }
       }
     }
+  }
+
+  const folders: DetectedShow[] = [];
+  let pendingIndex = 0;
+  for (const entry of entries) {
+    if (entry.kind === 'ready') {
+      folders.push(entry.show);
+      continue;
+    }
+    const index = pendingIndex;
+    pendingIndex += 1;
+    const show = entry.show;
+    const error = searchErrors.get(index);
+    if (error) {
+      warnings.push(`${show.name}: TVDB search failed (${error}).`);
+      folders.push({
+        folderId: show.folderId,
+        root: show.root,
+        subpath: show.subpath,
+        name: show.name,
+        mediaCount: show.mediaCount,
+        query: show.query,
+      });
+      continue;
+    }
+    const candidates = candidatesByIndex[index] ?? [];
+    const guess = guessSeriesQuery(
+      applyNameReplacements(show.name, replacements),
+    );
+    const match = pickBestSeries(candidates, guess);
+    folders.push({
+      folderId: show.folderId,
+      root: show.root,
+      subpath: show.subpath,
+      name: show.name,
+      mediaCount: show.mediaCount,
+      query: show.query,
+      candidates: candidates.slice(0, 8),
+      ...(match ? { series: match.series, autoMatched: true } : {}),
+    });
   }
 
   return { folders, warnings };
@@ -498,9 +718,10 @@ function withProbeResolution(
   const width = dimensions.width ?? parsed.width;
   const height = dimensions.height ?? parsed.height;
   if (!width && !height) return parsed;
+  const bucket = resolutionBucket({ width, height });
   return {
     ...parsed,
-    ...(resolutionLabel(height) ? { resolution: resolutionLabel(height) } : {}),
+    ...(bucket ? { resolution: bucket } : {}),
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
   };
@@ -529,29 +750,49 @@ async function buildTvPlan(
   ) => void,
   onPlanning?: () => void,
 ): Promise<OrganizePlan> {
-  const planned = [];
+  const limit = options.matchConcurrency ?? defaultMatchConcurrency();
+  const replacements = settings.nameReplacements ?? [];
   const warnings: string[] = [];
-  const episodeCache = new Map<string, TvdbEpisode[]>();
+  const failureReasons = new Map<string, number>();
+  const episodeCache = new Map<string, Promise<TvdbEpisode[]>>();
+  const plannedSlots: (PlannedFileInput | undefined)[] = new Array(files.length);
   let plannedCount = 0;
+  let notInLibrary = 0;
   const fileDone = (file: OrganizeSourceFile, show?: string) => {
     plannedCount += 1;
     onPlanned?.(plannedCount, files.length, file.path, show);
   };
   const home = options.home ?? '';
-  for (const file of files) {
+
+  interface PreparedTvFile {
+    index: number;
+    file: OrganizeSourceFile;
+    parsedBase: ParsedMediaName;
+    override: OrganizeMatchOverride | undefined;
+    series: TvdbSeriesRef;
+    showSubpath: string;
+    showFolder?: string;
+  }
+
+  const prepared: PreparedTvFile[] = [];
+  for (const [index, file] of files.entries()) {
     const folder = options.library.folders.find((candidate) => {
       const source = expandHomePath(candidate.source, home).trim();
       return isPathInside(file.path, path.resolve(source));
     });
-    const parsedBase = parseMediaFilename(file.filename, file.relativePath);
+    const parsedBase = parseMediaFilenameWithReplacements(
+      file.filename,
+      file.relativePath,
+      replacements,
+    );
     if (!folder) {
-      warnings.push(`${file.path}: its source folder is not in this library.`);
-      planned.push({
+      notInLibrary += 1;
+      plannedSlots[index] = {
         ...file,
         parsed: parsedBase,
         confidence: 0,
         reason: 'Source folder is not in this library',
-      });
+      };
       fileDone(file);
       continue;
     }
@@ -563,18 +804,45 @@ async function buildTvPlan(
     const override = overrideFor(settings, file.path, caseInsensitive);
     const series = override?.series ?? mapping?.series;
     if (!series) {
-      warnings.push(
-        `${file.path}: match a TVDB series to its show folder before scanning.`,
-      );
-      planned.push({
+      plannedSlots[index] = {
         ...file,
         parsed: parsedBase,
         confidence: 0,
         reason: 'No TVDB series selected',
-      });
+      };
       fileDone(file);
       continue;
     }
+    const showSubpath = mapping?.subpath ?? '';
+    const showFolder = showSubpath
+      ? showSubpath.split(/[\\/]+/).filter(Boolean).pop()
+      : path.basename(folderRoot);
+    prepared.push({
+      index,
+      file,
+      parsedBase,
+      override,
+      series,
+      showSubpath,
+      ...(showFolder ? { showFolder } : {}),
+    });
+  }
+
+  const episodesFor = (series: TvdbSeriesRef): Promise<TvdbEpisode[]> => {
+    let pending = episodeCache.get(series.slug);
+    if (!pending) {
+      pending = client.loadEpisodes(series.slug).catch((error) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
+        return [] as TvdbEpisode[];
+      });
+      episodeCache.set(series.slug, pending);
+    }
+    return pending;
+  };
+
+  const planned = await mapWithConcurrency(prepared, limit, async (input) => {
+    const { file, parsedBase, override, series, showSubpath } = input;
     onFileStart?.(plannedCount, files.length, file.path, series.name);
     let parsed = parsedBase;
     try {
@@ -582,53 +850,68 @@ async function buildTvPlan(
     } catch {
       // Keep the filename-derived resolution when the file cannot be probed.
     }
-    let episodes = episodeCache.get(series.slug);
-    if (!episodes) {
-      try {
-        episodes = await client.loadEpisodes(series.slug);
-      } catch (error) {
-        warnings.push(
-          `${file.path}: TVDB lookup failed (${error instanceof Error ? error.message : String(error)}).`,
-        );
-        episodes = [];
-      }
-      episodeCache.set(series.slug, episodes);
-    }
-    const resolution: EpisodeResolution = override?.episode
+    const episodes = await episodesFor(series);
+    const manualEpisodes = override?.episodes?.length
+      ? sortEpisodes(override.episodes)
+      : undefined;
+    const manualEpisode = override?.episode ?? manualEpisodes?.[0];
+    const resolution: EpisodeResolution = manualEpisode
       ? {
-          episode: override.episode,
+          episode: manualEpisode,
           confidence: 1,
           reason: 'Manual match',
           conflict: false,
         }
       : resolveEpisode(parsed, episodes, { seriesName: series.name });
-    const plexFile = catalog
-      ? findEpisodeAssociation(catalog.episodes, file.path, caseInsensitive)
-      : undefined;
-    const showSubpath = mapping?.subpath ?? '';
-    const showFolder = showSubpath
-      ? showSubpath.split(/[\\/]+/).filter(Boolean).pop()
-      : path.basename(folderRoot);
-    planned.push({
-      ...file,
-      parsed: parsedWithProbe(parsed, plexFile ?? {}),
-      confidence: resolution.confidence,
-      reason: resolution.reason || 'No matching TVDB episode',
-      seriesName: series.name,
-      showSubpath,
-      ...(series.year ? { seriesYear: series.year } : {}),
-      ...(showFolder ? { showFolder } : {}),
-      ...(resolution.episode ? { episode: resolution.episode } : {}),
-      ...(resolution.summary ? { episodeMatch: resolution.summary } : {}),
-      ...(plexFile ? { plex: associationFromEpisode(plexFile) } : {}),
-    });
+    const rangeEpisodes =
+      manualEpisodes ??
+      episodesForRange(episodes, resolution.episode, parsed);
+    const plexFiles = catalog
+      ? findEpisodeAssociations(catalog.episodes, file.path, caseInsensitive)
+      : [];
+    const plexFile = plexFiles[0];
     fileDone(file, series.name);
+    return {
+      index: input.index,
+      planned: {
+        ...file,
+        parsed: parsedWithProbe(parsed, plexFile ?? {}),
+        confidence: resolution.confidence,
+        reason: resolution.reason || 'No matching TVDB episode',
+        seriesName: series.name,
+        showSubpath,
+        ...(series.year ? { seriesYear: series.year } : {}),
+        ...(input.showFolder ? { showFolder: input.showFolder } : {}),
+        ...(resolution.episode ? { episode: resolution.episode } : {}),
+        ...(rangeEpisodes ? { episodes: rangeEpisodes } : {}),
+        ...(resolution.summary ? { episodeMatch: resolution.summary } : {}),
+        ...(plexFile ? { plex: associationFromEpisode(plexFile) } : {}),
+        ...(plexFiles.length > 1
+          ? { plexEpisodes: plexFiles.map(associationFromEpisode) }
+          : {}),
+      } satisfies PlannedFileInput,
+    };
+  });
+
+  for (const entry of planned) {
+    plannedSlots[entry.index] = entry.planned;
   }
+  if (notInLibrary > 0) {
+    warnings.push(
+      `${notInLibrary} file(s) are not under a library source folder.`,
+    );
+  }
+  for (const [reason, count] of failureReasons) {
+    warnings.push(`${count} TVDB episode lookup(s) failed (${reason}).`);
+  }
+
   onPlanning?.();
   const plan = buildOrganizePlan({
     mediaType: 'tv',
     sourceRoots: roots,
-    files: planned,
+    files: plannedSlots.filter(
+      (entry): entry is PlannedFileInput => Boolean(entry),
+    ),
     rules: settings.namingRules,
     confidenceThreshold: settings.confidenceThreshold,
     renameMovieFolders: settings.renameMovieFolders,
@@ -667,80 +950,137 @@ async function buildMoviePlan(
   ) => void,
   onPlanning?: () => void,
 ): Promise<OrganizePlan> {
-  const planned = [];
+  const limit = options.matchConcurrency ?? defaultMatchConcurrency();
+  const replacements = settings.nameReplacements ?? [];
   const warnings: string[] = [];
-  const searchCache = new Map<string, TvdbMovie[]>();
+  const failureReasons = new Map<string, number>();
+  const moviesByQuery = new Map<string, TvdbMovie[]>();
   let plannedCount = 0;
   const fileDone = (file: OrganizeSourceFile) => {
     plannedCount += 1;
     onPlanned?.(plannedCount, files.length, file.path);
   };
-  for (const file of files) {
-    onFileStart?.(plannedCount, files.length, file.path);
-    let parsed = parseMediaFilename(file.filename, file.relativePath);
+
+  interface PreparedMovie {
+    file: OrganizeSourceFile;
+    parsed: ParsedMediaName;
+    plexFile?: PlexMovieFile;
+    override: OrganizeMatchOverride | undefined;
+    query: string;
+    needsSearch: boolean;
+  }
+
+  const prepared: PreparedMovie[] = files.map((file) => {
+    const parsed = parseMediaFilenameWithReplacements(
+      file.filename,
+      file.relativePath,
+      replacements,
+    );
     const plexFile = catalog
       ? findMovieAssociation(catalog.movies, file.path, caseInsensitive)
       : undefined;
     const override = overrideFor(settings, file.path, caseInsensitive);
+    const query = parsed.title || parsed.cleanTitle;
+    return {
+      file,
+      parsed,
+      ...(plexFile ? { plexFile } : {}),
+      override,
+      query,
+      needsSearch:
+        Boolean(query) &&
+        !override?.movie &&
+        !(settings.movieMetadata === 'plex' && plexFile),
+    };
+  });
+
+  // Batch unique title searches through the TVDB client's multi-query endpoint.
+  const queryByKey = new Map<string, string>();
+  for (const entry of prepared) {
+    if (!entry.needsSearch) continue;
+    const key = entry.query.toLowerCase();
+    if (!queryByKey.has(key)) queryByKey.set(key, entry.query);
+  }
+  if (queryByKey.size > 0) {
+    const entries = [...queryByKey.entries()];
+    try {
+      const searched = await client.searchMany(
+        entries.map(([, query]) => query),
+      );
+      for (const [index, [key]] of entries.entries()) {
+        moviesByQuery.set(key, searched[index]?.movies ?? []);
+      }
+    } catch {
+      await mapWithConcurrency(entries, limit, async ([key, query]) => {
+        try {
+          moviesByQuery.set(key, await client.searchMovies(query));
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          failureReasons.set(reason, (failureReasons.get(reason) ?? 0) + 1);
+          moviesByQuery.set(key, []);
+        }
+      });
+    }
+  }
+
+  const planned = await mapWithConcurrency(prepared, limit, async (input) => {
+    const { file, override } = input;
+    onFileStart?.(plannedCount, files.length, file.path);
+    let parsed = input.parsed;
     try {
       parsed = withProbeResolution(parsed, await probe(file.path));
     } catch {
       // Resolution is optional for matching; the template simply renders empty.
     }
     if (override?.movie) {
-      planned.push({
+      fileDone(file);
+      return {
         ...file,
-        parsed: parsedWithProbe(parsed, plexFile ?? {}),
+        parsed: parsedWithProbe(parsed, input.plexFile ?? {}),
         confidence: 1,
         reason: 'Manual match',
         movie: override.movie,
-        ...(plexFile ? { plex: associationFromMovie(plexFile) } : {}),
-      });
-      fileDone(file);
-      continue;
+        ...(input.plexFile
+          ? { plex: associationFromMovie(input.plexFile) }
+          : {}),
+      } satisfies PlannedFileInput;
     }
-    if (settings.movieMetadata === 'plex' && plexFile) {
-      planned.push({
+    if (settings.movieMetadata === 'plex' && input.plexFile) {
+      fileDone(file);
+      return {
         ...file,
-        parsed: parsedWithProbe(parsed, plexFile),
+        parsed: parsedWithProbe(parsed, input.plexFile),
         confidence: 1,
         reason: 'Plex metadata',
         movie: {
-          id: String(plexFile.metadataItemId),
+          id: String(input.plexFile.metadataItemId),
           slug: '',
-          title: plexFile.title,
-          ...(plexFile.year ? { year: plexFile.year } : {}),
+          title: input.plexFile.title,
+          ...(input.plexFile.year ? { year: input.plexFile.year } : {}),
         },
-        plex: associationFromMovie(plexFile),
-      });
-      fileDone(file);
-      continue;
+        plex: associationFromMovie(input.plexFile),
+      } satisfies PlannedFileInput;
     }
 
-    const query = parsed.title || parsed.cleanTitle;
-    let movies = searchCache.get(query.toLowerCase());
-    if (!movies) {
-      try {
-        movies = await client.searchMovies(query);
-        searchCache.set(query.toLowerCase(), movies);
-      } catch (error) {
-        warnings.push(
-          `${file.path}: TVDB movie lookup failed (${error instanceof Error ? error.message : String(error)}).`,
-        );
-        movies = [];
-      }
-    }
+    const movies = moviesByQuery.get(input.query.toLowerCase()) ?? [];
     const best = rankMovies(parsed, movies, 1)[0];
-    planned.push({
+    fileDone(file);
+    return {
       ...file,
-      parsed: parsedWithProbe(parsed, plexFile ?? {}),
+      parsed: parsedWithProbe(parsed, input.plexFile ?? {}),
       confidence: best?.confidence ?? 0,
       reason: best?.reason ?? 'No matching TVDB movie',
       ...(best?.movie ? { movie: best.movie } : {}),
-      ...(plexFile ? { plex: associationFromMovie(plexFile) } : {}),
-    });
-    fileDone(file);
+      ...(input.plexFile
+        ? { plex: associationFromMovie(input.plexFile) }
+        : {}),
+    } satisfies PlannedFileInput;
+  });
+
+  for (const [reason, count] of failureReasons) {
+    warnings.push(`${count} TVDB movie lookup(s) failed (${reason}).`);
   }
+
   onPlanning?.();
   const plan = buildOrganizePlan({
     mediaType: 'movies',
@@ -774,21 +1114,56 @@ export async function buildOrganizePlanForLibrary(
   const dbPath = options.plexDbPath
     ? path.resolve(expandHomePath(options.plexDbPath, home))
     : undefined;
-  const catalog =
-    options.catalog ??
-    (dbPath && fs.existsSync(dbPath) ? readPlexCatalog(dbPath) : undefined);
+  let catalog = options.catalog;
+  let catalogWarning: string | undefined;
+  if (!catalog && dbPath && fs.existsSync(dbPath)) {
+    const loaded = loadPlexCatalog(dbPath, options.appPaths.cacheDir);
+    catalog = loaded.catalog;
+    if (!catalog) {
+      catalogWarning = `Plex metadata was unavailable (${
+        loaded.error?.message ?? 'unknown error'
+      }); matching continued with file names and TVDB.`;
+    }
+  }
   const client =
     options.tvdbClient ??
     new TvdbClient({
       cacheDir: options.appPaths.cacheDir,
     });
-  const probe =
+  const cachedScan = options.reuseScanId
+    ? scanCaches.get(options.reuseScanId)
+    : undefined;
+  const isPartialRescan = Boolean(options.rescanFolders?.length);
+  const rescanScope = isPartialRescan
+    ? scopeForRescanFolders(options.library, options.rescanFolders ?? [], home)
+    : undefined;
+  const scope = isPartialRescan ? rescanScope : options.scope;
+  const reuse =
+    cachedScan &&
+    !isPartialRescan &&
+    cachedScan.libraryId === options.library.id &&
+    cachedScan.mediaType === options.library.mediaType &&
+    cachedScan.scopeKey === scopeKey(scope)
+      ? cachedScan
+      : undefined;
+  const probeCache = reuse?.probeCache ?? new Map<string, ProbeDimensions>();
+  const baseProbe =
     options.probeMedia ??
     (async (filePath: string) => {
       const info = await defaultProbeMedia(filePath);
       const video = info.streams.find((stream) => stream.type === 'video');
       return { width: video?.width, height: video?.height };
     });
+  const probe = async (filePath: string): Promise<ProbeDimensions> => {
+    const key = organizerComparisonKey(filePath, {
+      caseInsensitive: isCaseInsensitivePlatform(platform),
+    });
+    const cached = probeCache.get(key);
+    if (cached) return cached;
+    const dimensions = await baseProbe(filePath);
+    probeCache.set(key, dimensions);
+    return dimensions;
+  };
 
   const startedAt = Date.now();
   let lastSentAt = 0;
@@ -810,33 +1185,75 @@ export async function buildOrganizePlanForLibrary(
     options.onProgress({ ...rest, elapsedMs: now - startedAt });
   };
 
-  const { files, warnings, roots } = await scanLibraryFiles(
-    options.library,
-    home,
-    (discovered, currentFile) =>
-      report({
-        phase: 'discovering',
-        completed: 0,
-        total: 0,
-        discovered,
-        currentFile,
-      }),
-    options.scope,
-  );
-  report({
-    phase: 'discovering',
-    completed: 0,
-    total: 0,
-    discovered: files.length,
-    force: true,
-  });
-  report({
-    phase: 'matching',
-    completed: 0,
-    total: files.length,
-    discovered: files.length,
-    force: true,
-  });
+  let files: OrganizeSourceFile[];
+  let roots: string[];
+  let scanWarnings: string[];
+  let scanCache: OrganizeScanCache;
+  if (reuse) {
+    files = reuse.files;
+    roots = reuse.roots;
+    scanWarnings = reuse.warnings;
+    scanCache = reuse;
+    report({
+      phase: 'matching',
+      completed: 0,
+      total: files.length,
+      discovered: files.length,
+      force: true,
+    });
+  } else {
+    const discovered =
+      isPartialRescan && !scope
+        ? {
+            files: [] as OrganizeSourceFile[],
+            roots: [] as string[],
+            warnings: [
+              'None of the selected folders are part of this library.',
+            ],
+          }
+        : await scanLibraryFiles(
+            options.library,
+            home,
+            (discoveredCount, currentFile) =>
+              report({
+                phase: 'discovering',
+                completed: 0,
+                total: 0,
+                discovered: discoveredCount,
+                currentFile,
+              }),
+            scope,
+          );
+    files = discovered.files;
+    roots = discovered.roots;
+    scanWarnings = discovered.warnings;
+    report({
+      phase: 'discovering',
+      completed: 0,
+      total: 0,
+      discovered: files.length,
+      force: true,
+    });
+    report({
+      phase: 'matching',
+      completed: 0,
+      total: files.length,
+      discovered: files.length,
+      force: true,
+    });
+    scanCache = {
+      id: randomUUID(),
+      libraryId: options.library.id,
+      mediaType: options.library.mediaType,
+      scopeKey: scopeKey(scope),
+      files,
+      roots,
+      warnings: scanWarnings,
+      probeCache,
+      createdAt: Date.now(),
+    };
+    rememberScanCache(scanCache);
+  }
 
   const onFileStart = (
     completed: number,
@@ -922,8 +1339,12 @@ export async function buildOrganizePlanForLibrary(
           onPlanned,
           onPlanning,
         );
-  plan.warnings.unshift(...warnings);
+  plan.warnings.unshift(
+    ...(catalogWarning ? [catalogWarning] : []),
+    ...scanWarnings,
+  );
   plan.libraryId = options.library.id;
+  plan.scanId = scanCache.id;
   return plan;
 }
 
@@ -1004,29 +1425,58 @@ export async function applyOrganizePlan(
         'Choose a Plex database in Settings before enabling the Plex update.',
       );
     }
-    const status = await detectPlexService(platform);
-    if (status.running) {
-      throw new Error(
-        `Plex Media Server is running. ${plexServiceInstructions(platform)}`,
-      );
-    }
     const resolvedDb = path.resolve(
       expandHomePath(
         dbPath,
         process.env.HOME ?? process.env.USERPROFILE ?? '',
       ),
     );
-    try {
-      fs.accessSync(resolvedDb, fs.constants.W_OK);
-    } catch {
+    const exists = fs.existsSync(resolvedDb);
+    const user = plexUser();
+    const status = await detectPlexService(platform);
+    if (status.running) {
+      const remediation = plexRemediation({
+        platform,
+        dbPath: resolvedDb,
+        user,
+        exists,
+        writable: true,
+        running: true,
+        serviceKind: status.kind,
+      });
       throw new Error(
-        `HBBatchBeast cannot write the Plex database. ${plexPermissionRemediation(platform, resolvedDb)}`,
+        `Plex Media Server is running.\n\n${remediation.script}`,
+      );
+    }
+    const access = plexAccessState(platform, resolvedDb);
+    if (!access.writable) {
+      const remediation = plexRemediation({
+        platform,
+        dbPath: resolvedDb,
+        user,
+        exists,
+        writable: access.writable,
+        folderWritable: access.folderWritable,
+        running: false,
+        serviceKind: status.kind,
+      });
+      throw new Error(
+        `HBBatchBeast cannot write the Plex database.\n\n${remediation.script}`,
       );
     }
     const stillRunning = await detectPlexService(platform);
     if (stillRunning.running) {
+      const remediation = plexRemediation({
+        platform,
+        dbPath: resolvedDb,
+        user,
+        exists,
+        writable: true,
+        running: true,
+        serviceKind: stillRunning.kind,
+      });
       throw new Error(
-        `Plex Media Server started again. ${plexServiceInstructions(platform)}`,
+        `Plex Media Server started again.\n\n${remediation.script}`,
       );
     }
   }

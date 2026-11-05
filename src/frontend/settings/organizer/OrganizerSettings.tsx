@@ -2,12 +2,15 @@ import React from 'react';
 import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import {
+  createNameReplacementId,
   libraryOrganizeSettings,
   type AppConfigV2,
   type Library,
+  type OrganizeNameReplacement,
   type OrganizeSettings,
 } from '../../../common';
 import { NamingRulesEditor } from '../../organize/NamingRulesEditor';
+import { Button, IconButton } from '../../ui/Button';
 
 const Wrap = styled.div`
   display: grid;
@@ -35,6 +38,13 @@ const Muted = styled.p`
   font-size: var(--hb-font-xs);
 `;
 
+const ReplacementRow = styled.div`
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--hb-space-sm);
+  align-items: end;
+`;
+
 interface OrganizerSettingsProps {
   config: AppConfigV2;
   library: Library;
@@ -52,6 +62,15 @@ export const OrganizerSettings: React.FC<OrganizerSettingsProps> = ({
   const settings = libraryOrganizeSettings(library);
   const update = (patch: Partial<OrganizeSettings>) =>
     onChange({ ...library, organize: { ...settings, ...patch } });
+  const updateReplacement = (
+    id: string,
+    patch: Partial<OrganizeNameReplacement>,
+  ) =>
+    update({
+      nameReplacements: settings.nameReplacements.map((rule) =>
+        rule.id === id ? { ...rule, ...patch } : rule,
+      ),
+    });
   const isTv = library.mediaType === 'tv';
 
   return (
@@ -97,6 +116,68 @@ export const OrganizerSettings: React.FC<OrganizerSettingsProps> = ({
             update({ confidenceThreshold })
           }
         />
+      </Section>
+
+      <Section>
+        <SectionTitle>Name replacements</SectionTitle>
+        <Muted>
+          Replaced in file and show-folder names before matching. Matching is
+          case-insensitive; the file on disk is never changed.
+        </Muted>
+        {settings.nameReplacements.map((rule, index) => (
+          <ReplacementRow key={rule.id}>
+            <Form.Group>
+              <Form.Label>Find</Form.Label>
+              <Form.Control
+                value={rule.find}
+                aria-label={`Find text ${index + 1}`}
+                placeholder="e.g. _"
+                onChange={(event) =>
+                  updateReplacement(rule.id, { find: event.target.value })
+                }
+              />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label>Replace with</Form.Label>
+              <Form.Control
+                value={rule.replace}
+                aria-label={`Replace with ${index + 1}`}
+                placeholder="e.g. leave empty"
+                onChange={(event) =>
+                  updateReplacement(rule.id, { replace: event.target.value })
+                }
+              />
+            </Form.Group>
+            <IconButton
+              icon="delete"
+              label={`Remove replacement ${index + 1}`}
+              onClick={() =>
+                update({
+                  nameReplacements: settings.nameReplacements.filter(
+                    (candidate) => candidate.id !== rule.id,
+                  ),
+                })
+              }
+            />
+          </ReplacementRow>
+        ))}
+        <div>
+          <Button
+            compact
+            variant="secondary"
+            icon="add"
+            onClick={() =>
+              update({
+                nameReplacements: [
+                  ...settings.nameReplacements,
+                  { id: createNameReplacementId(), find: '', replace: '' },
+                ],
+              })
+            }
+          >
+            Add replacement
+          </Button>
+        </div>
       </Section>
 
       <Section>

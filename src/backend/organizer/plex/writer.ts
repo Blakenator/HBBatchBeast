@@ -6,8 +6,10 @@ import type {
   OrganizePlan,
   OrganizePlanItem,
   PlexAssociation,
+  TvdbEpisode,
 } from '../../../common/organizer/types';
 import { organizerComparisonKey } from '../../../common/organizer/paths';
+import { sortEpisodes } from '../../../common/organizer/filename';
 import {
   findEpisodeGuid,
   readPlexCatalog,
@@ -293,17 +295,29 @@ function writePending(
   fs.writeFileSync(pendingPath, JSON.stringify(pending, null, 2), 'utf8');
 }
 
+/** Every Plex episode row that points at the item's source file. */
+function associationsForItem(item: OrganizePlanItem): PlexAssociation[] {
+  if (item.plexEpisodes?.length) return item.plexEpisodes;
+  return item.plex ? [item.plex] : [];
+}
+
+/** Selected episodes, with `episode` as the fallback for older plan items. */
+function targetEpisodesForItem(item: OrganizePlanItem): TvdbEpisode[] {
+  if (item.episodes?.length) return sortEpisodes(item.episodes);
+  return item.episode ? [item.episode] : [];
+}
+
 function pendingForItem(
   item: OrganizePlanItem,
   association: PlexAssociation,
-): PendingHistoryTransfer | undefined {
-  if (!item.episode) return undefined;
+  episode: TvdbEpisode,
+): PendingHistoryTransfer {
   return {
     oldGuid: association.guid,
     newFilePath: item.targetPath,
     showTitle: association.showTitle ?? '',
-    seasonNumber: item.episode.seasonNumber,
-    episodeNumber: item.episode.episodeNumber,
+    seasonNumber: episode.seasonNumber,
+    episodeNumber: episode.episodeNumber,
     createdAt: new Date().toISOString(),
   };
 }
@@ -371,70 +385,106 @@ export function updatePlexFromPlan(
   try {
     db.exec('BEGIN IMMEDIATE');
     for (const item of plan.items) {
-      if (item.action !== 'rename' || !item.plex) continue;
-      const current = db
-        .prepare('SELECT file, directory_id AS directoryId FROM media_parts WHERE id = ?')
-        .get(item.plex.mediaPartId) as unknown as
-        | { file: string; directoryId: number | null }
-        | undefined;
-      if (!current) {
-        warnings.push(`Plex part ${item.plex.mediaPartId} no longer exists.`);
-        continue;
-      }
-      if (
-        key(current.file, options.caseInsensitive) !==
-        key(item.sourcePath, options.caseInsensitive)
-      ) {
-        warnings.push(
-          `Plex part ${item.plex.mediaPartId} moved on disk before the update; skipping ${item.sourcePath}.`,
-        );
-        continue;
-      }
+      if (item.action !== 'rename') continue;
+      const associations = associationsForItem(item);
+      if (associations.length === 0) continue;
+      const targets =
+        plan.mediaType === 'tv' ? targetEpisodesForItem(item) : [];
+      const seenParts = new Set<number>();
+      let queuedForItem = false;
 
-      const directoryId = planDirectoryMove(
-        item,
-        item.plex,
-        plan.mediaType,
-        db,
-        options.caseInsensitive,
-      );
-      db.prepare(
-        `UPDATE media_parts
-         SET file = ?, directory_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-      ).run(item.targetPath, directoryId ?? current.directoryId ?? null, item.plex.mediaPartId);
-      result.updated += 1;
-      updateSidecarStreams(db, item, item.plex, options.caseInsensitive, warnings);
+      for (const [index, association] of associations.entries()) {
+        const current = db
+          .prepare('SELECT file, directory_id AS directoryId FROM media_parts WHERE id = ?')
+          .get(association.mediaPartId) as unknown as
+          | { file: string; directoryId: number | null }
+          | undefined;
+        if (!current) {
+          warnings.push(
+            `Plex part ${association.mediaPartId} no longer exists.`,
+          );
+          continue;
+        }
+        if (
+          key(current.file, options.caseInsensitive) !==
+          key(item.sourcePath, options.caseInsensitive)
+        ) {
+          warnings.push(
+            `Plex part ${association.mediaPartId} moved on disk before the update; skipping ${item.sourcePath}.`,
+          );
+          continue;
+        }
 
-      if (
-        plan.mediaType === 'tv' &&
-        item.episode &&
-        item.plex.showTitle &&
-        (item.plex.seasonNumber !== item.episode.seasonNumber ||
-          item.plex.episodeNumber !== item.episode.episodeNumber)
-      ) {
+        if (!seenParts.has(association.mediaPartId)) {
+          seenParts.add(association.mediaPartId);
+          const directoryId = planDirectoryMove(
+            item,
+            association,
+            plan.mediaType,
+            db,
+            options.caseInsensitive,
+          );
+          db.prepare(
+            `UPDATE media_parts
+             SET file = ?, directory_id = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+          ).run(
+            item.targetPath,
+            directoryId ?? current.directoryId ?? null,
+            association.mediaPartId,
+          );
+          result.updated += 1;
+          updateSidecarStreams(
+            db,
+            item,
+            association,
+            options.caseInsensitive,
+            warnings,
+          );
+        }
+
+        if (plan.mediaType !== 'tv' || !association.showTitle) continue;
+        const target =
+          targets[index] ?? targets[targets.length - 1];
+        if (!target) continue;
+        if (
+          association.seasonNumber === target.seasonNumber &&
+          association.episodeNumber === target.episodeNumber
+        ) {
+          continue;
+        }
+
         const newGuid = findEpisodeGuid(
           catalog,
-          item.plex.showTitle,
-          item.episode.seasonNumber,
-          item.episode.episodeNumber,
+          association.showTitle,
+          target.seasonNumber,
+          target.episodeNumber,
         );
-        if (newGuid && newGuid !== item.plex.guid) {
-          result.historyMoved += transferWatchState(db, item.plex.guid, newGuid);
-        } else {
-          const transfer = pendingForItem(item, item.plex);
-          if (transfer) {
-            const duplicate = pending.some(
-              (entry) =>
-                entry.oldGuid === transfer.oldGuid &&
-                entry.newFilePath === transfer.newFilePath,
-            );
-            if (!duplicate) pending.push(transfer);
-            warnings.push(
-              `Watch history for ${path.basename(item.targetPath)} will move after Plex rescans the new file.`,
-            );
-          }
+        if (newGuid && newGuid !== association.guid) {
+          result.historyMoved += transferWatchState(
+            db,
+            association.guid,
+            newGuid,
+          );
+          continue;
         }
+
+        const transfer = pendingForItem(item, association, target);
+        const duplicate = pending.some(
+          (entry) =>
+            entry.oldGuid === transfer.oldGuid &&
+            entry.newFilePath === transfer.newFilePath &&
+            entry.seasonNumber === transfer.seasonNumber &&
+            entry.episodeNumber === transfer.episodeNumber,
+        );
+        if (!duplicate) pending.push(transfer);
+        queuedForItem = true;
+      }
+
+      if (queuedForItem) {
+        warnings.push(
+          `Watch history for ${path.basename(item.targetPath)} will move after Plex rescans the new file.`,
+        );
       }
     }
     db.exec('COMMIT');
@@ -451,6 +501,7 @@ export function updatePlexFromPlan(
 
   writePending(options.pendingPath, pending);
   result.pendingTransfers = pending.length;
+  result.warnings = [...new Set(result.warnings)];
   return result;
 }
 

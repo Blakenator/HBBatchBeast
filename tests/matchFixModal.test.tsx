@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import {
   createOrganizeSettings,
   emptyLibrary,
@@ -93,6 +99,7 @@ describe('MatchFixModal', () => {
     expect(onSave).toHaveBeenCalledWith({
       series: expect.objectContaining({ slug: 'blue-planet-ii' }),
       episode: expect.objectContaining({ tag: 'S01E02' }),
+      episodes: [expect.objectContaining({ tag: 'S01E02' })],
     });
   });
 
@@ -332,8 +339,218 @@ describe('MatchFixModal', () => {
     // The row would be conflict-capped at 80%; the modal must agree instead of
     // showing the candidate's uncapped base confidence.
     expect(
-      await screen.findByRole('button', { name: 'S01E05 conflict 80%' }),
+      await screen.findByRole('button', { name: 'S01E05 mixed signals 80%' }),
     ).toBeTruthy();
+  });
+
+  it('saves a consecutive multi-episode range from the switch', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+        { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+        { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+      ],
+    });
+    const onSave = renderModal();
+    await screen.findByText('The Deep');
+
+    fireEvent.click(
+      screen.getByLabelText('This file contains multiple episodes'),
+    );
+    fireEvent.click(screen.getByText('The Deep'));
+    fireEvent.click(screen.getByText('Coral Reefs'));
+
+    expect(
+      screen.getByText('S01E02-E03 - The Deep, Coral Reefs.mkv'),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save match' }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        episode: expect.objectContaining({ tag: 'S01E02' }),
+        episodes: [
+          expect.objectContaining({ tag: 'S01E02' }),
+          expect.objectContaining({ tag: 'S01E03' }),
+        ],
+      }),
+    );
+  });
+
+  it('auto-selects a range already named by the filename', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S02E03', name: 'Coral Reefs', seasonNumber: 2, episodeNumber: 3 },
+        { tag: 'S02E04', name: 'Big Blue', seasonNumber: 2, episodeNumber: 4 },
+      ],
+    });
+    const lib = library();
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Show',
+            cleanTitle: 'show',
+            seasonNumber: 2,
+            episodeNumber: 3,
+            episodeNumbers: [3, 4],
+          },
+          episode: {
+            tag: 'S02E03',
+            name: 'Coral Reefs',
+            seasonNumber: 2,
+            episodeNumber: 3,
+          },
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText('S02E03-E04 - Coral Reefs, Big Blue.mkv'),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        (
+          screen.getByRole('checkbox', {
+            name: 'Include Coral Reefs',
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(true);
+      expect(
+        (
+          screen.getByRole('checkbox', {
+            name: 'Include Big Blue',
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(true);
+    });
+  });
+
+  it('keeps an explicitly saved single episode even when the name has a range', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S02E03', name: 'Coral Reefs', seasonNumber: 2, episodeNumber: 3 },
+        { tag: 'S02E04', name: 'Big Blue', seasonNumber: 2, episodeNumber: 4 },
+      ],
+    });
+    const lib = library();
+    const single = {
+      tag: 'S02E03',
+      name: 'Coral Reefs',
+      seasonNumber: 2,
+      episodeNumber: 3,
+    };
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Show',
+            cleanTitle: 'show',
+            seasonNumber: 2,
+            episodeNumber: 3,
+            episodeNumbers: [3, 4],
+          },
+          episode: single,
+          episodes: [single],
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(
+      (
+        screen.getByLabelText(
+          'This file contains multiple episodes',
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    expect(await screen.findByText('S02E03 - Coral Reefs.mkv')).toBeTruthy();
+  });
+
+  it('auto-selects spaced and shorthand ranges from the filename', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+        { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+      ],
+    });
+    const lib = library();
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Show',
+            cleanTitle: 'show',
+            seasonNumber: 1,
+            episodeNumber: 2,
+            episodeNumbers: [2, 3],
+          },
+          episode: {
+            tag: 'S01E02',
+            name: 'The Deep',
+            seasonNumber: 1,
+            episodeNumber: 2,
+          },
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText('S01E02-E03 - The Deep, Coral Reefs.mkv'),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        (
+          screen.getByRole('checkbox', {
+            name: 'Include Coral Reefs',
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(true);
+    });
+  });
+
+  it('rejects a gap in a multi-episode selection', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+        { tag: 'S01E04', name: 'Big Blue', seasonNumber: 1, episodeNumber: 4 },
+      ],
+    });
+    renderModal();
+    await screen.findByText('The Deep');
+
+    fireEvent.click(
+      screen.getByLabelText('This file contains multiple episodes'),
+    );
+    fireEvent.click(screen.getByText('The Deep'));
+    fireEvent.click(screen.getByText('Big Blue'));
+
+    expect(
+      screen.getByRole('alert').textContent,
+    ).toContain('Select consecutive episodes from the same season.');
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: 'Include Big Blue',
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
   });
 
   it('clears the fix with Use best guess', async () => {

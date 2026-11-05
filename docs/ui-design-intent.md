@@ -137,15 +137,23 @@ scroll to the field.
 - Organize is a peer door on the home screen; choosing it opens the organize library picker. Every
   library stores its **media type** (Movies/TV) and is available from both pickers; organizer defaults
   (metadata source, naming rules, confidence, sidecars, collisions, show matches) are remembered per
-  library, while the Plex database is one machine-wide setting under Settings → Global.
+  library, while the Plex database is one machine-wide setting under Settings → Global. The library
+  also stores an ordered, case-insensitive find/replace list applied to file and show-folder names
+  before matching; replacements never change paths on disk.
 - A TV library is a container of shows. The first step detects the show folders under each source
   root and matches each one to a TVDB series: automatic from the folder name, visible with cover art,
   changeable with a search and clearable. Opening a search pre-fills the folder-derived query and
   shows the automatic attempt's results. Matches are persisted as `{folder, subfolder, series}`, and
   a folder can instead be marked **Whole folder is one show** for single-show folders and one-off
-  renames. The **Scan only** checkbox on each show scopes the run to any subset of shows (stated
-  again in Review); the scope only affects the next scans, never the saved mapping. Closing a row hides its search again;
-  the expand control carries its state and text.
+  renames. The show list has a toolbar with search across show, series and folder names, match-status
+  pills (**All**, **Needs matching**, **Auto-matched**, **Matched**), a folder filter when the library
+  has several source folders, and a **Selected only** filter. Each row starts with a scan checkbox;
+  folder headers have a tri-state **Select all shown** checkbox, and the toolbar adds **Select all
+  shown** (the rows visible under the current filters) and **Clear selection**. A compact summary states
+  `Scanning N of M shows` with the first few names and `+N more`, and also clears back to the whole
+  library. The scope only affects the next scans, never the saved mapping; selected shows stay
+  selected while filters change, with hidden selections counted. Closing a row hides its search
+  again; the expand control carries its state and text.
 - A three-step flow: **What to organize → Naming rules → Review and apply**. A compact stepper is the
   only persistent chrome; one step's panel is mounted at a time, so long scan results never compete
   with settings. Steps can be revisited without losing state, and Back/Next mirror the reading order.
@@ -156,24 +164,59 @@ scroll to the field.
   lists both forms. The default TV folder template is `{show}/Season {season:02}`; the `{show}`
   segment is dropped when the source folder is itself the show, so single-show libraries stay flat.
 - The review table works like the conversion queue: sortable columns, resizable/reorderable/hideable
-  columns with the layout persisted, virtualized rows, status chips and search. Paths are never shown
-  as long strings: the table uses structured `Show`, `Season`, `Folder`, `Current name` and `New name`
-  columns (TV-only columns collapse for movies). The `Folder` column renders the folder before → after
-  when a rename moves the file, and a word-level diff with a tinted background highlights the changed
-  folder and name tokens.
-  The table scrolls inside its panel so the page never grows wider; full paths stay in tooltips.
-- Each row has a `…` menu with **Fix match** and **Open folder**. The Fix match dialog prefills from
+  columns with the layout persisted, virtualized rows, status chips and search. A **Flat list / Show
+  tree** toggle groups rows under the matched show (movies group by title); groups start collapsed
+  with file/rename/skip/conflict counts, expand individually or all at once, and auto-expand for an
+  active filter or search. Each group header has a select-all checkbox. Paths are never shown as long strings: the table uses structured `Show`,
+  `Season`, `Folder`, `Current name` and `New name` columns (TV-only columns collapse for movies).
+  The `Folder` column renders the folder before → after when a rename moves the file, and a word-level
+  diff with a tinted background highlights the changed folder and name tokens. The table scrolls
+  inside its panel so the page never grows wider; full paths stay in tooltips.
+- The review is session state, not a one-shot scan result: leaving for Settings/Home/Convert and
+  returning restores the plan, step and selection from memory. Naming/threshold/sidecar/collision
+  changes re-plan locally from cached matches; show-match or per-file match changes rematch from the
+  cached discovery result in the backend without walking folders again. Only folder/media-type
+  changes invalidate the session.
+- Each row has a one-click **Skip** action and a `…` menu with **Fix match**, **Approve match**,
+  **Rename folder only / Rename file too**, **Skip file / Include file** and **Open folder**. Row actions only change that row; bulk behaviour
+  lives in the selection toolbar. Manual skips apply to the current review only, release the row's
+  target so another row can claim it, and can be reverted with **Include file**. **Approve match**
+  saves the row's current match the same way the Fix match dialog does (an override that survives
+  rescans) and keeps it a rename even below the confidence threshold, including across later replans
+  and row actions. **Rename folder only** keeps the source file name and applies just the rendered
+  folder (including subtitle sidecars), and toggles back to the template name with **Rename file
+  too**. Rows of every action type
+  are selectable; shift-click extends selection across the visible rows, and a selection exposes bulk
+  **Rescan**, **Use best guess**, **Approve** and **Skip** actions, plus **Select all shown** and
+  **Clear selection**. **Rescan** walks the parent folders of the selected rows again (picking up files that
+  were added, removed or renamed on disk) and splices the re-matched rows back into the review
+  without touching the rest of the plan. The Fix
+  match dialog prefills from
   the parsed title, offers a **Use file name** shortcut that fills the episode filter for TV (the
   filter recognises the `S01E02` tag inside the name) or the movie search, marks the chosen result
-  with a prominent checkmark, and previews the resulting filename before saving. Each result is a
+  with a prominent checkmark, and previews the resulting filename before saving. For a file that
+  covers more than one episode, **This file contains multiple episodes** turns the episode cards
+  into checkboxes: the selection must be consecutive within one season, a filename range
+  (`S01E02-E03`) preselects itself, and the preview shows Plex's first/last tag with the episode
+  titles joined by a comma. Each result is a
   collapsible card: clicking the card selects the match, while a chevron expands the full description
   without changing the selection. The override is persisted per file and re-plans only that row;
-  **Use best guess** removes it.
+  **Use best guess** clears it, re-includes the file if it was skipped, and rematches from the cached
+  scan; the bulk action applies the same behavior to every selected file.
 - The review table is the safety surface: current path, new path, a two-faced match badge
-  (`strong`/`weak`/`conflict` plus percentage) with a weighted evidence popover, action and Plex view
-  count, with filters for changes, skips, conflicts, low confidence and match review. Conflicts are
-  visibly blocked, not auto-resolved; identical file/folder paths are skipped automatically, and
-  specials render as `S00`/`Season 00`.
+  (`strong`/`weak`/`mixed signals` plus percentage) with a weighted evidence popover, action and Plex view
+  count. Quick filters cover changes, skips, conflicts, low confidence and match review, and a
+  confidence range (min/max %) narrows rows by their match score. **Conflicts** includes target path
+  collisions and mixed-signal matches that are still above the confidence threshold, so every row the
+  banner counts is reachable from the filter; a skipped or below-threshold mixed signal is already
+  resolved and is not counted. Conflicts are visibly blocked, not auto-resolved; identical
+  file/folder paths are skipped automatically, and specials render as `S00`/`Season 00`. Warning
+  banners are compact category summaries, not a line per file; row-level detail lives in the filtered
+  table and badge popovers.
+- In the show tree each group is a normal-flow section, so its real header row is CSS-sticky under
+  the column header while the show's files scroll — the checkbox, collapse toggle and stats stay
+  usable without a lagging copy. The row also sticks to the left edge of a horizontally scrolling
+  table, and the stats stay at its right edge, so the whole header remains interactive.
 - The `Why` column is merged into Match: the full reason lives in the badge popover.
 - Scanning streams progress from the backend: discovery reports how many files have been found, and
   matching reports a real percentage (`completed / total`), the current file and show, elapsed time and
@@ -181,6 +224,9 @@ scroll to the field.
   when the plan is complete.
 - Apply is a two-step confirmation that states the move count, whether Plex will change, and whether
   watch history will move. Plex-running offers stop / skip Plex / cancel — never silent elevation.
+  The result banner turns red when any move fails and lists each failed file with its error message
+  (capped with an “and N more…” line); failed rows stay in the review, still selected, so they can be
+  retried or skipped. Plex warnings from the same apply are listed there too.
 - One-off organize is a peer of one-off conversion: an unsaved session (blank or seeded from a library
   row’s overflow menu) that can be saved as a library afterwards. TVDB search results show cover art,
   a spinner, an inline error with retry and an empty state.
@@ -219,6 +265,9 @@ must act on. Errors are never toast-only.
 - **Colour:** neutral surfaces; one accent for primary actions; semantic success/warning/error used only for
   state, never decoration. Light and dark from the same tokens.
 - **Density:** comfortable default; table rows are compact. No nesting of cards inside cards.
+- **Full-width pages:** pages fill the window instead of centering in a fixed column; only individual
+  controls (inputs, badges, popovers) keep a maximum width. Review tables use the extra room for more
+  columns instead of growing a page-level scrollbar.
 - **Motion:** ≤150ms for state transitions; respect `prefers-reduced-motion`; no spinners where a determinate
   bar is possible.
 - **Iconography:** one family — FontAwesome Free (solid), imported as individual SVG icons through

@@ -37,6 +37,47 @@ function listBackups(
   }
 }
 
+/** Walks `inner`/`cause` so a logged failure keeps its most specific message. */
+function errorDetail(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (!current || typeof current !== 'object' || seen.has(current)) break;
+    seen.add(current);
+    const { message, inner, cause } = current as {
+      message?: unknown;
+      inner?: unknown;
+      cause?: unknown;
+    };
+    if (typeof message === 'string' && message.trim() && message !== 'error') {
+      parts.push(message.trim());
+    }
+    current = inner ?? cause;
+  }
+  if (parts.length === 0) parts.push(String(error));
+  const stack =
+    error instanceof Error && error.stack ? `\n${error.stack}` : '';
+  return `${parts[parts.length - 1]}${stack}`;
+}
+
+/**
+ * Appends an operation failure to the log the error toasts point users at.
+ * Never throws: logging must not hide the original error.
+ */
+export function logOrganizeFailure(paths: AppPaths, error: unknown): void {
+  try {
+    fs.mkdirSync(paths.logDir, { recursive: true });
+    fs.appendFileSync(
+      path.join(paths.logDir, 'OrganizeLog.txt'),
+      `[${new Date().toISOString()}] Organize scan failed: ${errorDetail(error)}\n`,
+      'utf8',
+    );
+  } catch {
+    // Diagnostics logging is best effort.
+  }
+}
+
 export function collectDiagnostics(paths: AppPaths): DiagnosticsInfo {
   const logs: DiagnosticsInfo['logs'] = [];
   if (fs.existsSync(paths.logDir)) {

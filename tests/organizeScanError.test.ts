@@ -11,7 +11,28 @@ describe('organize scan error messages', () => {
           inner: { message: 'no such column: mti.originally_available_at' },
         },
       }),
-    ).toBe('Organize scan failed');
+    ).toBe('no such column: mti.originally_available_at');
+  });
+
+  it('prefers the inner message when the wrapper is only generic', () => {
+    expect(
+      describeOrganizeScanError({
+        message: 'error',
+        inner: {
+          message: 'Organize scan failed',
+          inner: { message: 'attempt to write a readonly database' },
+        },
+      }),
+    ).toBe('attempt to write a readonly database');
+  });
+
+  it('follows a cause chain', () => {
+    expect(
+      describeOrganizeScanError({
+        message: 'Organize scan failed',
+        cause: new Error('Plex database not found'),
+      }),
+    ).toBe('Plex database not found');
   });
 
   it('skips empty messages in the chain', () => {

@@ -3,6 +3,7 @@ import {
   buildOrganizePlan,
   createNamingRule,
   organizerIsPathInside,
+  type EpisodeMatchSummary,
   type OrganizeSourceFile,
   type ParsedMediaName,
 } from '../src/common/organizer';
@@ -162,6 +163,37 @@ describe('multi-show TV plans', () => {
     // The second file is renamed into the same show folder, so the first
     // target is taken and the second is reported as a conflict.
     expect(plan.items.map((item) => item.action)).toContain('conflict');
+    expect(plan.items[1].reason).toBe(
+      'Target name is already planned for S01E01.mkv',
+    );
+  });
+
+  it('distinguishes a target that already exists on disk', () => {
+    const source = file(
+      '/media/tv',
+      'Blue Planet II/Season 01/S01E01.mkv',
+      'Blue Planet II',
+      'Blue Planet II',
+    );
+    const plan = buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/media/tv'],
+      rules,
+      confidenceThreshold: 0,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+      files: [source],
+      // A stray file already occupies the planned target.
+      existingPaths: [
+        source.path,
+        '/media/tv/Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
+      ],
+    });
+
+    expect(plan.items[0].action).toBe('conflict');
+    expect(plan.items[0].reason).toBe('Target already exists');
   });
 });
 
@@ -172,5 +204,64 @@ describe('show path containment', () => {
       organizerIsPathInside('\\\\server\\share\\Show\\ep.mkv', '\\\\server\\share'),
     ).toBe(true);
     expect(organizerIsPathInside('/media/tv2/ep.mkv', '/media/tv')).toBe(false);
+  });
+});
+
+describe('mixed signal warnings', () => {
+  const episodeMatch: EpisodeMatchSummary = {
+    tag: 'correct',
+    name: 'incorrect',
+    nameSimilarity: 0.3,
+    nameText: 'wrong title',
+    airDateMatch: false,
+    components: [],
+    coverage: 0.9,
+    rawScore: 0.5,
+    confidenceBeforeCap: 0.85,
+    conflict: true,
+    conflictKind: 'tag-vs-name',
+    conflictReason: 'Tag and filename title disagree.',
+  };
+
+  function planFor(confidence: number, threshold: number) {
+    const source = {
+      ...file(
+        '/media/tv',
+        'Blue Planet II/S01E01.mkv',
+        'Blue Planet II',
+        'Blue Planet II',
+      ),
+      confidence,
+      episodeMatch,
+    };
+    return buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/media/tv'],
+      rules,
+      confidenceThreshold: threshold,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+      files: [source],
+    });
+  }
+
+  it('warns while a conflicting match will still be renamed', () => {
+    const plan = planFor(0.85, 0.6);
+    expect(plan.items[0].action).toBe('rename');
+    expect(plan.warnings).toContain(
+      '1 file(s) have conflicting tag/title evidence; review them before applying.',
+    );
+  });
+
+  it('stops warning once the conflicting row is skipped by the threshold', () => {
+    const plan = planFor(0.85, 0.9);
+    expect(plan.items[0].action).toBe('skip');
+    expect(
+      plan.warnings.some((warning) =>
+        warning.includes('conflicting tag/title evidence'),
+      ),
+    ).toBe(false);
   });
 });

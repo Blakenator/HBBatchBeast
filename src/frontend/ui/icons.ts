@@ -102,6 +102,7 @@ export const appIcons = {
   warning: faTriangleExclamation,
   neutral: faMinus,
   refresh: faArrowsRotate,
+  fix: faWandMagicSparkles,
   browse: faFolderOpen,
   openExternal: faArrowUpRightFromSquare,
   arrowRight: faArrowRight,

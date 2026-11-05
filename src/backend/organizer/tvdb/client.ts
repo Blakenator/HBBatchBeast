@@ -17,8 +17,12 @@ const SEARCH_URL = 'https://api4.thetvdb.com/web/search/queries';
 const SERIES_PAGE = 'https://www.thetvdb.com/series';
 const USER_AGENT =
   'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0';
-const SEARCH_TTL_MS = 6 * 60 * 60 * 1000;
+const SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const EPISODE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SEARCH_BATCH_SIZE = 8;
+const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CACHE_MAX_FILES = 6000;
+const CACHE_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface CacheEnvelope<T> {
   fetchedAt: number;
@@ -114,6 +118,20 @@ function movieFromHit(hit: SearchHit): TvdbMovie | undefined {
   };
 }
 
+function resultFromHits(hits: SearchHit[]): TvdbSearchResult {
+  const series = hits
+    .map(seriesFromHit)
+    .filter((item): item is TvdbSeriesRef => Boolean(item));
+  const movies = hits
+    .map(movieFromHit)
+    .filter((item): item is TvdbMovie => Boolean(item));
+  return { series, movies };
+}
+
+function emptySearchResult(): TvdbSearchResult {
+  return { series: [], movies: [] };
+}
+
 function parseEpisodeTag(
   tag: string,
 ): { seasonNumber: number; episodeNumber: number } | undefined {
@@ -185,6 +203,10 @@ export class TvdbClient {
   private readonly searchTtlMs: number;
   private readonly episodeTtlMs: number;
   private lastRequestAt = 0;
+  private rateGate: Promise<void> = Promise.resolve();
+  private readonly searchRequests = new Map<string, Promise<TvdbSearchResult>>();
+  private readonly episodeRequests = new Map<string, Promise<TvdbEpisode[]>>();
+  private lastPruneAt = 0;
 
   constructor(options: TvdbClientOptions) {
     this.cacheDir = options.cacheDir;
@@ -224,19 +246,68 @@ export class TvdbClient {
         value,
       };
       fs.writeFileSync(file, JSON.stringify(envelope), 'utf8');
+      this.pruneCache();
     } catch {
       // A cache failure must never block a lookup.
     }
   }
 
-  private async waitForRateLimit(): Promise<void> {
-    const elapsed = this.now() - this.lastRequestAt;
-    if (elapsed < this.minIntervalMs) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, this.minIntervalMs - elapsed),
-      );
+  /** Drops stale cache files and caps the cache size; runs at most daily. */
+  private pruneCache(): void {
+    const now = this.now();
+    if (now - this.lastPruneAt < CACHE_PRUNE_INTERVAL_MS) return;
+    this.lastPruneAt = now;
+    const directory = path.join(this.cacheDir, 'tvdb');
+    try {
+      const entries = fs.readdirSync(directory, { withFileTypes: true });
+      const files = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => {
+          const file = path.join(directory, entry.name);
+          try {
+            const stat = fs.statSync(file);
+            return { file, modified: stat.mtimeMs, size: stat.size };
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((entry): entry is { file: string; modified: number; size: number } =>
+          Boolean(entry),
+        )
+        .sort((left, right) => left.modified - right.modified);
+      const excess = Math.max(0, files.length - CACHE_MAX_FILES);
+      for (const [index, entry] of files.entries()) {
+        if (index < excess || now - entry.modified > CACHE_MAX_AGE_MS) {
+          try {
+            fs.rmSync(entry.file, { force: true });
+          } catch {
+            // Pruning is best-effort.
+          }
+        }
+      }
+    } catch {
+      // A missing cache directory is fine.
     }
-    this.lastRequestAt = this.now();
+  }
+
+  private async waitForRateLimit(): Promise<void> {
+    const previous = this.rateGate;
+    let release!: () => void;
+    this.rateGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      const elapsed = this.now() - this.lastRequestAt;
+      if (elapsed < this.minIntervalMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.minIntervalMs - elapsed),
+        );
+      }
+      this.lastRequestAt = this.now();
+    } finally {
+      release();
+    }
   }
 
   private async request(
@@ -264,13 +335,10 @@ export class TvdbClient {
     return response;
   }
 
-  async search(query: string): Promise<TvdbSearchResult> {
-    const trimmed = query.trim();
-    if (!trimmed) return { series: [], movies: [] };
-    const cacheKey = `search:${trimmed.toLowerCase()}`;
-    const cached = this.readCache<TvdbSearchResult>(cacheKey, this.searchTtlMs);
-    if (cached) return cached;
-
+  private async fetchSearchBatch(
+    queries: string[],
+  ): Promise<TvdbSearchResult[]> {
+    if (queries.length === 0) return [];
     // No `referer` header: Chromium (Electron's `net.fetch`) cancels a request
     // whose referrer is a different origin than the target, and the endpoint
     // answers fine without one.
@@ -282,25 +350,91 @@ export class TvdbClient {
         'user-agent': USER_AGENT,
       },
       body: JSON.stringify({
-        requests: [
-          {
-            indexName: 'TVDB',
-            params: { query: trimmed, page: 0 },
-          },
-        ],
+        requests: queries.map((query) => ({
+          indexName: 'TVDB',
+          params: { query, page: 0 },
+        })),
       }),
     });
     const payload = (await response.json()) as SearchResponse;
-    const hits = payload.results?.[0]?.hits ?? [];
-    const series = hits
-      .map(seriesFromHit)
-      .filter((item): item is TvdbSeriesRef => Boolean(item));
-    const movies = hits
-      .map(movieFromHit)
-      .filter((item): item is TvdbMovie => Boolean(item));
-    const result = { series, movies };
-    this.writeCache(cacheKey, result);
-    return result;
+    const results = queries.map((_, index) =>
+      resultFromHits(payload.results?.[index]?.hits ?? []),
+    );
+    const returned = payload.results?.length ?? 0;
+    // Some deployments only answer the first request in a batch.
+    if (queries.length > 1 && returned < queries.length) {
+      for (let index = Math.max(1, returned); index < queries.length; index += 1) {
+        const fallback = await this.fetchSearchBatch([queries[index]]);
+        results[index] = fallback[0] ?? emptySearchResult();
+      }
+    }
+    return results;
+  }
+
+  async searchMany(queries: string[]): Promise<TvdbSearchResult[]> {
+    const trimmed = queries.map((query) => query.trim());
+    const results: (TvdbSearchResult | undefined)[] = new Array(trimmed.length);
+    const missing = new Map<string, { query: string; indices: number[] }>();
+    for (const [index, query] of trimmed.entries()) {
+      if (!query) {
+        results[index] = emptySearchResult();
+        continue;
+      }
+      const key = query.toLowerCase();
+      const cached = this.readCache<TvdbSearchResult>(
+        `search:${key}`,
+        this.searchTtlMs,
+      );
+      if (cached) {
+        results[index] = cached;
+        continue;
+      }
+      const entry = missing.get(key) ?? { query, indices: [] };
+      entry.indices.push(index);
+      missing.set(key, entry);
+    }
+
+    const pending: { key: string; entry: { query: string; indices: number[] }; promise: Promise<TvdbSearchResult> }[] = [];
+    const batches: { key: string; entry: { query: string; indices: number[] } }[] = [];
+    for (const [key, entry] of missing) {
+      const existing = this.searchRequests.get(key);
+      if (existing) pending.push({ key, entry, promise: existing });
+      else batches.push({ key, entry });
+    }
+    for (const { entry, promise } of pending) {
+      const result = await promise.catch(() => emptySearchResult());
+      for (const index of entry.indices) results[index] = result;
+    }
+
+    for (let start = 0; start < batches.length; start += SEARCH_BATCH_SIZE) {
+      const chunk = batches.slice(start, start + SEARCH_BATCH_SIZE);
+      const batchPromise = this.fetchSearchBatch(
+        chunk.map(({ entry }) => entry.query),
+      );
+      for (const [index, { key }] of chunk.entries()) {
+        const perQuery = batchPromise.then(
+          (batch) => batch[index] ?? emptySearchResult(),
+        );
+        this.searchRequests.set(key, perQuery);
+        void perQuery.then(
+          () => this.searchRequests.delete(key),
+          () => this.searchRequests.delete(key),
+        );
+      }
+      const batch = await batchPromise;
+      for (const [index, { key, entry }] of chunk.entries()) {
+        const result = batch[index] ?? emptySearchResult();
+        this.writeCache(`search:${key}`, result);
+        for (const resultIndex of entry.indices) results[resultIndex] = result;
+      }
+    }
+
+    return results.map((result) => result ?? emptySearchResult());
+  }
+
+  async search(query: string): Promise<TvdbSearchResult> {
+    const [result] = await this.searchMany([query]);
+    return result ?? emptySearchResult();
   }
 
   async searchSeries(query: string): Promise<TvdbSeriesRef[]> {
@@ -317,9 +451,23 @@ export class TvdbClient {
     const cacheKey = `episodes:${trimmed.toLowerCase()}`;
     const cached = this.readCache<TvdbEpisode[]>(cacheKey, this.episodeTtlMs);
     if (cached) return cached;
+    const existing = this.episodeRequests.get(cacheKey);
+    if (existing) return existing;
+    const promise = this.fetchEpisodes(trimmed, cacheKey);
+    this.episodeRequests.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.episodeRequests.delete(cacheKey);
+    }
+  }
 
+  private async fetchEpisodes(
+    slug: string,
+    cacheKey: string,
+  ): Promise<TvdbEpisode[]> {
     const response = await this.request(
-      `${SERIES_PAGE}/${encodeURIComponent(trimmed)}/allseasons/official`,
+      `${SERIES_PAGE}/${encodeURIComponent(slug)}/allseasons/official`,
       {
         method: 'GET',
         headers: {

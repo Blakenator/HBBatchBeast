@@ -5,6 +5,7 @@ import type {
   TvdbMovie,
   TvdbSeriesRef,
 } from './types';
+import { sortEpisodes } from './filename';
 
 /** Ordered first-match naming rules for the Organize mode. */
 export type OrganizeConditionField =
@@ -58,8 +59,18 @@ export interface TvdbShowMapping {
 /** Per-file match fix chosen in the review table. */
 export interface OrganizeMatchOverride {
   series?: TvdbSeriesRef;
+  /** Primary (first) episode of the fix. */
   episode?: TvdbEpisode;
+  /** Every episode the file contains when it is a multi-episode release. */
+  episodes?: TvdbEpisode[];
   movie?: TvdbMovie;
+}
+
+/** Literal text replacement applied to names before matching. */
+export interface OrganizeNameReplacement {
+  id: string;
+  find: string;
+  replace: string;
 }
 
 export interface OrganizeSettings {
@@ -78,6 +89,8 @@ export interface OrganizeSettings {
   caseInsensitive?: boolean;
   cleanupEmptyFolders: boolean;
   renameMovieFolders: boolean;
+  /** Literal replacements applied to file/show names before matching. */
+  nameReplacements: OrganizeNameReplacement[];
   /** Manual match fixes keyed by the source file comparison key. */
   overrides?: Record<string, OrganizeMatchOverride>;
 }
@@ -91,6 +104,12 @@ export const DEFAULT_CONFIDENCE_THRESHOLD = 0.6;
 
 export function createNamingRuleId(): string {
   return `organize-rule-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+}
+
+export function createNameReplacementId(): string {
+  return `organize-replace-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 7)}`;
 }
@@ -131,6 +150,7 @@ export function createOrganizeSettings(
     collisions: 'block',
     cleanupEmptyFolders: true,
     renameMovieFolders: true,
+    nameReplacements: [],
     overrides: {},
   };
 }
@@ -148,10 +168,50 @@ function isShowMapping(value: unknown): value is TvdbShowMapping {
   );
 }
 
+function isEpisode(value: unknown): value is TvdbEpisode {
+  if (!value || typeof value !== 'object') return false;
+  const episode = value as Partial<TvdbEpisode>;
+  return (
+    typeof episode.tag === 'string' &&
+    typeof episode.name === 'string' &&
+    typeof episode.seasonNumber === 'number' &&
+    typeof episode.episodeNumber === 'number'
+  );
+}
+
 function isMatchOverride(value: unknown): value is OrganizeMatchOverride {
   if (!value || typeof value !== 'object') return false;
   const override = value as OrganizeMatchOverride;
-  return Boolean(override.series || override.episode || override.movie);
+  return Boolean(
+    override.series ||
+      override.episode ||
+      override.movie ||
+      (Array.isArray(override.episodes) &&
+        override.episodes.some(isEpisode)),
+  );
+}
+
+/**
+ * Drops invalid episode entries, orders the range and keeps `episode` as the
+ * first selected episode so older readers still see a single primary match.
+ */
+function normalizeMatchOverride(
+  value: unknown,
+): OrganizeMatchOverride | undefined {
+  if (!isMatchOverride(value)) return undefined;
+  const override = value as OrganizeMatchOverride;
+  const episodes = Array.isArray(override.episodes)
+    ? sortEpisodes(override.episodes.filter(isEpisode))
+    : [];
+  const episode = isEpisode(override.episode)
+    ? override.episode
+    : episodes[0];
+  return {
+    ...(override.series ? { series: override.series } : {}),
+    ...(episode ? { episode } : {}),
+    ...(episodes.length > 0 ? { episodes } : {}),
+    ...(override.movie ? { movie: override.movie } : {}),
+  };
 }
 
 /**
@@ -170,6 +230,34 @@ function legacyFolderShows(
         folderId,
         subpath: '',
         series,
+      },
+    ];
+  });
+}
+
+function normalizeNameReplacements(
+  value: unknown,
+): OrganizeNameReplacement[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const candidate = entry as Partial<OrganizeNameReplacement>;
+    // Keep blank rows so the settings editor can add one before typing.
+    if (
+      typeof candidate.find !== 'string' &&
+      typeof candidate.replace !== 'string'
+    ) {
+      return [];
+    }
+    return [
+      {
+        id:
+          typeof candidate.id === 'string' && candidate.id
+            ? candidate.id
+            : `organize-replace-${index}`,
+        find: typeof candidate.find === 'string' ? candidate.find : '',
+        replace:
+          typeof candidate.replace === 'string' ? candidate.replace : '',
       },
     ];
   });
@@ -204,9 +292,10 @@ export function resolveOrganizeSettings(
   const overrides: Record<string, OrganizeMatchOverride> =
     storedOverrides && typeof storedOverrides === 'object'
       ? Object.fromEntries(
-          Object.entries(storedOverrides).filter(([, entry]) =>
-            isMatchOverride(entry),
-          ),
+          Object.entries(storedOverrides).flatMap(([file, entry]) => {
+            const override = normalizeMatchOverride(entry);
+            return override ? [[file, override]] : [];
+          }),
         )
       : {};
 
@@ -229,6 +318,7 @@ export function resolveOrganizeSettings(
       : {}),
     cleanupEmptyFolders: value?.cleanupEmptyFolders !== false,
     renameMovieFolders: value?.renameMovieFolders !== false,
+    nameReplacements: normalizeNameReplacements(value?.nameReplacements),
     overrides,
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatTemplateValue,
   formatTokenSnippet,
   parseTemplateSegments,
   renderTemplateExample,
@@ -104,6 +105,39 @@ describe('template tokens', () => {
     expect(tokenQueryAt('Show {show}', 11)).toBeUndefined();
     expect(tokenQueryAt('Show {show}/Season', 17)).toBeUndefined();
     expect(tokenQueryAt('Show ', 5)).toBeUndefined();
+  });
+
+  it('splits and pads multi-episode ranges', () => {
+    expect(formatTemplateValue('episode', undefined, '3-4')).toBe('3-4');
+    expect(formatTemplateValue('episode', '02', '3-4')).toBe('03-04');
+    expect(formatTemplateValue('episode', '02', '3')).toBe('03');
+    expect(formatTemplateValue('episode', 'start', '3-4')).toBe('3');
+    expect(formatTemplateValue('episode', 'end', '3-4')).toBe('4');
+    expect(formatTemplateValue('episode', 'separator', '3-4')).toBe('-');
+    expect(formatTemplateValue('episode', 'end', '3')).toBe('');
+    expect(formatTemplateValue('episode', 'separator', '3')).toBe('');
+    expect(formatTemplateValue('episode', 'start:02', '3-4')).toBe('03');
+    expect(formatTemplateValue('episode', 'end:02', '3-4')).toBe('04');
+    expect(
+      renderTemplateExample(
+        '{episode:start:02}{episode:separator}{episode:end:02}',
+        'tv',
+      ).text,
+    ).toBe('02-03');
+  });
+
+  it('parses a variant that also carries a width', () => {
+    const segments = parseTemplateSegments(
+      'S{season:02}E{episode:start:02}{episode:separator}',
+    );
+    expect(segments).toContainEqual({
+      kind: 'token',
+      name: 'episode',
+      format: 'start:02',
+    });
+    expect(serializeTemplateSegments(segments)).toBe(
+      'S{season:02}E{episode:start:02}{episode:separator}',
+    );
   });
 
   it('formats snippets with default padding', () => {

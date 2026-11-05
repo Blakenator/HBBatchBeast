@@ -11,6 +11,7 @@ import {
   renderFileTemplate,
   renderFolderTemplate,
   renderTemplate,
+  resolutionBucket,
   resolutionLabel,
   resolveOrganizeSettings,
   sanitizePathSegment,
@@ -147,15 +148,45 @@ describe('filename parsing', () => {
     );
   });
 
-  it('maps heights to resolution buckets inclusively', () => {
+  it('maps dimensions to the same resolution buckets as Plex', () => {
+    expect(resolutionBucket({ width: 7680, height: 4320 })).toBe('8K');
+    expect(resolutionBucket({ width: 3840, height: 2160 })).toBe('4K');
+    expect(resolutionBucket({ width: 2560, height: 1440 })).toBe('2K');
+    expect(resolutionBucket({ width: 1920, height: 1080 })).toBe('1080p');
+    expect(resolutionBucket({ width: 1280, height: 720 })).toBe('720p');
+    expect(resolutionBucket({ width: 1024, height: 576 })).toBe('576p');
+    expect(resolutionBucket({ width: 720, height: 480 })).toBe('480p');
+    expect(resolutionBucket({ width: 480, height: 360 })).toBe('SD');
+    // Either dimension can reach a bucket, like Plex does for widescreen or
+    // anamorphic frames.
+    expect(resolutionBucket({ width: 1920, height: 800 })).toBe('1080p');
+    expect(resolutionBucket({ width: 720, height: 480 })).toBe('480p');
+    expect(resolutionBucket({ width: 1440, height: 1080 })).toBe('1080p');
+    expect(resolutionBucket({ width: 2560, height: 1080 })).toBe('2K');
+    // Cropped encodes within 5% below a threshold keep the higher bucket.
+    expect(resolutionBucket({ width: 1918, height: 1072 })).toBe('1080p');
+    expect(resolutionBucket({ width: 704, height: 480 })).toBe('480p');
+    expect(resolutionBucket({ width: 1276, height: 716 })).toBe('720p');
+    expect(resolutionBucket({ width: 2560, height: 1438 })).toBe('2K');
+    expect(resolutionBucket({ width: 3840, height: 2160 })).toBe('4K');
+    expect(resolutionBucket({ width: 1820, height: 1020 })).toBe('720p');
+    expect(resolutionBucket({})).toBeUndefined();
+    // Height-only callers keep working.
     expect(resolutionLabel(2160)).toBe('4K');
-    expect(resolutionLabel(1440)).toBe('1440p');
+    expect(resolutionLabel(1440)).toBe('2K');
     expect(resolutionLabel(1080)).toBe('1080p');
     expect(resolutionLabel(720)).toBe('720p');
     expect(resolutionLabel(576)).toBe('576p');
     expect(resolutionLabel(480)).toBe('480p');
     expect(resolutionLabel(360)).toBe('SD');
     expect(resolutionLabel(undefined, '1080p')).toBe('1080p');
+  });
+
+  it('normalises explicit 2K and 8K filename tags', () => {
+    expect(parseMediaFilename('Film.2024.1440p.mkv').resolution).toBe('2K');
+    expect(parseMediaFilename('Film.2024.2k.mkv').resolution).toBe('2K');
+    expect(parseMediaFilename('Film.2024.4320p.mkv').resolution).toBe('8K');
+    expect(parseMediaFilename('Film.2024.8k.mkv').resolution).toBe('8K');
   });
 
   it('parses 1x02, specials and multi-episode names', () => {
@@ -171,6 +202,53 @@ describe('filename parsing', () => {
     expect(
       parseMediaFilename('Show.S02E03E04.mkv').episodeNumbers,
     ).toEqual([3, 4]);
+    expect(
+      parseMediaFilename('Show.S02E03-E04.The.Deep.mkv'),
+    ).toMatchObject({
+      seasonNumber: 2,
+      episodeNumber: 3,
+      episodeNumbers: [3, 4],
+      episodeTitle: 'The Deep',
+    });
+    expect(
+      parseMediaFilename('Show S02E03 - E04.mkv').episodeNumbers,
+    ).toEqual([3, 4]);
+    expect(
+      parseMediaFilename('Show.S02E03-E05.mkv').episodeNumbers,
+    ).toEqual([3, 4, 5]);
+  });
+
+  it('detects spaced seasons and shorthand ranges', () => {
+    expect(parseMediaFilename('Show S01 E02-E03.mkv')).toMatchObject({
+      seasonNumber: 1,
+      episodeNumber: 2,
+      episodeNumbers: [2, 3],
+    });
+    expect(parseMediaFilename('Show.S01E02-03.mkv')).toMatchObject({
+      seasonNumber: 1,
+      episodeNumbers: [2, 3],
+    });
+    expect(parseMediaFilename('Show.S01 E02-03.mkv').episodeNumbers).toEqual([
+      2, 3,
+    ]);
+    expect(parseMediaFilename('Show.S01 E02 - E03.mkv').episodeNumbers).toEqual(
+      [2, 3],
+    );
+    expect(
+      parseMediaFilename('Show.S01 E02-E03.The.Deep.mkv').episodeTitle,
+    ).toBe('The Deep');
+  });
+
+  it('does not read resolution or years as extra episodes', () => {
+    expect(
+      parseMediaFilename('Show.S01E02-1080p.mkv'),
+    ).toMatchObject({
+      episodeNumbers: [2],
+      resolution: '1080p',
+    });
+    expect(
+      parseMediaFilename('Show.S01E02.1080p.BluRay.mkv').episodeNumbers,
+    ).toEqual([2]);
   });
 
   it('uses a season folder when the file only has an episode number', () => {
@@ -361,7 +439,180 @@ describe('planner', () => {
       sidecarPolicy: 'rename',
     });
     expect(plan.items[0].targetPath).toBe(
-      '/library/Blue Planet II/Season 2/2018/S02E03-4-1920x1080-2018-10.mkv',
+      '/library/Blue Planet II/Season 2/2018/S02E03-E04-4-1920x1080-2018-10.mkv',
+    );
+  });
+
+  it('keeps a multi-episode filename range in the default {tag} template', () => {
+    const source = file(
+      '/library/Blue Planet II/Show.S02E03E04.mkv',
+      'Show.S02E03E04.mkv',
+      '/library/Blue Planet II',
+    );
+    const plan = buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/library/Blue Planet II'],
+      files: [
+        {
+          ...source,
+          parsed: parseMediaFilename(source.filename, source.relativePath),
+          episode: {
+            tag: 'S02E03',
+            name: 'Coral Reefs',
+            seasonNumber: 2,
+            episodeNumber: 3,
+          },
+          confidence: 1,
+          reason: 'Test match',
+          seriesName: 'Blue Planet II',
+        },
+      ],
+      rules: [
+        createNamingRule('tv', {
+          fileTemplate: '{tag} - {name}.{ext}',
+          folderTemplate: 'Season {season:02}',
+        }),
+      ],
+      confidenceThreshold: 0.6,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+    });
+    expect(plan.items[0].targetPath).toBe(
+      '/library/Blue Planet II/Season 02/S02E03-E04 - Coral Reefs.mkv',
+    );
+  });
+
+  it('renders {episode} as a range only for multi-episode files', () => {
+    const build = (
+      filename: string,
+      episode: (typeof episodes)[number],
+      fileTemplate = '{episode:02} - {name}.{ext}',
+    ) => {
+      const source = file(
+        `/library/Blue Planet II/${filename}`,
+        filename,
+        '/library/Blue Planet II',
+      );
+      return buildOrganizePlan({
+        mediaType: 'tv',
+        sourceRoots: ['/library/Blue Planet II'],
+        files: [
+          {
+            ...source,
+            parsed: parseMediaFilename(source.filename, source.relativePath),
+            episode,
+            confidence: 1,
+            reason: 'Test match',
+            seriesName: 'Blue Planet II',
+          },
+        ],
+        rules: [
+          createNamingRule('tv', {
+            fileTemplate,
+            folderTemplate: 'Season {season:02}',
+          }),
+        ],
+        confidenceThreshold: 0.6,
+        renameMovieFolders: true,
+        caseInsensitive: false,
+        collisions: 'block',
+        sidecarPolicy: 'rename',
+      });
+    };
+
+    expect(
+      build('Show.S02E03E04.mkv', {
+        tag: 'S02E03',
+        name: 'Coral Reefs',
+        seasonNumber: 2,
+        episodeNumber: 3,
+      }).items[0].targetPath,
+    ).toBe(
+      '/library/Blue Planet II/Season 02/03-04 - Coral Reefs.mkv',
+    );
+    expect(
+      build('Show.S02E05.mkv', {
+        tag: 'S02E05',
+        name: 'Big Blue',
+        seasonNumber: 2,
+        episodeNumber: 5,
+      }).items[0].targetPath,
+    ).toBe('/library/Blue Planet II/Season 02/05 - Big Blue.mkv');
+
+    const prefixed =
+      '{episode:start:02}{episode:separator}{episode:end:02}.{ext}';
+    expect(
+      build(
+        'Show.S02E03E04.mkv',
+        {
+          tag: 'S02E03',
+          name: 'Coral Reefs',
+          seasonNumber: 2,
+          episodeNumber: 3,
+        },
+        prefixed,
+      ).items[0].targetPath,
+    ).toBe('/library/Blue Planet II/Season 02/03-04.mkv');
+    expect(
+      build(
+        'Show.S02E05.mkv',
+        {
+          tag: 'S02E05',
+          name: 'Big Blue',
+          seasonNumber: 2,
+          episodeNumber: 5,
+        },
+        prefixed,
+      ).items[0].targetPath,
+    ).toBe('/library/Blue Planet II/Season 02/05.mkv');
+  });
+
+  it('joins the titles of every episode in a multi-episode file', () => {
+    const filename = 'Show.S02E03E04.mkv';
+    const source = file(
+      `/library/Blue Planet II/${filename}`,
+      filename,
+      '/library/Blue Planet II',
+    );
+    const first = {
+      tag: 'S02E03',
+      name: 'Coral Reefs',
+      seasonNumber: 2,
+      episodeNumber: 3,
+    };
+    const second = {
+      tag: 'S02E04',
+      name: 'Big Blue',
+      seasonNumber: 2,
+      episodeNumber: 4,
+    };
+    const plan = buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/library/Blue Planet II'],
+      files: [
+        {
+          ...source,
+          parsed: parseMediaFilename(filename, filename),
+          episode: first,
+          episodes: [first, second],
+          confidence: 1,
+          reason: 'Multi-episode match',
+          seriesName: 'Blue Planet II',
+          showSubpath: '',
+        },
+      ],
+      rules: [createNamingRule('tv')],
+      confidenceThreshold: 0.6,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+    });
+
+    expect(plan.items[0].targetPath).toBe(
+      '/library/Blue Planet II/Season 02/S02E03-E04 - Coral Reefs, Big Blue.mkv',
     );
   });
 

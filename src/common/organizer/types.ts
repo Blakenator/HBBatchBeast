@@ -200,9 +200,14 @@ export interface OrganizePlanItem {
   reason?: string;
   confidence?: number;
   ruleId?: string;
+  /** Primary (first) episode of the match. */
   episode?: TvdbEpisode;
+  /** Every episode the file contains when it is a multi-episode release. */
+  episodes?: TvdbEpisode[];
   movie?: TvdbMovie;
   plex?: PlexAssociation;
+  /** Every Plex episode association that shares the file's path. */
+  plexEpisodes?: PlexAssociation[];
   /** Tag/title/air-date evidence behind an episode match. */
   episodeMatch?: EpisodeMatchSummary;
   sidecars: OrganizeSidecar[];
@@ -221,6 +226,18 @@ export interface OrganizePlanItem {
   folderOnly?: boolean;
   /** True when the rendered target path is already the source path. */
   noChange?: boolean;
+  /** True when the user explicitly skipped this file for the current review. */
+  manualSkip?: boolean;
+  /**
+   * True when the user approved the current match. Approved rows stay renames
+   * across replans even when their confidence is below the threshold.
+   */
+  approved?: boolean;
+  /**
+   * True when the user asked to keep the source file name and only apply the
+   * rendered folder, so the templates still move the file without renaming it.
+   */
+  renameFolderOnly?: boolean;
 }
 
 export interface OrganizePlan {
@@ -231,6 +248,8 @@ export interface OrganizePlan {
   createdAt: string;
   /** Non-fatal warnings shown in review. */
   warnings: string[];
+  /** Opaque backend token for reprocessing without walking the folders again. */
+  scanId?: string;
 }
 
 export interface OrganizeApplyResult {
@@ -244,22 +263,77 @@ export interface OrganizeApplyResult {
   warnings: string[];
 }
 
+export type PlexServiceKind =
+  | 'systemd'
+  | 'launchd'
+  | 'windows-process'
+  | 'manual';
+
+export type PlexIssueSeverity = 'error' | 'warning' | 'info';
+
+export type PlexIssueId =
+  | 'database-missing'
+  | 'database-not-writable'
+  | 'database-folder-not-writable'
+  | 'service-running'
+  | 'service-unknown';
+
+export interface PlexIssue {
+  id: PlexIssueId;
+  severity: PlexIssueSeverity;
+  title: string;
+  detail: string;
+  /** Whether the automatic fix includes a step for this issue. */
+  fixable: boolean;
+}
+
+export type PlexFixStepId = 'stop-service' | 'grant-access' | 'start-service';
+
+export interface PlexRemediationStep {
+  id: PlexFixStepId;
+  title: string;
+  /** Complete command(s) for the host platform, newline separated. */
+  command: string;
+}
+
+export interface PlexRemediation {
+  summary: string;
+  steps: PlexRemediationStep[];
+  /** Steps joined into one script for the copyable code block. */
+  script: string;
+}
+
+export interface PlexFixStep {
+  id: PlexFixStepId;
+  title: string;
+  ok: boolean;
+  detail?: string;
+}
+
 export interface OrganizePlexEnvironment {
   platform: string;
   databaseCandidates: string[];
-  serviceKind: 'systemd' | 'launchd' | 'windows-process' | 'manual';
-  serviceInstructions: string;
-  permissionRemediation?: string;
+  serviceKind: PlexServiceKind;
 }
 
 export interface OrganizePlexCheck {
   path: string;
   exists: boolean;
+  /** True when both the database and the folder holding its journal are writable. */
   writable: boolean;
+  /** Whether SQLite can create `-wal`, `-shm` and journal files next to it. */
+  folderWritable?: boolean;
   running: boolean;
-  serviceKind: 'systemd' | 'launchd' | 'windows-process' | 'manual';
-  serviceInstructions: string;
-  permissionRemediation: string;
+  serviceKind: PlexServiceKind;
+  issues: PlexIssue[];
+  remediation: PlexRemediation;
+  /** True when this platform can offer a one-click fix. */
+  canAutoFix: boolean;
+}
+
+export interface OrganizePlexFixResult {
+  check: OrganizePlexCheck;
+  steps: PlexFixStep[];
 }
 
 export interface OrganizeJournalSummary {

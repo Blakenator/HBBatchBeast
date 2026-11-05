@@ -123,15 +123,21 @@ function renderTable(
   onFixMatch = vi.fn(),
   mediaType: 'tv' | 'movies' = 'tv',
   tablePlan: OrganizePlan = plan,
+  onSkipChange = vi.fn(),
+  selection: Set<string> = new Set([baseItem.id]),
+  onSelectedChange = vi.fn(),
+  onBulkAction = vi.fn(),
 ) {
   return render(
     <OrganizePlanTable
       plan={tablePlan}
       settings={createOrganizeSettings(mediaType)}
       mediaType={mediaType}
-      selected={new Set([baseItem.id])}
-      onSelectedChange={vi.fn()}
+      selected={selection}
+      onSelectedChange={onSelectedChange}
       onFixMatch={onFixMatch}
+      onSkipChange={onSkipChange}
+      onBulkAction={onBulkAction}
     />,
   );
 }
@@ -290,6 +296,46 @@ describe('OrganizePlanTable', () => {
     expect(screen.getByText('1 of 1 file(s)')).toBeTruthy();
   });
 
+  it('shows and searches a multi-episode range', () => {
+    const multiItem: OrganizePlanItem = {
+      ...baseItem,
+      id: 'multi',
+      sourcePath: '/media/tv/Blue Planet II/S01E02E03.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E02E03.mkv',
+      relativeTarget: 'Blue Planet II/Season 01/S01E02-E03 - The Deep.mkv',
+      targetPath:
+        '/media/tv/Blue Planet II/Season 01/S01E02-E03 - The Deep.mkv',
+      episode: {
+        tag: 'S01E02',
+        name: 'The Deep',
+        seasonNumber: 1,
+        episodeNumber: 2,
+      },
+      episodes: [
+        {
+          tag: 'S01E02',
+          name: 'The Deep',
+          seasonNumber: 1,
+          episodeNumber: 2,
+        },
+        {
+          tag: 'S01E03',
+          name: 'Big Blue',
+          seasonNumber: 1,
+          episodeNumber: 3,
+        },
+      ],
+    };
+    renderTable(vi.fn(), 'tv', { ...plan, items: [multiItem] });
+
+    expect(screen.getByText('S01E02-E03')).toBeTruthy();
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search the review table' }),
+      { target: { value: 'big blue' } },
+    );
+    expect(screen.getByText('1 of 1 file(s)')).toBeTruthy();
+  });
+
   it('shows folder-only and unchanged rows without a match badge', () => {
     const folderOnly: OrganizePlanItem = {
       ...baseItem,
@@ -313,7 +359,7 @@ describe('OrganizePlanTable', () => {
     expect(screen.getByText('folder only')).toBeTruthy();
     expect(screen.getByText('unchanged')).toBeTruthy();
     expect(
-      screen.queryAllByRole('button', { name: /strong|weak|conflict/ }),
+      screen.queryAllByRole('button', { name: /strong|weak|mixed signals/ }),
     ).toHaveLength(0);
   });
 
@@ -360,10 +406,59 @@ describe('OrganizePlanTable', () => {
     });
 
     expect(
-      screen.getByRole('button', { name: 'S01E05 conflict 80%' }),
+      screen.getByRole('button', { name: 'S01E05 mixed signals 80%' }),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Match review' }));
     expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Conflicts' }));
+    expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
+  });
+
+  it('leaves skipped mixed signal matches out of the conflicts filter', () => {
+    const skippedConflict: OrganizePlanItem = {
+      ...baseItem,
+      id: 'skipped-conflict',
+      action: 'skip',
+      confidence: 0.85,
+      episodeMatch: {
+        ...baseItem.episodeMatch!,
+        conflict: true,
+        conflictKind: 'tag-vs-name',
+        conflictReason: 'Tag and filename title disagree.',
+      },
+    };
+    renderTable(vi.fn(), 'tv', {
+      ...plan,
+      items: [baseItem, skippedConflict],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conflicts' }));
+    expect(screen.getByText('0 of 2 file(s)')).toBeTruthy();
+    expect(screen.getByText('No files match this filter.')).toBeTruthy();
+  });
+
+  it('filters by a minimum and maximum confidence percentage', () => {
+    renderTable();
+
+    const min = screen.getByRole('spinbutton', {
+      name: 'Minimum confidence percentage',
+    });
+    const max = screen.getByRole('spinbutton', {
+      name: 'Maximum confidence percentage',
+    });
+
+    fireEvent.change(min, { target: { value: '90' } });
+    expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
+
+    fireEvent.change(min, { target: { value: '' } });
+    fireEvent.change(max, { target: { value: '50' } });
+    expect(screen.getByText('1 of 2 file(s)')).toBeTruthy();
+
+    fireEvent.change(max, { target: { value: '20' } });
+    expect(screen.getByText('0 of 2 file(s)')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText('2 of 2 file(s)')).toBeTruthy();
   });
 
   it('does not render a separate Why column after merging it into Match', () => {
@@ -394,5 +489,288 @@ describe('OrganizePlanTable', () => {
     expect(localStorage.getItem('hbb.organizePlanTable.layout.v2')).toContain(
       '"show":false',
     );
+  });
+});
+
+describe('OrganizePlanTable show tree and skip actions', () => {
+  it('groups rows under the matched show and expands on demand', () => {
+    renderTable();
+    fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
+
+    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
+      0,
+    );
+    const group = screen.getByRole('button', {
+      name: /Expand Blue Planet II/,
+    });
+    fireEvent.click(group);
+    expect(
+      screen.getAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(2);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Collapse Blue Planet II/ }),
+    );
+    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
+      0,
+    );
+  });
+
+  it('still allows collapsing a group while a filter is active', () => {
+    renderTable();
+    fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Conflicts' }));
+    expect(
+      screen.getAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(1);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Collapse Blue Planet II/ }),
+    );
+    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
+      0,
+    );
+  });
+
+  it('keeps a complete, collapsible show header while its files scroll', () => {
+    const items = [1, 2, 3, 4].map((episode) => ({
+      ...baseItem,
+      id: `pin-${episode}`,
+      sourcePath: `/media/tv/Blue Planet II/S01E0${episode}.mkv`,
+      sourceRelativePath: `Blue Planet II/S01E0${episode}.mkv`,
+    }));
+    const { container } = renderTable(vi.fn(), 'tv', { ...plan, items });
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Expand Blue Planet II/ }),
+    );
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Select all files for Blue Planet II',
+      }),
+    ).toBeTruthy();
+    // The header lives in normal flow inside its group, so CSS sticky can pin
+    // the real row (checkbox, collapse button and stats) instead of a copy.
+    expect(container.querySelectorAll('[role="row"]').length).toBeGreaterThan(0);
+
+    fireEvent.scroll(screen.getByRole('grid', { name: 'Organize review' }), {
+      target: { scrollTop: 120 },
+    });
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Select all files for Blue Planet II',
+      }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: /Collapse Blue Planet II/ }),
+    );
+    expect(
+      screen.queryAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(0);
+  });
+
+  it('toggles a manual skip and offers to include the row again', () => {
+    const onSkipChange = vi.fn();
+    renderTable(vi.fn(), 'tv', plan, onSkipChange);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Skip Blue Planet II/S01E01.mkv' }),
+    );
+    expect(onSkipChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: baseItem.id }),
+      true,
+    );
+
+    const skippedPlan: OrganizePlan = {
+      ...plan,
+      items: [
+        {
+          ...baseItem,
+          action: 'skip',
+          manualSkip: true,
+          reason: 'Skipped manually',
+          sidecars: [],
+        },
+        conflictItem,
+      ],
+    };
+    const onInclude = vi.fn();
+    renderTable(vi.fn(), 'tv', skippedPlan, onInclude);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Include Blue Planet II/S01E01.mkv' }),
+    );
+    expect(onInclude).toHaveBeenCalledWith(
+      expect.objectContaining({ id: baseItem.id }),
+      false,
+    );
+  });
+});
+
+describe('OrganizePlanTable selection and bulk actions', () => {
+  it('selects any row, including conflicts', () => {
+    const onSelectedChange = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set(),
+      onSelectedChange,
+    );
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Select ${conflictItem.sourcePath}` }),
+    );
+
+    expect(onSelectedChange).toHaveBeenCalledTimes(1);
+    const next = onSelectedChange.mock.calls[0][0] as Set<string>;
+    expect(next.has(conflictItem.id)).toBe(true);
+  });
+
+  it('offers bulk skip and best-guess actions for the selection', () => {
+    const onBulkAction = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set([conflictItem.id]),
+      vi.fn(),
+      onBulkAction,
+    );
+
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Skip (1)' }));
+    expect(onBulkAction).toHaveBeenCalledWith('skip', [
+      expect.objectContaining({ id: conflictItem.id }),
+    ]);
+
+    onBulkAction.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Use best guess (1)' }));
+    expect(onBulkAction).toHaveBeenCalledWith('useBestGuess', [
+      expect.objectContaining({ id: conflictItem.id }),
+    ]);
+
+    onBulkAction.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve (1)' }));
+    expect(onBulkAction).toHaveBeenCalledWith('approve', [
+      expect.objectContaining({ id: conflictItem.id }),
+    ]);
+  });
+
+  it('marks only the chosen row as folder-only', () => {
+    const onBulkAction = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set(),
+      vi.fn(),
+      onBulkAction,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /More actions for/ })[0],
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Rename folder only' }),
+    );
+
+    expect(onBulkAction).toHaveBeenCalledTimes(1);
+    expect(onBulkAction).toHaveBeenCalledWith('folderOnly', [
+      expect.objectContaining({ id: baseItem.id }),
+    ]);
+  });
+
+  it('offers the inverse action for a folder-only row', () => {
+    const folderOnlyPlan: OrganizePlan = {
+      ...plan,
+      items: [
+        { ...baseItem, renameFolderOnly: true, folderOnly: true },
+        conflictItem,
+      ],
+    };
+    renderTable(vi.fn(), 'tv', folderOnlyPlan);
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /More actions for/ })[0],
+    );
+    expect(
+      screen.getByRole('button', { name: 'Rename file too' }),
+    ).toBeTruthy();
+  });
+
+  it('approves only the row chosen in its action menu', () => {
+    const onBulkAction = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set(),
+      vi.fn(),
+      onBulkAction,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /More actions for/ })[0],
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Approve match' }));
+
+    expect(onBulkAction).toHaveBeenCalledTimes(1);
+    expect(onBulkAction).toHaveBeenCalledWith('approve', [
+      expect.objectContaining({ id: baseItem.id }),
+    ]);
+  });
+});
+
+describe('OrganizePlanTable range and group selection', () => {
+  it('supports shift-click range selection across visible rows', () => {
+    const onSelectedChange = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set(),
+      onSelectedChange,
+    );
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Select ${baseItem.sourcePath}` }),
+    );
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Select ${conflictItem.sourcePath}` }),
+      { shiftKey: true },
+    );
+
+    const last = onSelectedChange.mock.calls.at(-1)?.[0] as Set<string>;
+    expect(last.has(baseItem.id)).toBe(true);
+    expect(last.has(conflictItem.id)).toBe(true);
+  });
+
+  it('selects every file in a show from the group header', () => {
+    const onSelectedChange = vi.fn();
+    renderTable(
+      vi.fn(),
+      'tv',
+      plan,
+      vi.fn(),
+      new Set(),
+      onSelectedChange,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select all files for Blue Planet II',
+      }),
+    );
+
+    const next = onSelectedChange.mock.calls.at(-1)?.[0] as Set<string>;
+    expect(next.has(baseItem.id)).toBe(true);
+    expect(next.has(conflictItem.id)).toBe(true);
   });
 });

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { toast } from 'react-toastify';
 import {
   APP_CONFIG_SCHEMA_VERSION,
   AppConfigV2,
@@ -9,6 +10,11 @@ import {
   createOrganizeSettings,
 } from '../src/common';
 import { OrganizePage } from '../src/frontend/organize/OrganizePage';
+import { useOrganizeSessionStore } from '../src/frontend/organize/organizeSession';
+import {
+  backendErrorMessage,
+  backendFailure,
+} from '../src/frontend/helpers/backendResult';
 
 // jsdom reports zero-size elements; the review table virtualizer needs a viewport.
 Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
@@ -45,7 +51,8 @@ const { mockRefetch, asyncScan } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../src/frontend/helpers', () => ({
+vi.mock('../src/frontend/helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/frontend/helpers')>()),
   useBackend: () => ({
     loading: false,
     error: undefined,
@@ -97,6 +104,7 @@ vi.mock('../src/frontend/helpers', () => ({
 
 afterEach(() => {
   cleanup();
+  useOrganizeSessionStore.setState({ sessions: {} });
   mockRefetch.mockReset();
   asyncScan.plan = undefined;
   asyncScan.completeDelay = 0;
@@ -167,6 +175,8 @@ const planData = {
         episodeNumber: 1,
       },
       showFolder: 'Blue Planet II',
+      seriesName: 'Blue Planet II',
+      showSubpath: '',
     },
   ],
 };
@@ -179,12 +189,28 @@ const emptyPlan = {
   items: [],
 };
 
-function renderPage(active = library()) {
+function renderPage(
+  active = library(),
+  plex?: { dbPath: string; updateByDefault: boolean },
+  onUpdateLibrary = vi.fn(),
+) {
+  const appConfig = config(active);
   return render(
     <OrganizePage
-      config={config(active)}
+      config={
+        plex
+          ? {
+              ...appConfig,
+              app_settings: {
+                worker_instance_number: '4',
+                save_worker_logs_toggle: 0,
+                plex,
+              },
+            }
+          : appConfig
+      }
       library={active}
-      onUpdateLibrary={vi.fn()}
+      onUpdateLibrary={onUpdateLibrary}
       onBack={vi.fn()}
     />,
   );
@@ -279,8 +305,12 @@ describe('OrganizePage', () => {
   it('scans only the selected show and passes the scope', async () => {
     asyncScan.plan = emptyPlan;
     renderPage();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Scan only' }));
-    expect(screen.getByText(/Scanning only/)).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /Include Blue Planet II in the next scan/,
+      }),
+    );
+    expect(screen.getByText(/Scanning/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
     fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
@@ -295,6 +325,46 @@ describe('OrganizePage', () => {
         },
       ],
     });
+  });
+
+  it('lists limited scan folders as bullets and summarizes the rest', async () => {
+    asyncScan.plan = emptyPlan;
+    mockRefetch.mockResolvedValue({
+      data: {
+        folders: Array.from({ length: 9 }, (_, index) => ({
+          folderId: 'folder-1',
+          root: '/media/tv',
+          subpath: `Show ${index + 1}`,
+          name: `Show ${index + 1}`,
+          mediaCount: 1,
+          series: {
+            id: String(index + 2),
+            slug: `show-${index + 1}`,
+            name: `Show ${index + 1}`,
+          },
+          autoMatched: true,
+        })),
+        warnings: [],
+      },
+    });
+    renderPage();
+    fireEvent.click(
+      screen.getByRole('button', { name: /Detect & match shows/ }),
+    );
+
+    for (let index = 1; index <= 9; index += 1) {
+      fireEvent.click(
+        await screen.findByRole('checkbox', {
+          name: `Include Show ${index} in the next scan`,
+        }),
+      );
+    }
+
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    expect(screen.getByText(/Scan limited to 9 show folders/)).toBeTruthy();
+    const list = screen.getByRole('list');
+    expect(within(list).getAllByRole('listitem')).toHaveLength(7);
+    expect(screen.getByText('and 2 more…')).toBeTruthy();
   });
 
   it('detects show folders and fills in auto matches', async () => {
@@ -323,6 +393,406 @@ describe('OrganizePage', () => {
       expect.objectContaining({
         library: expect.objectContaining({ id: 'library-1' }),
       }),
+    );
+  });
+
+  it('bulk-skips the selected rows and clears the selection', async () => {
+    asyncScan.plan = planData;
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip (1)' }));
+
+    expect(screen.queryByText('1 selected')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Apply/ }).textContent,
+    ).not.toContain('(1)');
+  });
+
+  it('approves a below-threshold row so it can be applied', async () => {
+    const onUpdateLibrary = vi.fn();
+    asyncScan.plan = {
+      ...planData,
+      items: [
+        {
+          ...planData.items[0],
+          action: 'skip',
+          confidence: 0.4,
+          reason: 'Fuzzy match',
+        },
+      ],
+    };
+    renderPage(library(), undefined, onUpdateLibrary);
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+    expect(
+      screen.getByRole('button', { name: /Apply/ }),
+    ).toHaveProperty('disabled', true);
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select /media/tv/Blue Planet II/S01E01.mkv',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Approve (1)' }));
+
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+    expect(screen.getByLabelText('Match approved')).toBeTruthy();
+
+    await waitFor(
+      () => expect(onUpdateLibrary).toHaveBeenCalled(),
+      { timeout: 1500 },
+    );
+    const saved = onUpdateLibrary.mock.calls.at(-1)?.[0] as ReturnType<
+      typeof library
+    >;
+    expect(saved.organize.overrides).toMatchObject({
+      '/media/tv/Blue Planet II/S01E01.mkv': {
+        series: { name: 'Blue Planet II' },
+        episode: { tag: 'S01E01' },
+      },
+    });
+  });
+
+  it('skips only the row chosen in its action menu', async () => {
+    const tags = ['S01E01', 'S01E02', 'S01E03'];
+    asyncScan.plan = {
+      ...planData,
+      items: tags.map((tag, index) => ({
+        ...planData.items[0],
+        id: `/media/tv/Blue Planet II/${tag}.mkv`,
+        sourcePath: `/media/tv/Blue Planet II/${tag}.mkv`,
+        sourceRelativePath: `Blue Planet II/${tag}.mkv`,
+        targetPath: `/media/tv/Blue Planet II/Season 01/${tag} - One Ocean.mkv`,
+        relativeTarget: `Blue Planet II/Season 01/${tag} - One Ocean.mkv`,
+        episode: {
+          tag,
+          name: 'One Ocean',
+          seasonNumber: 1,
+          episodeNumber: index + 1,
+        },
+      })),
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /More actions for/ })[1],
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Skip file' }));
+
+    expect(screen.getAllByText('Rename')).toHaveLength(2);
+    expect(
+      screen.getByRole('button', {
+        name: 'Include Blue Planet II/S01E02.mkv',
+      }),
+    ).toBeTruthy();
+  });
+
+  it('renames only the folder when asked from the row menu', async () => {
+    asyncScan.plan = {
+      ...planData,
+      items: [{ ...planData.items[0], showSubpath: 'Blue Planet II' }],
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+    expect(
+      screen.getByTitle(
+        '/media/tv/Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /More actions for/ })[0],
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Rename folder only' }),
+    );
+
+    expect(
+      screen.getByTitle('/media/tv/Blue Planet II/Season 01/S01E01.mkv'),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+  });
+
+  it('lists failed moves and keeps those rows in the review', async () => {
+    asyncScan.plan = planData;
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    mockRefetch.mockResolvedValueOnce({
+      data: {
+        planId: 'plan-1',
+        renamed: [],
+        skipped: [],
+        failed: [
+          {
+            path: '/media/tv/Blue Planet II/S01E01.mkv',
+            message: 'EACCES: permission denied, rename',
+          },
+        ],
+        plexUpdated: 0,
+        historyMoved: 0,
+        pendingHistoryTransfers: 0,
+        warnings: [],
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Apply \(1\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm apply' }));
+
+    expect(await screen.findByText(/EACCES: permission denied/)).toBeTruthy();
+    expect(screen.getByText(/1 move\(s\) failed/)).toBeTruthy();
+    // The failed row stays in the plan and selected so it can be retried.
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /Apply \(1\)/ }),
+    ).toBeTruthy();
+  });
+
+  it('bulk use-best-guess unskips the selected rows', async () => {
+    asyncScan.plan = {
+      ...planData,
+      items: [
+        {
+          ...planData.items[0],
+          action: 'skip',
+          manualSkip: true,
+          reason: 'Skipped manually',
+        },
+      ],
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select /media/tv/Blue Planet II/S01E01.mkv',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Use best guess (1)' }));
+
+    expect(
+      screen.getByRole('button', { name: /Apply \(1\)/ }),
+    ).toBeTruthy();
+  });
+
+  it('bulk best guess promotes a below-threshold row to a rename', async () => {
+    const infoToast = vi
+      .spyOn(toast, 'info')
+      .mockImplementation(() => '' as never);
+    asyncScan.plan = {
+      ...planData,
+      items: [
+        {
+          ...planData.items[0],
+          action: 'skip',
+          confidence: 0.2,
+          reason: 'Confidence 20% is below the 60% threshold',
+        },
+      ],
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+    expect(screen.getByRole('button', { name: /^Apply$/ })).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Select /media/tv/Blue Planet II/S01E01.mkv',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Use best guess (1)' }));
+
+    expect(screen.getByText('Rename')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+    expect(infoToast).not.toHaveBeenCalledWith(
+      'No manual matches or skips to clear for the selected file(s).',
+    );
+    infoToast.mockRestore();
+  });
+
+  it('rescans the parent folder of the selected rows', async () => {
+    const second = {
+      ...planData.items[0],
+      id: '/media/tv/Blue Planet II/S01E02.mkv',
+      sourcePath: '/media/tv/Blue Planet II/S01E02.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E02.mkv',
+      targetPath: '/media/tv/Blue Planet II/Season 01/S01E02 - The Deep.mkv',
+      relativeTarget: 'Blue Planet II/Season 01/S01E02 - The Deep.mkv',
+      episode: {
+        tag: 'S01E02',
+        name: 'The Deep',
+        seasonNumber: 1,
+        episodeNumber: 2,
+      },
+    };
+    asyncScan.plan = planData;
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    // The freshly scanned row starts selected, so the bulk action is ready.
+    // The rescan picks up a file that was added to the same folder.
+    asyncScan.plan = { ...planData, items: [planData.items[0], second] };
+    fireEvent.click(screen.getByRole('button', { name: 'Rescan (1)' }));
+
+    await waitFor(() =>
+      expect(asyncScan.props).toMatchObject({
+        rescanFolders: ['/media/tv/Blue Planet II'],
+      }),
+    );
+    expect((await screen.findAllByText(/S01E02/)).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+  });
+
+  it('use best guess in the fix dialog unskips the row too', async () => {
+    mockRefetch.mockResolvedValue({ data: [] });
+    asyncScan.plan = {
+      ...planData,
+      items: [
+        {
+          ...planData.items[0],
+          action: 'skip',
+          manualSkip: true,
+          reason: 'Skipped manually',
+        },
+      ],
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /More actions for/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fix match' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use best guess' }));
+
+    expect(screen.getByText('Rename')).toBeTruthy();
+  });
+
+  it('restores the review when leaving and returning to the page', async () => {
+    asyncScan.plan = planData;
+    const first = renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+    first.unmount();
+    renderPage();
+    expect(screen.getByRole('grid', { name: 'Organize review' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Apply \(1\)/ })).toBeTruthy();
+  });
+
+  it('explains why a Plex update could not start instead of doing nothing', async () => {
+    const errorToast = vi
+      .spyOn(toast, 'error')
+      .mockImplementation(() => '' as never);
+    asyncScan.plan = planData;
+    mockRefetch.mockImplementation((args: { path?: string }) => {
+      if (args?.path) {
+        return Promise.resolve({
+          error: JSON.stringify({
+            message: 'error',
+            inner: { message: 'Plex database folder is read-only' },
+          }),
+        });
+      }
+      return Promise.resolve({ data: planData });
+    });
+    renderPage(library(), {
+      dbPath: '/var/lib/plex/Plug-in Support/Databases/plex.db',
+      updateByDefault: true,
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(screen.getByRole('button', { name: /Apply \(1\)/ }));
+
+    await waitFor(() =>
+      expect(errorToast).toHaveBeenCalledWith(
+        'Plex database folder is read-only',
+      ),
+    );
+    errorToast.mockRestore();
+  });
+
+  it('caps long warning lists instead of listing every row', async () => {
+    asyncScan.plan = {
+      ...planData,
+      warnings: Array.from(
+        { length: 10 },
+        (_, index) => `Warning ${index + 1}`,
+      ),
+    };
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    expect(screen.getByText('Warning 1')).toBeTruthy();
+    expect(screen.getByText('Warning 8')).toBeTruthy();
+    expect(screen.queryByText('Warning 9')).toBeNull();
+    expect(screen.getByText('2 more warning(s) are hidden.')).toBeTruthy();
+  });
+});
+
+/** Mirrors `backendResultFromError` in @superflag/super-ipc-backend. */
+function serializedError(message: string): string {
+  return JSON.stringify({
+    message: 'error',
+    inner: { message, name: 'Error', stack: 'Error: at test' },
+  });
+}
+
+describe('backend error messages', () => {
+  it('unwraps the serialized AppError the hooks return', () => {
+    expect(backendErrorMessage(serializedError('attempt to write a readonly database'))).toBe(
+      'attempt to write a readonly database',
+    );
+  });
+
+  it('reads plain strings, Error instances and message objects', () => {
+    expect(backendErrorMessage('No handler registered')).toBe(
+      'No handler registered',
+    );
+    expect(backendErrorMessage(new Error('boom'))).toBe('boom');
+    expect(backendErrorMessage({ message: 'object message' })).toBe(
+      'object message',
+    );
+    expect(backendErrorMessage(undefined)).toBeUndefined();
+    expect(backendErrorMessage(null)).toBeUndefined();
+  });
+
+  it('reports a missing result as a failure because rejections are swallowed', () => {
+    expect(backendFailure(undefined, 'fallback')).toBe('fallback');
+    expect(backendFailure({}, 'fallback')).toBeUndefined();
+    expect(
+      backendFailure({ error: serializedError('disk full') }, 'fallback'),
+    ).toBe('disk full');
+    expect(backendFailure({ error: '' }, 'fallback')).toBeUndefined();
+  });
+
+  it('falls back when the payload has no usable message', () => {
+    expect(backendFailure({ error: { code: 'ENOENT' } }, 'fallback')).toBe(
+      'fallback',
     );
   });
 });

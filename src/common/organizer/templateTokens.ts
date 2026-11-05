@@ -56,32 +56,79 @@ export const TEMPLATE_TOKENS: TemplateTokenInfo[] = [
   },
   {
     name: 'episode',
-    label: 'Episode number',
+    label: 'Episode number or range',
     description:
-      'Episode number of the match, unpadded. Pick the zero-padded variant for 02.',
-    example: '2',
+      'Episode number, or the first–last range for a multi-episode file (2-3). Unpadded; pick the zero-padded variant for 02-03. Use without a separate separator.',
+    example: '2-3',
     mediaTypes: ['tv'],
   },
   {
     name: 'episode',
-    label: 'Episode number (zero-padded)',
-    description: 'Episode padded to two digits.',
-    example: '02',
+    label: 'Episode number or range (zero-padded)',
+    description:
+      'Episode number or multi-episode range, padded to two digits (02-03).',
+    example: '02-03',
     format: '02',
     mediaTypes: ['tv'],
   },
   {
-    name: 'episodeEnd',
+    name: 'episode',
+    label: 'First episode number',
+    description:
+      'First episode of the file. Use with {episode:separator} and {episode:end} when each number needs its own literal prefix.',
+    example: '2',
+    format: 'start',
+    mediaTypes: ['tv'],
+  },
+  {
+    name: 'episode',
+    label: 'First episode number (zero-padded)',
+    description:
+      'First episode of the file, padded to two digits. Pair with {episode:separator} and {episode:end:02}.',
+    example: '02',
+    format: 'start:02',
+    mediaTypes: ['tv'],
+  },
+  {
+    name: 'episode',
     label: 'Last episode number',
     description:
-      'Last episode when the file is a multi-episode release, otherwise empty.',
+      'Last episode when the file is a multi-episode release, otherwise empty. Use with {episode:separator}.',
+    example: '3',
+    format: 'end',
+    mediaTypes: ['tv'],
+  },
+  {
+    name: 'episode',
+    label: 'Last episode number (zero-padded)',
+    description:
+      'Last episode of a multi-episode file, padded to two digits, otherwise empty.',
+    example: '03',
+    format: 'end:02',
+    mediaTypes: ['tv'],
+  },
+  {
+    name: 'episode',
+    label: 'Multi-episode separator',
+    description:
+      'Renders a hyphen only when the file covers more than one episode, otherwise empty. Never leaves a trailing separator on single episodes.',
+    example: '-',
+    format: 'separator',
+    mediaTypes: ['tv'],
+  },
+  {
+    name: 'episodeEnd',
+    label: 'Last episode number (alias)',
+    description:
+      'Alias for {episode:end}: the last episode when the file is multi-episode, otherwise empty. Prefer {episode} for ranges, which omits the separator for single episodes.',
     example: '3',
     mediaTypes: ['tv'],
   },
   {
     name: 'episodeEnd',
-    label: 'Last episode number (zero-padded)',
-    description: 'Multi-episode end number padded to two digits.',
+    label: 'Last episode number (alias, zero-padded)',
+    description:
+      'Alias for {episode:end:02}: multi-episode end number padded to two digits.',
     example: '03',
     format: '02',
     mediaTypes: ['tv'],
@@ -90,7 +137,7 @@ export const TEMPLATE_TOKENS: TemplateTokenInfo[] = [
     name: 'tag',
     label: 'Episode tag',
     description:
-      'Formatted season/episode tag such as S01E02. Also accepts {episodeTag}.',
+      'Formatted season/episode tag such as S01E02, or a multi-episode range such as S01E02-E03. Also accepts {episodeTag}.',
     example: 'S01E02',
     mediaTypes: ['tv'],
   },
@@ -98,7 +145,7 @@ export const TEMPLATE_TOKENS: TemplateTokenInfo[] = [
     name: 'name',
     label: 'Episode name',
     description:
-      'TVDB title of the matched episode. Also accepts {episodeName}.',
+      'TVDB title of the matched episode, or every title joined with a comma for a multi-episode file. Also accepts {episodeName}.',
     example: 'The Deep',
     mediaTypes: ['tv'],
   },
@@ -174,7 +221,7 @@ export const TEMPLATE_TOKENS: TemplateTokenInfo[] = [
     name: 'resolution',
     label: 'Resolution bucket',
     description:
-      'Resolution label such as 1080p, 4K, 576p or SD. Also accepts {resolutionBucket}.',
+      'Plex resolution bucket: 8K, 4K, 2K, 1080p, 720p, 576p, 480p or SD. Also accepts {resolutionBucket}.',
     example: '1080p',
   },
   {
@@ -244,6 +291,14 @@ const TEMPLATE_VALUE_FORMATTERS: Record<
   string,
   Record<string, TokenValueFormatter>
 > = {
+  episode: {
+    start: (value) => value.split('-')[0] ?? '',
+    end: (value) => {
+      const parts = value.split('-');
+      return parts.length > 1 ? parts[parts.length - 1] : '';
+    },
+    separator: (value) => (value.includes('-') ? '-' : ''),
+  },
   airDate: {
     short: (value) => value.slice(0, 7),
     year: (value) => value.slice(0, 4),
@@ -254,9 +309,18 @@ const TEMPLATE_VALUE_FORMATTERS: Record<
   },
 };
 
+/** Pads each numeric part; `3-4` becomes `03-04` and `-` stays `-`. */
+function padNumericParts(text: string, width: number): string {
+  return text
+    .split('-')
+    .map((part) => (/^\d+$/.test(part) ? part.padStart(width, '0') : part))
+    .join('-');
+}
+
 /**
- * Applies a numeric padding or named format to a token value. Returns
- * `undefined` when the format is not known for that token.
+ * Applies a numeric padding or named format to a token value. A format may
+ * combine a variant with a width (`{episode:start:02}`). Returns `undefined`
+ * when the format is not known for that token.
  */
 export function formatTemplateValue(
   name: string,
@@ -265,9 +329,15 @@ export function formatTemplateValue(
 ): string | undefined {
   const text = value === undefined || value === null ? '' : String(value);
   if (!format) return text;
-  if (/^\d+$/.test(format)) return text.padStart(Number(format), '0');
-  const formatter = TEMPLATE_VALUE_FORMATTERS[name]?.[format];
-  return formatter ? formatter(text) : undefined;
+  if (/^\d+$/.test(format)) return padNumericParts(text, Number(format));
+
+  const [variant, widthText] = format.split(':');
+  const formatter = TEMPLATE_VALUE_FORMATTERS[name]?.[variant];
+  if (!formatter) return undefined;
+  const formatted = formatter(text);
+  if (widthText === undefined) return formatted;
+  if (!/^\d+$/.test(widthText)) return undefined;
+  return padNumericParts(formatted, Number(widthText));
 }
 
 export function templateTokenCatalog(
@@ -287,7 +357,7 @@ export function exampleTemplateValues(
     seriesName: 'Blue Planet II',
     seriesYear: 2017,
     season: isTv ? 1 : '',
-    episode: isTv ? 2 : '',
+    episode: isTv ? '2-3' : '',
     episodeEnd: isTv ? 3 : '',
     tag: isTv ? 'S01E02' : '',
     episodeTag: isTv ? 'S01E02' : '',
@@ -315,7 +385,7 @@ export function exampleTemplateValues(
   };
 }
 
-const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::([a-zA-Z][a-zA-Z0-9_]*|\d+))?\}/g;
+const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)(?::([a-zA-Z0-9_]+(?::[a-zA-Z0-9_]+)?))?\}/g;
 
 export interface TemplateRenderExample {
   text: string;
