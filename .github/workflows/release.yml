@@ -176,9 +176,10 @@ jobs:
 
           copy dist/hbb-linux-x64/*.deb           "HBBatchBeast-$VERSION-linux-x64.deb"
           copy dist/hbb-linux-x64/*.rpm           "HBBatchBeast-$VERSION-linux-x64.rpm"
-          copy dist/hbb-windows-x64/Setup.exe     "HBBatchBeast-$VERSION-windows-x64-Setup.exe"
-          copy dist/hbb-windows-x64/*-full.nupkg  "HBBatchBeast-$VERSION-windows-x64-full.nupkg"
-          copy dist/hbb-windows-x64/RELEASES      "HBBatchBeast-$VERSION-windows-x64-RELEASES"
+          copy dist/hbb-windows-x64/*.exe         "HBBatchBeast-$VERSION-windows-x64-Setup.exe"
+          # RELEASES lists the nupkg filename, so both keep their Squirrel names.
+          copy dist/hbb-windows-x64/*-full.nupkg  "hbbatchbeast-$VERSION-full.nupkg"
+          copy dist/hbb-windows-x64/RELEASES      "RELEASES"
 
           for arch in arm64 x64; do
             copy "dist/hbb-macos-$arch/"*.dmg "HBBatchBeast-$VERSION-macos-$arch.dmg"
