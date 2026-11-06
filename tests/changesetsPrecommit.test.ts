@@ -160,13 +160,13 @@ describe('pendingChangesets', () => {
     expect(pendingChangesets(root)).toEqual(['one.md', 'two.md']);
   });
 
-  it('returns nothing when the folder is missing or already flattened', () => {
+  it('returns nothing when the folder is missing or already consumed', () => {
     const emptyRoot = makeTempRoot('no-changesets');
     expect(pendingChangesets(emptyRoot)).toEqual([]);
 
-    const flattenedRoot = makeTempRoot('flattened');
-    mkdirSync(path.join(flattenedRoot, '.changeset'));
-    writeFileSync(path.join(flattenedRoot, '.changeset', 'README.md'), '#');
-    expect(pendingChangesets(flattenedRoot)).toEqual([]);
+    const consumedRoot = makeTempRoot('consumed');
+    mkdirSync(path.join(consumedRoot, '.changeset'));
+    writeFileSync(path.join(consumedRoot, '.changeset', 'README.md'), '#');
+    expect(pendingChangesets(consumedRoot)).toEqual([]);
   });
 });

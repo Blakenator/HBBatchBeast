@@ -1,0 +1,46 @@
+name: Changesets
+
+on:
+  push:
+    branches: [master]
+
+# Versioning touches .changeset, package.json and CHANGELOG.md on a release branch,
+# so let queued runs finish instead of cancelling a half-pushed update.
+concurrency:
+  group: changesets-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  version:
+    name: Version pull request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # No `publish-script`: this job only maintains the version pull request.
+      # Building and publishing belong to the Release workflow, which runs when
+      # this pull request merges and the version in package.json changes.
+      - name: Create or update the version pull request
+        uses: changesets/action@v2.1.2
+        with:
+          version-script: pnpm release:version
+          commit-message: 'chore(release): version packages'
+          pr-title: 'chore(release): version packages'
+          create-github-releases: false

@@ -277,7 +277,7 @@ pnpm typecheck      # tsc --noEmit
 pnpm lint           # eslint (flat config)
 pnpm test           # vitest unit + fork-contract suites
 pnpm package        # unpacked build in out/
-pnpm make           # installers (deb/rpm/zip/squirrel) for the host platform
+pnpm make           # installers (deb/rpm/dmg/zip/squirrel) for the host platform
 ```
 
 Useful extras:
@@ -294,29 +294,60 @@ Useful extras:
 
 ## Versioning and releases
 
-Versions and changelog entries come from [changesets](https://changesets.dev). Any commit that changes
-the shipped app (`src/**`, `forge.config.ts`, the Vite configs, `packaging/**`, `index.html`) needs a
-pending changeset:
+Versions and changelog entries come from [changesets](https://changesets.dev). Any pull request that
+changes the shipped app (`src/**`, `forge.config.ts`, the Vite configs, `packaging/**`, `index.html`)
+needs a pending changeset:
 
 ```bash
 pnpm changeset          # describe the change and pick patch/minor/major
-git add .changeset/… && git commit
+git add .changeset/…    # then commit it with the rest of the change
 ```
 
-The husky pre-commit hook refuses such a commit without a changeset, and otherwise flattens every
-pending entry with `changeset version`, staging `package.json`, `CHANGELOG.md` and the consumed
-changeset files in the same commit. Docs, tests, CI and tooling changes do not need one.
+The husky pre-commit hook refuses such a commit without a pending changeset, but it never rewrites the
+version itself: the `.changeset/*.md` files travel with the pull request and automation takes over
+after the merge. Docs, tests, CI and tooling changes do not need one.
+
+### Release flow
+
+1. Merge the feature pull request into `master`, so its `.changeset/*.md` files land there.
+2. The **Changesets** workflow runs `changeset version` and opens or updates a
+   `chore(release): version packages` pull request that bumps `package.json`, rewrites `CHANGELOG.md`
+   and deletes the consumed changesets.
+3. Merge that pull request. Because it changed the version in `package.json`, the **Release** workflow
+   builds every target, tags `v<version>` and opens a **draft** GitHub Release using the new
+   `CHANGELOG.md` entry as its notes.
+4. Review the draft and publish it.
+
+The Release workflow is a no-op on ordinary pushes: it only continues when the pushed commit changed
+the version *and* no release exists for that version yet. Start it from the Actions tab
+(`workflow_dispatch`) to retry a failed build — delete the draft release first if the earlier run got
+that far.
+
+| Target | Assets |
+| --- | --- |
+| Windows x64 | `HBBatchBeast-<version>-windows-x64-Setup.exe` plus the Squirrel `.nupkg` and `RELEASES` |
+| macOS arm64 / x64 | `HBBatchBeast-<version>-macos-<arch>.dmg` and `.zip` |
+| Linux x64 | `HBBatchBeast-<version>-linux-x64.deb` and `.rpm` |
+
+Version tags are `v<version>`; tags from before changesets (`2.1.5`, `2.1.4`, …) keep their original
+form.
+
+### Manual fallbacks
 
 ```bash
-pnpm release:version    # manual flatten, if a commit bypassed the hook
-pnpm release            # annotate v<version> at HEAD after merging
-git push --follow-tags
-pnpm make               # build installers, then publish them on GitHub
+pnpm release:version    # run `changeset version` locally
+pnpm release            # tag v<version> at HEAD
+pnpm make               # build installers for the host platform and architecture
 ```
 
-Set `HBB_SKIP_CHANGESET_FLATTEN=1` to skip the hook for a single commit (for example while resolving a
-merge). Version tags are `v<version>`; tags from before changesets (`2.1.5`, `2.1.4`, …) keep their
-original form.
+Set `HBB_SKIP_CHANGESET_CHECK=1` to skip the pre-commit check for a single commit (for example while
+resolving a merge).
+
+### Repository settings
+
+The Changesets workflow opens pull requests with the default `GITHUB_TOKEN`, so
+**Settings → Actions → General → Workflow permissions** must allow GitHub Actions to create and approve
+pull requests. Without that checkbox the version pull request is never created.
 
 ## Changes from the original app
 

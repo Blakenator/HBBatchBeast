@@ -3,6 +3,7 @@ import path from 'path';
 import type { ForgeConfig, ResolvedForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
 /** Packaging runs once per target platform, so pick that platform's icon. */
@@ -69,6 +70,9 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({}),
+    // The options stay empty: passing `name` makes MakerDMG write `<name>.dmg`
+    // and drops the architecture, so the arm64 and x64 builds would collide.
+    new MakerDMG({}, ['darwin']),
     new MakerZIP({}, ['darwin']),
     {
       name: '@electron-forge/maker-rpm',

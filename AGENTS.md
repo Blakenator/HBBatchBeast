@@ -30,5 +30,6 @@ non-negotiables are:
 Validate with `pnpm typecheck`, `pnpm lint`, and `pnpm test`.
 
 Changes to `src/**`, the build configs, `packaging/**` or `index.html` need a changeset: run
-`pnpm changeset` and commit the generated `.changeset/*.md`. The husky pre-commit hook flattens it into
-`package.json` and `CHANGELOG.md`.
+`pnpm changeset` and commit the generated `.changeset/*.md` with the change. The husky pre-commit hook
+only checks that one is present; the `Changesets` workflow consumes it after the merge by running
+`changeset version` and opening the version pull request.

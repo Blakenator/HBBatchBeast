@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
  * Runs from `.husky/pre-commit`. Commits that change the shipped app must carry a
- * changeset, and any pending changeset is flattened into `package.json` and
- * `CHANGELOG.md` before the commit is created.
+ * pending changeset.
  *
- * Pass `--check` to validate without flattening or staging anything.
+ * Nothing is flattened here: the `Changesets` workflow runs `changeset version`
+ * on the default branch and opens the version pull request, which keeps the
+ * pending entries on disk until then.
  */
 
 /** Directories whose contents ship in the packaged app. */
@@ -23,7 +23,7 @@ const RELEASE_FILES = [
   'vite.preload.config.mts',
   'vite.renderer.config.mts',
 ];
-const SKIP_ENV = 'HBB_SKIP_CHANGESET_FLATTEN';
+const SKIP_ENV = 'HBB_SKIP_CHANGESET_CHECK';
 /** A commit cannot add a changeset while one of these operations is in flight. */
 const IN_PROGRESS_MARKERS = [
   'MERGE_HEAD',
@@ -179,38 +179,7 @@ function stagedVersionBumped(repoRoot) {
   return hasStagedVersionBump(head.stdout, index.stdout);
 }
 
-function flatten(repoRoot) {
-  let changesetCli;
-  try {
-    changesetCli = createRequire(import.meta.url).resolve(
-      '@changesets/cli/bin.js',
-    );
-  } catch {
-    return fail(
-      '`@changesets/cli` is not installed. Run `pnpm install` and commit again.',
-    );
-  }
-  const result = spawnSync(process.execPath, [changesetCli, 'version'], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-    windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    return fail('`changeset version` failed; the commit was aborted.');
-  }
-
-  const paths = ['package.json', 'CHANGELOG.md', '.changeset'].filter((entry) =>
-    fs.existsSync(path.join(repoRoot, entry)),
-  );
-  const staged = git(repoRoot, ['add', '-A', '--', ...paths], { quiet: true });
-  if (!staged.ok) {
-    return fail('Could not stage the flattened version and changelog.');
-  }
-  return 0;
-}
-
-function main(repoRoot, { checkOnly = false } = {}) {
+function main(repoRoot) {
   if (process.env[SKIP_ENV] === '1') {
     log(`Skipped because ${SKIP_ENV}=1.`);
     return 0;
@@ -232,27 +201,19 @@ function main(repoRoot, { checkOnly = false } = {}) {
   if (requiresChangeset(staged) && !described) {
     return fail(
       'This commit changes app code but has no pending changeset.\n' +
-        'Run `pnpm changeset`, commit the generated file, then commit again.',
+        'Run `pnpm changeset`, then commit the generated `.changeset/*.md` with the change.\n' +
+        'The Changesets workflow turns it into the next version and the release pull request.',
     );
   }
 
   if (changesets.length === 0) {
-    log('No pending changesets to flatten.');
+    log('No pending changesets to report.');
     return 0;
   }
 
   log(
     `Found ${changesets.length} pending changeset(s): ${changesets.join(', ')}`,
   );
-  if (checkOnly) {
-    log('Check mode: skipping `changeset version`.');
-    return 0;
-  }
-
-  log('Flattening with `changeset version`...');
-  const flattenStatus = flatten(repoRoot);
-  if (flattenStatus !== 0) return flattenStatus;
-  log('Staged package.json, CHANGELOG.md and the consumed changeset files.');
   return 0;
 }
 
@@ -265,7 +226,5 @@ if (isMain) {
     quiet: true,
   });
   const repoRoot = repoLookup.ok ? repoLookup.stdout.trim() : process.cwd();
-  process.exitCode = main(repoRoot, {
-    checkOnly: process.argv.includes('--check'),
-  });
+  process.exitCode = main(repoRoot);
 }

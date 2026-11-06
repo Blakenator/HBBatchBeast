@@ -1,0 +1,224 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # A release only happens when the pushed commit changed the version in
+  # package.json, which in this repository means the `changesets/action` version
+  # pull request was just merged. Ordinary pushes stop here.
+  gate:
+    name: Check for a new version
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Compare with the previous commit
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          version=$(jq -r .version package.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # A manual run skips the version comparison; the release-existence check
+          # below still guards it.
+          should_release=false
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            should_release=true
+          else
+            previous=$(git show "HEAD^:package.json" 2>/dev/null | jq -r .version || true)
+            if [ "$previous" != "$version" ]; then
+              should_release=true
+            fi
+          fi
+
+          # Re-runs and later pushes must not release the same version twice. Draft
+          # releases are visible here, so a half-finished run also blocks a retry
+          # until the draft is deleted.
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists; skipping."
+            should_release=false
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.label }}-${{ matrix.arch }}
+    needs: gate
+    if: needs.gate.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            label: linux
+            arch: x64
+          - os: windows-latest
+            platform: win32
+            label: windows
+            arch: x64
+          - os: macos-latest
+            platform: darwin
+            label: macos
+            arch: arm64
+          - os: macos-latest
+            platform: darwin
+            label: macos
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm fakeroot
+
+      - name: Build installers
+        run: pnpm make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      # Flattens out/make/<maker>/<platform>/<arch>/... into one directory so the
+      # artifact keeps plain filenames instead of the maker's directory tree, and
+      # so two legs can never silently overwrite each other.
+      - name: Stage installers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release
+          while IFS= read -r -d '' file; do
+            name=$(basename "$file")
+            if [ -e "release/$name" ]; then
+              echo "::error::duplicate installer name '$name'"
+              exit 1
+            fi
+            cp "$file" "release/$name"
+          done < <(find out/make -type f \( \
+            -name '*.exe' -o -name '*.nupkg' -o -name 'RELEASES' -o \
+            -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' \
+          \) -print0)
+
+          ls -l release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hbb-${{ matrix.label }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: release/*
+
+  publish:
+    name: Publish draft release
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keeps one directory per build artifact, so nothing can be overwritten here.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect release assets
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p assets
+          copy() {
+            if [ "$#" -ne 2 ]; then
+              echo "::error::expected one source and one destination, got $#: $*"
+              exit 1
+            fi
+            if [ ! -f "$1" ]; then
+              echo "::error::missing release artifact '$1'"
+              exit 1
+            fi
+            if [ -e "assets/$2" ]; then
+              echo "::error::duplicate release asset '$2'"
+              exit 1
+            fi
+            cp "$1" "assets/$2"
+          }
+
+          copy dist/hbb-linux-x64/*.deb           "HBBatchBeast-$VERSION-linux-x64.deb"
+          copy dist/hbb-linux-x64/*.rpm           "HBBatchBeast-$VERSION-linux-x64.rpm"
+          copy dist/hbb-windows-x64/Setup.exe     "HBBatchBeast-$VERSION-windows-x64-Setup.exe"
+          copy dist/hbb-windows-x64/*-full.nupkg  "HBBatchBeast-$VERSION-windows-x64-full.nupkg"
+          copy dist/hbb-windows-x64/RELEASES      "HBBatchBeast-$VERSION-windows-x64-RELEASES"
+
+          for arch in arm64 x64; do
+            copy "dist/hbb-macos-$arch/"*.dmg "HBBatchBeast-$VERSION-macos-$arch.dmg"
+            copy "dist/hbb-macos-$arch/"*.zip "HBBatchBeast-$VERSION-macos-$arch.zip"
+          done
+
+          ls -l assets
+
+      - name: Extract the changelog entry
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          awk -v heading="## $VERSION" '
+            $0 == heading { printing = 1; next }
+            /^## / { printing = 0 }
+            printing
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            printf 'HBBatchBeast %s\n' "$VERSION" > release-notes.md
+          fi
+
+      - name: Tag and create the draft release
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "v$VERSION" -m "HBBatchBeast $VERSION"
+            git push origin "v$VERSION"
+          fi
+
+          gh release create "v$VERSION" \
+            --draft \
+            --verify-tag \
+            --title "HBBatchBeast $VERSION" \
+            --notes-file release-notes.md \
+            assets/*
