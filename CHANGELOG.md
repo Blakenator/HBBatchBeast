@@ -1,5 +1,11 @@
 # hbbatchbeast
 
+## 2.3.1
+
+### Patch Changes
+
+- 5bb0faa: Add a macOS DMG to the release build, alongside the existing ZIP.
+
 ## 2.3.0
 
 ### Minor Changes

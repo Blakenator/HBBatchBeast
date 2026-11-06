@@ -1,7 +1,7 @@
 {
   "name": "hbbatchbeast",
   "productName": "HBBatchBeast",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "private": true,
   "description": "Batch convert video with HandBrake or FFmpeg: per-folder presets, filters, safe file handling and a live queue.",
   "main": ".vite/build/main.cjs",
