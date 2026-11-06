@@ -1,12 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [master, rewrite]
-  # The changesets version pull request only rewrites package.json, CHANGELOG.md and
-  # deletes the consumed changeset files. Nothing in it can affect the build, and
-  # because github-actions[bot] pushes it, GitHub holds its run behind the manual
-  # "approve workflows" prompt. Skipping it keeps that pull request a pure review gate.
+  # Pull requests only. Merges to master are covered by the Release workflow,
+  # which builds and publishes every target.
   pull_request:
     paths-ignore:
       - 'CHANGELOG.md'

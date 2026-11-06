@@ -2,3 +2,8 @@ onlyBuiltDependencies:
   - electron
   - electron-winstaller
   - esbuild
+  # appdmg (used by maker-dmg) reaches these through ds-store. They are native
+  # modules, and pnpm skips their node-gyp builds unless they are listed here, so
+  # the DMG maker fails with a missing build/Release/*.node file.
+  - fs-xattr
+  - macos-alias

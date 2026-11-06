@@ -68,7 +68,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned: the rpm maker's generated spec uses the pre-4.20 rpmbuild
+          # layout, and ubuntu-latest (26.04) ships rpm 4.20+, where %mkbuilddir
+          # moved the build tree and `cp -r usr/*` fails.
+          - os: ubuntu-24.04
             platform: linux
             label: linux
             arch: x64
