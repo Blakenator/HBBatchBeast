@@ -196,6 +196,67 @@ describe('organize service', () => {
     );
   });
 
+  it('warns when Plex uses TMDB episode ordering', async () => {
+    const lib = library();
+    const plan = await buildOrganizePlanForLibrary({
+      library: lib,
+      settings: lib.organize,
+      appPaths: paths,
+      platform: 'linux',
+      home: root,
+      tvdbClient: fakeClient,
+      probeMedia: async () => ({}),
+      catalog: {
+        movies: [],
+        episodes: [],
+        directories: [],
+        externalStreams: [],
+        libraryRoots: [
+          {
+            sectionId: 2,
+            name: 'TV Shows',
+            sectionType: 2,
+            rootPath: showFolder,
+            showOrdering: 'tmdbAiring',
+          },
+        ],
+      },
+    });
+
+    expect(plan.warnings.join('\n')).toMatch(/TMDB episode ordering/);
+    expect(plan.warnings.join('\n')).toMatch(/TheTVDB \(Aired\)/);
+  });
+
+  it('does not warn when Plex uses a TVDB episode order', async () => {
+    const lib = library();
+    const plan = await buildOrganizePlanForLibrary({
+      library: lib,
+      settings: lib.organize,
+      appPaths: paths,
+      platform: 'linux',
+      home: root,
+      tvdbClient: fakeClient,
+      probeMedia: async () => ({}),
+      catalog: {
+        movies: [],
+        episodes: [],
+        directories: [],
+        externalStreams: [],
+        libraryRoots: [
+          {
+            sectionId: 2,
+            name: 'TV Shows',
+            sectionType: 2,
+            rootPath: showFolder,
+            showOrdering: 'aired',
+          },
+        ],
+      },
+    });
+
+    expect(plan.warnings.join('\n')).not.toMatch(/TMDB episode ordering/);
+  });
+
   it('scans, plans sidecars and applies file moves with a journal', async () => {
     const lib = library();
     const plan = await buildOrganizePlanForLibrary({

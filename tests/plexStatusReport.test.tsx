@@ -123,6 +123,46 @@ describe('PlexStatusReport', () => {
     ).toBeTruthy();
   });
 
+  it('warns when Plex uses TMDB episode ordering', () => {
+    render(
+      <PlexStatusReport
+        check={{
+          ...check,
+          libraryOrdering: [
+            {
+              sectionId: 2,
+              name: 'TV Shows',
+              showOrdering: 'tmdbAiring',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/Plex episode ordering differs/)).toBeTruthy();
+    expect(screen.getByText(/TMDB episode ordering/)).toBeTruthy();
+    expect(screen.getByText(/TheTVDB \(Aired\)/)).toBeTruthy();
+  });
+
+  it('does not warn when Plex uses a TVDB episode order', () => {
+    render(
+      <PlexStatusReport
+        check={{
+          ...check,
+          libraryOrdering: [
+            {
+              sectionId: 2,
+              name: 'TV Shows',
+              showOrdering: 'aired',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText(/Plex episode ordering differs/)).toBeNull();
+  });
+
   it('can hide the fix action and manual commands', () => {
     render(
       <PlexStatusReport check={check} showAutoFix={false} showCommands={false} />,

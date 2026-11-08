@@ -1143,6 +1143,16 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setPlexFixSteps(undefined);
   }, [plex?.dbPath]);
 
+  // Surface Plex's episode ordering as soon as a TV library is opened, without
+  // waiting for the user to press Check or scan the whole library.
+  const checkedPlexOrdering = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!plex?.dbPath || current.mediaType !== 'tv') return;
+    if (checkedPlexOrdering.current === plex.dbPath) return;
+    checkedPlexOrdering.current = plex.dbPath;
+    void checkPlexDatabase();
+  }, [current.mediaType, plex?.dbPath]);
+
   const restored = useRef(false);
   useEffect(() => {
     if (restored.current) return;

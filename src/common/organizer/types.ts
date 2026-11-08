@@ -316,6 +316,14 @@ export interface OrganizePlexEnvironment {
   serviceKind: PlexServiceKind;
 }
 
+/** The episode ordering Plex uses for one TV library. */
+export interface PlexLibraryOrdering {
+  sectionId: number;
+  name: string;
+  /** Raw `pr:showOrdering` value, for example `aired` or `tmdbAiring`. */
+  showOrdering?: string;
+}
+
 export interface OrganizePlexCheck {
   path: string;
   exists: boolean;
@@ -329,6 +337,8 @@ export interface OrganizePlexCheck {
   remediation: PlexRemediation;
   /** True when this platform can offer a one-click fix. */
   canAutoFix: boolean;
+  /** TV library episode ordering read from the Plex database. */
+  libraryOrdering?: PlexLibraryOrdering[];
 }
 
 export interface OrganizePlexFixResult {

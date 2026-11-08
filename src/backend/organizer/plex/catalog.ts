@@ -2,13 +2,19 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { PlexWatchState } from '../../../common/organizer/types';
+import type {
+  PlexLibraryOrdering,
+  PlexWatchState,
+} from '../../../common/organizer/types';
+import { plexShowOrdering } from '../../../common/organizer/plexOrdering';
 
 export interface PlexLibraryRoot {
   sectionId: number;
   name: string;
   sectionType: number;
   rootPath: string;
+  /** `pr:showOrdering` from the library, for example `aired` or `tmdbAiring`. */
+  showOrdering?: string;
 }
 
 export interface PlexDirectory {
@@ -96,6 +102,14 @@ interface EpisodeRow extends MovieRow {
   seasonNumber: number;
   episodeNumber: number;
   episodeTitle: string;
+}
+
+interface LibraryRootRow {
+  sectionId: number;
+  name: string;
+  sectionType: number;
+  rootPath: string;
+  userFields: string | null;
 }
 
 function watchStatesByGuid(db: DatabaseSync): Map<string, PlexWatchState[]> {
@@ -291,6 +305,13 @@ interface TableInfoRow {
   name: string;
 }
 
+function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  const columns = db
+    .prepare(`PRAGMA table_info("${table}")`)
+    .all() as unknown as TableInfoRow[];
+  return columns.some((row) => row.name === column);
+}
+
 /**
  * Plex changes its schema between releases. Fail with an actionable message
  * instead of a raw `no such column` error from the first query.
@@ -320,14 +341,19 @@ export function readPlexCatalog(dbPath: string): PlexCatalog {
   try {
     assertPlexSchema(db);
     const watches = watchStatesByGuid(db);
+    // `user_fields` was added in a later Plex release. Treat an older database
+    // as having no episode-ordering preference rather than failing the scan.
+    const userFields = hasColumn(db, 'library_sections', 'user_fields')
+      ? 'ls.user_fields'
+      : 'NULL';
     const libraryRoots = db
       .prepare(
         `SELECT ls.id AS sectionId, ls.name AS name, ls.section_type AS sectionType,
-                sl.root_path AS rootPath
+                sl.root_path AS rootPath, ${userFields} AS userFields
          FROM library_sections ls
          JOIN section_locations sl ON sl.library_section_id = ls.id`,
       )
-      .all() as unknown as PlexLibraryRoot[];
+      .all() as unknown as LibraryRootRow[];
     const directories = db
       .prepare(
         `SELECT id, library_section_id AS librarySectionId,
@@ -380,12 +406,16 @@ export function readPlexCatalog(dbPath: string): PlexCatalog {
           : {}),
         url: stream.url,
       })),
-      libraryRoots: libraryRoots.map((root) => ({
-        sectionId: Number(root.sectionId),
-        name: root.name,
-        sectionType: Number(root.sectionType),
-        rootPath: root.rootPath,
-      })),
+      libraryRoots: libraryRoots.map((root) => {
+        const showOrdering = plexShowOrdering(root.userFields);
+        return {
+          sectionId: Number(root.sectionId),
+          name: root.name,
+          sectionType: Number(root.sectionType),
+          rootPath: root.rootPath,
+          ...(showOrdering ? { showOrdering } : {}),
+        };
+      }),
     };
   } finally {
     db.close();
@@ -437,6 +467,58 @@ function removeCopy(copyPath: string): void {
       fs.rmSync(file, { force: true });
     } catch {
       // Best effort.
+    }
+  }
+}
+
+interface LibraryOrderingRow {
+  sectionId: number;
+  name: string | null;
+  userFields: string | null;
+}
+
+function readPlexLibraryOrderingFrom(dbPath: string): PlexLibraryOrdering[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    if (!hasColumn(db, 'library_sections', 'user_fields')) return [];
+    const rows = db
+      .prepare(
+        `SELECT id AS sectionId, name, user_fields AS userFields
+         FROM library_sections WHERE section_type = 2`,
+      )
+      .all() as unknown as LibraryOrderingRow[];
+    return rows.map((row) => {
+      const showOrdering = plexShowOrdering(row.userFields);
+      return {
+        sectionId: Number(row.sectionId),
+        name: row.name ?? '',
+        ...(showOrdering ? { showOrdering } : {}),
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Reads only the TV library episode ordering. Used by the Plex status check so
+ * the UI can warn before a TVDB rename diverges from Plex's TMDB ordering.
+ */
+export function readPlexLibraryOrdering(
+  dbPath: string,
+  cacheDir: string,
+): PlexLibraryOrdering[] {
+  try {
+    return readPlexLibraryOrderingFrom(dbPath);
+  } catch {
+    const copyPath = copyDatabase(dbPath, cacheDir);
+    if (!copyPath) return [];
+    try {
+      return readPlexLibraryOrderingFrom(copyPath);
+    } catch {
+      return [];
+    } finally {
+      removeCopy(copyPath);
     }
   }
 }

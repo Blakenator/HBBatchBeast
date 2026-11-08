@@ -68,6 +68,7 @@ import {
   undoLastOrganize,
 } from './organizer/service';
 import { completePendingHistoryTransfers } from './organizer/plex/writer';
+import { readPlexLibraryOrdering } from './organizer/plex/catalog';
 import {
   plexDatabaseCandidates,
   plexExecutableCandidates,
@@ -305,6 +306,9 @@ async function inspectPlexDatabase(
   const access = plexAccessState(process.platform, dbPath);
   const status = await detectPlexService(process.platform);
   const exists = fs.existsSync(dbPath);
+  const libraryOrdering = exists
+    ? readPlexLibraryOrdering(dbPath, prepareAppPaths(app).cacheDir)
+    : [];
   const input = plexRemediationInput(
     app,
     dbPath,
@@ -323,6 +327,7 @@ async function inspectPlexDatabase(
     issues: plexIssues(input),
     remediation: plexRemediation(input),
     canAutoFix: canAutoFixPlex(input),
+    ...(libraryOrdering.length > 0 ? { libraryOrdering } : {}),
   };
 }
 

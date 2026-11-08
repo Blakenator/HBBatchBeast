@@ -1,4 +1,5 @@
 export * from './types';
+export * from './plexOrdering';
 export * from './settings';
 export * from './paths';
 export * from './filename';

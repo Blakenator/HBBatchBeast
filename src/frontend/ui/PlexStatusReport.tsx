@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
-import type {
-  OrganizePlexCheck,
-  PlexFixStep,
-  PlexIssue,
-  PlexRemediationStep,
+import { Alert } from 'react-bootstrap';
+import {
+  plexOrderingWarning,
+  type OrganizePlexCheck,
+  type PlexFixStep,
+  type PlexIssue,
+  type PlexRemediationStep,
 } from '../../common';
 import { copyText } from '../core/utils';
 import { Button } from './Button';
@@ -232,6 +234,7 @@ export const PlexStatusReport: React.FC<PlexStatusReportProps> = ({
   const service = check.running
     ? { color: 'var(--hb-warning)', icon: 'warning' as const, label: 'Plex running' }
     : { color: 'var(--hb-success)', icon: 'passed' as const, label: 'Plex stopped' };
+  const orderingWarning = plexOrderingWarning(check.libraryOrdering);
 
   return (
     <Wrap>
@@ -243,6 +246,16 @@ export const PlexStatusReport: React.FC<PlexStatusReportProps> = ({
           </Chip>
         ))}
       </StatusRow>
+
+      {orderingWarning && (
+        <Alert
+          variant="warning"
+          className="mb-0"
+          style={{ fontSize: 'var(--hb-font-sm)' }}
+        >
+          <strong>Plex episode ordering differs.</strong> {orderingWarning}
+        </Alert>
+      )}
 
       {check.issues.length > 0 && (
         <List aria-label="Plex issues">

@@ -35,6 +35,7 @@ import {
   pickBestSeries,
   guessSeriesQuery,
   normalizeSubpath,
+  plexOrderingWarning,
   rankMovies,
   resolutionBucket,
   resolveEpisode,
@@ -1101,6 +1102,41 @@ async function buildMoviePlan(
   return plan;
 }
 
+/**
+ * Plex section orderings that can affect this plan. Prefer the sections the
+ * planned files are actually associated with, then fall back to matching the
+ * Plex root paths against the library's source folders.
+ */
+function plexOrderingsForPlan(
+  catalog: PlexCatalog | undefined,
+  library: Library,
+  home: string,
+  plan: OrganizePlan,
+) {
+  if (!catalog) return [];
+  const sectionIds = new Set(
+    plan.items.flatMap((item) =>
+      item.plex?.librarySectionId ? [item.plex.librarySectionId] : [],
+    ),
+  );
+  if (sectionIds.size > 0) {
+    return catalog.libraryRoots.filter((root) =>
+      sectionIds.has(root.sectionId),
+    );
+  }
+  const libraryRoots = library.folders
+    .map((folder) => expandHomePath(folder.source, home).trim())
+    .filter(Boolean)
+    .map((source) => path.resolve(source));
+  return catalog.libraryRoots.filter((root) =>
+    libraryRoots.some(
+      (libraryRoot) =>
+        isPathInside(root.rootPath, libraryRoot) ||
+        isPathInside(libraryRoot, root.rootPath),
+    ),
+  );
+}
+
 /** Scans the selected library folders and returns a reviewable plan. */
 export async function buildOrganizePlanForLibrary(
   options: OrganizePlanOptions,
@@ -1339,8 +1375,15 @@ export async function buildOrganizePlanForLibrary(
           onPlanned,
           onPlanning,
         );
+  const orderingWarning =
+    options.library.mediaType === 'tv'
+      ? plexOrderingWarning(
+          plexOrderingsForPlan(catalog, options.library, home, plan),
+        )
+      : undefined;
   plan.warnings.unshift(
     ...(catalogWarning ? [catalogWarning] : []),
+    ...(orderingWarning ? [orderingWarning] : []),
     ...scanWarnings,
   );
   plan.libraryId = options.library.id;
