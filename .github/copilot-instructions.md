@@ -66,3 +66,38 @@ finishing.
 Changes that touch `src/**`, `forge.config.ts`, the `vite.*.config.mts` files, `packaging/**` or
 `index.html` need a changeset. Run `pnpm changeset`, commit the generated `.changeset/*.md`, and let
 the husky pre-commit hook flatten it into `package.json` and `CHANGELOG.md`.
+## OpenCode Notes
+
+When this repository is used from OpenCode (rather than GitHub Copilot):
+
+### Tool Equivalents
+
+| Cursor / Copilot concept | OpenCode tool |
+|---|---|
+| `vscode_askQuestions` / `ask_user` | `question` |
+| `manage_todo_list` | `todowrite` (experimental) or a plan checklist |
+| `read_file` / `Read` | `read` |
+| `grep_search` / `Grep` | `grep` |
+| `file_search` | `glob` |
+| `replace_string_in_file` / `Edit` | `edit` |
+| `create_file` | `write` |
+| `run_in_terminal` / terminal | `shell` |
+| `write_agent` / `read_agent` | `subagent` |
+| `runPlaywrightCode` / browser tools | `browser` |
+
+### Instruction Loading
+
+OpenCode reads `AGENTS.md`, plus any files listed in `opencode.json` under
+`instructions`. It also discovers skills configured under `skills`. This
+repository's `opencode.json` lists the relevant sources, so the routing table
+and skills remain available.
+
+Cursor `.mdc` frontmatter (`alwaysApply`, `globs`) is **not** interpreted by
+OpenCode. Use the Always-Apply Rules in this file and the Domain Routing Table
+to decide which `.mdc` files to read.
+
+### Subagents
+
+Use the `subagent` tool with the agent ID, not a free-form persona name. The
+feature-team IDs are: `product-manager`, `architect`, `engineer`, `reviewer`,
+`ux-designer`, `product-marketer`.
