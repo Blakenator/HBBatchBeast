@@ -19,6 +19,8 @@ export interface TvdbEpisode {
   episodeNumber: number;
   absoluteNumber?: number;
   airDate?: string;
+  /** Expected runtime from the TVDB episode page, when one is listed. */
+  runtimeMinutes?: number;
 }
 
 export interface TvdbMovie {
@@ -173,6 +175,8 @@ export interface PlexAssociation {
   libraryRoot?: string;
   /** Plex `originally_available_at`, reduced to YYYY-MM-DD. */
   airDate?: string;
+  /** Metadata runtime in milliseconds. */
+  durationMs?: number;
   directoryId?: number;
   directoryPath?: string;
   watchCount: number;
@@ -198,6 +202,11 @@ export interface OrganizePlanItem {
   relativeTarget: string;
   action: OrganizeItemAction;
   reason?: string;
+  /**
+   * Match explanation before a target conflict replaced `reason`. Restored when
+   * the conflict is later resolved and the row becomes a rename again.
+   */
+  matchReason?: string;
   confidence?: number;
   ruleId?: string;
   /** Primary (first) episode of the match. */

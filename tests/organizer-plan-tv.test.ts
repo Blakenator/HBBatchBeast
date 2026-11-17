@@ -160,11 +160,53 @@ describe('multi-show TV plans', () => {
       files: [first, second],
     });
 
-    // The second file is renamed into the same show folder, so the first
-    // target is taken and the second is reported as a conflict.
-    expect(plan.items.map((item) => item.action)).toContain('conflict');
+    // Both files are renamed into the same show folder, so every row in the
+    // group is reported as a conflict rather than only the later one.
+    expect(plan.items.map((item) => item.action)).toEqual([
+      'conflict',
+      'conflict',
+    ]);
+    expect(plan.items[0].reason).toBe(
+      'Target name is already planned for S01E01.mkv',
+    );
     expect(plan.items[1].reason).toBe(
       'Target name is already planned for S01E01.mkv',
+    );
+  });
+
+  it('marks every row that shares a target as a conflict', () => {
+    const files = ['Copy A', 'Copy B', 'Copy C'].map((folder, index) =>
+      file(
+        '/media/tv',
+        `${folder}/release-${index + 1}.mkv`,
+        folder,
+        'Blue Planet II',
+      ),
+    );
+    const plan = buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/media/tv'],
+      rules,
+      confidenceThreshold: 0,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+      files,
+    });
+
+    expect(plan.items.map((item) => item.action)).toEqual([
+      'conflict',
+      'conflict',
+      'conflict',
+    ]);
+    expect(plan.items.map((item) => item.reason)).toEqual([
+      'Target name is already planned for release-2.mkv, release-3.mkv',
+      'Target name is already planned for release-1.mkv, release-3.mkv',
+      'Target name is already planned for release-1.mkv, release-2.mkv',
+    ]);
+    expect(plan.warnings).toContain(
+      '3 target path conflict(s) must be resolved.',
     );
   });
 

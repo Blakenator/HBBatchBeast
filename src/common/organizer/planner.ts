@@ -286,6 +286,24 @@ function uniqueInputFiles(
 }
 
 /**
+ * Reason for a row whose target is also planned by other files. Each row names
+ * the other files so every member of the group is easy to find, not just the
+ * most recently planned one.
+ */
+function plannedTargetConflictReason(
+  item: OrganizePlanItem,
+  group: OrganizePlanItem[],
+): string {
+  const others = group
+    .filter((other) => other !== item)
+    .map((other) => pathBasename(other.sourcePath));
+  const shown = others.slice(0, 3);
+  const remaining = others.length - shown.length;
+  const suffix = remaining > 0 ? ` and ${remaining} more` : '';
+  return `Target name is already planned for ${shown.join(', ')}${suffix}`;
+}
+
+/**
  * Pure plan builder shared by the backend and the review UI. It never touches
  * the filesystem; callers supply discovered paths and Plex associations.
  */
@@ -298,8 +316,6 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
     ),
   );
   const used = new Set(existingKeys);
-  /** First source file that plans a given target, used for conflict wording. */
-  const targetOwners = new Map<string, string>();
   const sourceKeys = new Set(
     files.map((file) =>
       organizerComparisonKey(file.path, {
@@ -461,6 +477,7 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
 
     let action: OrganizePlanItem['action'] = 'rename';
     let reason = file.reason || 'Matched';
+    let matchReason: string | undefined;
     if (manualSkip) {
       action = 'skip';
       reason = 'Skipped manually';
@@ -477,11 +494,8 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
           reason = `${file.reason || 'Matched'} (collision renamed)`;
         } else {
           action = 'conflict';
-          const owner = targetOwners.get(targetKey);
-          reason =
-            owner && !existingKeys.has(targetKey)
-              ? `Target name is already planned for ${pathBasename(owner)}`
-              : 'Target already exists';
+          matchReason = reason;
+          reason = 'Target already exists';
         }
       }
       if (action === 'rename' && folderOnly) {
@@ -505,19 +519,18 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
         : [];
 
     if (!manualSkip) {
-      const claimedKey = organizerComparisonKey(targetPath, {
-        caseInsensitive: input.caseInsensitive,
-      });
-      if (!targetOwners.has(claimedKey) && !existingKeys.has(claimedKey)) {
-        targetOwners.set(claimedKey, file.path);
-      }
-      used.add(claimedKey);
+      used.add(
+        organizerComparisonKey(targetPath, {
+          caseInsensitive: input.caseInsensitive,
+        }),
+      );
     }
     items.push({
       ...base,
       ...manualSkipProps,
       action,
       reason,
+      ...(matchReason ? { matchReason } : {}),
       targetPath,
       relativeTarget,
       sidecars,
@@ -525,6 +538,37 @@ export function buildOrganizePlan(input: OrganizePlanInput): OrganizePlan {
       ...(folderOnly ? { folderOnly: true } : {}),
       ...(noChange ? { noChange: true } : {}),
     });
+  }
+
+  // A target shared by several planned rows is a conflict for *every* row, not
+  // only the last one planned. Otherwise the first row looks safe to apply while
+  // its sibling silently reports the collision, which is hard to trace back.
+  const plannedTargets = new Map<string, OrganizePlanItem[]>();
+  for (const item of items) {
+    if (item.manualSkip) continue;
+    if (item.action !== 'rename' && item.action !== 'conflict') continue;
+    const key = organizerComparisonKey(item.targetPath, {
+      caseInsensitive: input.caseInsensitive,
+    });
+    const group = plannedTargets.get(key);
+    if (group) {
+      group.push(item);
+    } else {
+      plannedTargets.set(key, [item]);
+    }
+  }
+  for (const [key, group] of plannedTargets) {
+    if (group.length < 2) continue;
+    const existsOnDisk = existingKeys.has(key) && !sourceKeys.has(key);
+    for (const item of group) {
+      item.action = 'conflict';
+      item.matchReason = item.matchReason ?? item.reason;
+      item.reason = existsOnDisk
+        ? 'Target already exists'
+        : plannedTargetConflictReason(item, group);
+      item.sidecars = [];
+      item.caseOnly = undefined;
+    }
   }
 
   if (input.mediaType === 'tv') {

@@ -217,7 +217,7 @@ describe('manual skips and plan recalculation', () => {
   it('manual skips release a conflicting target for the other row', () => {
     const plan = conflictedPlan();
     expect(plan.items.map((item) => item.action)).toEqual([
-      'rename',
+      'conflict',
       'conflict',
     ]);
 
@@ -233,6 +233,38 @@ describe('manual skips and plan recalculation', () => {
       sidecars: [],
     });
     expect(next.items[1].action).toBe('rename');
+    expect(next.items[1].reason).toBe('Matched');
+  });
+
+  it('releases the sibling row when one conflict is fixed', () => {
+    const plan = conflictedPlan();
+    expect(plan.items.map((item) => item.action)).toEqual([
+      'conflict',
+      'conflict',
+    ]);
+    expect(plan.items[0].matchReason).toBe('Matched');
+
+    const settings = createOrganizeSettings('tv');
+    const next = applyPlanOverride(
+      plan,
+      plan.items[0].id,
+      {
+        episode: {
+          tag: 'S01E02',
+          name: 'The Deep',
+          seasonNumber: 1,
+          episodeNumber: 2,
+        },
+      },
+      { settings, mediaType: 'tv' },
+    );
+
+    expect(next.items[0].action).toBe('rename');
+    expect(next.items[0].targetPath).toBe(
+      '/media/tv/Blue Planet II/Season 01/S01E02 - The Deep.mkv',
+    );
+    expect(next.items[1].action).toBe('rename');
+    expect(next.items[1].reason).toBe('Matched');
   });
 
   it('re-plans naming changes while keeping manual skips and sidecars', () => {

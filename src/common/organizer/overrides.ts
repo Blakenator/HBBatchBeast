@@ -95,7 +95,7 @@ function plannedInputFor(
     sidecars: item.sidecars.map((sidecar) => sidecar.sourcePath),
     parsed,
     confidence: override ? 1 : (item.confidence ?? 0),
-    reason: override ? 'Manual match' : (item.reason ?? ''),
+    reason: override ? 'Manual match' : (item.matchReason ?? item.reason ?? ''),
     ...(item.approved ? { approved: true } : {}),
     ...(item.renameFolderOnly ? { renameFolderOnly: true } : {}),
     ...(episode ? { episode } : {}),
@@ -182,6 +182,17 @@ export function applyPlanOverride(
   });
   const next = replanned.items[0];
   if (!next) return plan;
+  // A conflict group can only clear once the other rows are re-evaluated too;
+  // otherwise fixing this row would leave its former siblings stuck in conflict.
+  if (
+    override &&
+    plan.items.some(
+      (candidate) =>
+        candidate.id !== item.id && candidate.action === 'conflict',
+    )
+  ) {
+    return applyPlanOverrides(plan, new Map([[item.id, override]]), options);
+  }
   return {
     ...plan,
     items: plan.items.map((candidate) =>
@@ -197,6 +208,55 @@ export function applyPlanOverride(
           : { ...next, id: item.id }
         : candidate,
     ),
+  };
+}
+
+/**
+ * Re-plans a whole selection after several manual match changes (for example a
+ * batch of detected or sequential multi-episode ranges). Building the plan once
+ * keeps collisions between the changed rows intact.
+ */
+export function applyPlanOverrides(
+  plan: OrganizePlan,
+  overrides: ReadonlyMap<string, OrganizeMatchOverride>,
+  options: {
+    settings: OrganizeSettings;
+    mediaType: MediaType;
+    caseInsensitive?: boolean;
+  },
+): OrganizePlan {
+  if (overrides.size === 0) return plan;
+  const caseInsensitive =
+    options.caseInsensitive ?? options.settings.caseInsensitive ?? false;
+  const files = plan.items.map((item) =>
+    plannedInputFor(item, overrides.get(item.id)),
+  );
+  const existingPaths = plan.items.flatMap((item) => [
+    item.sourcePath,
+    ...item.sidecars.map((sidecar) => sidecar.sourcePath),
+  ]);
+  const replanned = buildOrganizePlan({
+    mediaType: options.mediaType,
+    sourceRoots: plan.sourceRoots,
+    files,
+    rules: options.settings.namingRules,
+    // Overridden rows carry confidence 1, so they stay renames even at the
+    // library threshold; untouched low-confidence rows keep their current skip.
+    confidenceThreshold: options.settings.confidenceThreshold,
+    renameMovieFolders: options.settings.renameMovieFolders,
+    caseInsensitive,
+    collisions: options.settings.collisions,
+    sidecarPolicy: options.settings.sidecars,
+    existingPaths,
+    skippedPaths: plan.items
+      .filter((item) => item.manualSkip)
+      .map((item) => item.id),
+  });
+  const byId = new Map(replanned.items.map((item) => [item.id, item]));
+  return {
+    ...plan,
+    items: plan.items.map((item) => byId.get(item.id) ?? item),
+    warnings: mergePlanWarnings(plan.warnings, replanned.warnings),
   };
 }
 
