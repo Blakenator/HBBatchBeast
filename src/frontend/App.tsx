@@ -2,17 +2,16 @@ import React from 'react';
 import { HomePage } from './home/HomePage';
 import { IntlMessagesProvider } from './core/IntlMessagesProvider';
 import { GlobalStyle } from './ui/globalStyle';
-import { applyThemeMode } from './ui/applyTheme';
 
-import { createRoot } from 'react-dom/client';
-
-applyThemeMode();
-
-const domNode = document.getElementById('root');
-const root = createRoot(domNode);
-root.render(
+/**
+ * The application root. It lives in its own module so React Fast Refresh can
+ * swap it (and any component below it) without reloading the window.
+ */
+export const App: React.FC = () => (
   <IntlMessagesProvider>
     <GlobalStyle />
     <HomePage />
-  </IntlMessagesProvider>,
+  </IntlMessagesProvider>
 );
+
+export default App;

@@ -28,8 +28,17 @@
 
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'react-toastify/dist/ReactToastify.css';
-import './frontend/App';
 
-console.log(
-  '👋 This message is being logged by "renderer.ts", included via Vite',
-);
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './frontend/App';
+import { applyThemeMode } from './frontend/ui/applyTheme';
+
+applyThemeMode();
+
+const domNode = document.getElementById('root');
+if (!domNode) {
+  throw new Error('Renderer root element (#root) is missing from index.html');
+}
+
+createRoot(domNode).render(<App />);
