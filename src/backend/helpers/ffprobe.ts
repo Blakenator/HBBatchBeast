@@ -43,19 +43,12 @@ export function ffprobeExecutablePath(): string {
 const MAX_PROBE_BYTES = 8 * 1024 * 1024;
 const PROBE_TIMEOUT_MS = 30_000;
 
-/** Runs ffprobe and resolves its parsed JSON. */
-export function runFfprobe(filePath: string): Promise<RawProbe> {
+/** Runs ffprobe with explicit arguments and resolves stdout. */
+export function runFfprobeArgs(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       ffprobeExecutablePath(),
-      [
-        '-hide_banner',
-        '-show_format',
-        '-show_streams',
-        '-print_format',
-        'json',
-        filePath,
-      ],
+      args,
       {
         maxBuffer: MAX_PROBE_BYTES,
         timeout: PROBE_TIMEOUT_MS,
@@ -65,25 +58,35 @@ export function runFfprobe(filePath: string): Promise<RawProbe> {
         if (error) {
           reject(
             new Error(
-              `ffprobe failed for "${filePath}": ${error.message}${
-                stderr ? `\n${stderr}` : ''
-              }`,
+              `ffprobe failed: ${error.message}${stderr ? `\n${stderr}` : ''}`,
             ),
           );
           return;
         }
-        try {
-          resolve(JSON.parse(stdout) as RawProbe);
-        } catch (parseError) {
-          reject(
-            new Error(
-              `Could not parse ffprobe output for "${filePath}": ${
-                parseError instanceof Error ? parseError.message : String(parseError)
-              }`,
-            ),
-          );
-        }
+        resolve(stdout);
       },
     );
   });
+}
+
+/** Runs ffprobe and resolves its parsed JSON. */
+export async function runFfprobe(filePath: string): Promise<RawProbe> {
+  const stdout = await runFfprobeArgs([
+    '-hide_banner',
+    '-show_format',
+    '-show_streams',
+    '-print_format',
+    'json',
+    filePath,
+  ]);
+  try {
+    return JSON.parse(stdout) as RawProbe;
+  } catch (parseError) {
+    throw new Error(
+      `Could not parse ffprobe output for "${filePath}": ${
+        parseError instanceof Error ? parseError.message : String(parseError)
+      }`,
+      { cause: parseError },
+    );
+  }
 }

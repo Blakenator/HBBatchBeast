@@ -7,6 +7,7 @@ import {
   createOrganizeSettings,
   type OrganizePlan,
   type OrganizePlanItem,
+  type OrganizeSplitPlan,
 } from '../src/common';
 
 // jsdom reports zero-size elements; the virtualizer needs a viewport.
@@ -52,7 +53,12 @@ const baseItem: OrganizePlanItem = {
   confidence: 0.98,
   reason: 'Tag and filename title match S01E01 - One Ocean',
   sidecars: [],
-  episode: { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+  episode: {
+    tag: 'S01E01',
+    name: 'One Ocean',
+    seasonNumber: 1,
+    episodeNumber: 1,
+  },
   parsed: { title: 'Blue Planet', cleanTitle: 'blue planet' },
   showFolder: 'Blue Planet II',
   seriesName: 'Blue Planet II',
@@ -137,6 +143,10 @@ function renderTable(
       onSelectedChange={onSelectedChange}
       onFixMatch={onFixMatch}
       onSkipChange={onSkipChange}
+      onMultiEpisode={vi.fn()}
+      splits={[]}
+      onSplit={vi.fn()}
+      onRemoveSplit={vi.fn()}
       onBulkAction={onBulkAction}
     />,
   );
@@ -205,8 +215,7 @@ describe('OrganizePlanTable', () => {
       id: 'folder-rename',
       sourcePath: '/media/tv/Blue.Planet.II.2017/S01E01.mkv',
       sourceRelativePath: 'Blue.Planet.II.2017/S01E01.mkv',
-      targetPath:
-        '/media/tv/Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
+      targetPath: '/media/tv/Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
       relativeTarget: 'Blue Planet II/Season 01/S01E01 - One Ocean.mkv',
     };
     const { container } = renderTable(vi.fn(), 'tv', {
@@ -229,7 +238,9 @@ describe('OrganizePlanTable', () => {
     renderTable(vi.fn(), 'movies');
     expect(screen.queryByRole('columnheader', { name: 'Show' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Season' })).toBeNull();
-    expect(screen.getByRole('columnheader', { name: 'Current name' })).toBeTruthy();
+    expect(
+      screen.getByRole('columnheader', { name: 'Current name' }),
+    ).toBeTruthy();
   });
 
   it('highlights the changed name tokens', () => {
@@ -276,10 +287,8 @@ describe('OrganizePlanTable', () => {
       id: 'hyphen',
       sourcePath: '/media/tv/Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
       sourceRelativePath: 'Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
-      relativeTarget:
-        'Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
-      targetPath:
-        '/media/tv/Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      relativeTarget: 'Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
+      targetPath: '/media/tv/Family Guy/Season 10/S10E20 - Leggo My Meg-O.mkv',
       episode: {
         tag: 'S10E20',
         name: 'Leggo My Meg-O',
@@ -497,9 +506,9 @@ describe('OrganizePlanTable show tree and skip actions', () => {
     renderTable();
     fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
 
-    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
-      0,
-    );
+    expect(
+      screen.queryAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(0);
     const group = screen.getByRole('button', {
       name: /Expand Blue Planet II/,
     });
@@ -511,9 +520,9 @@ describe('OrganizePlanTable show tree and skip actions', () => {
     fireEvent.click(
       screen.getByRole('button', { name: /Collapse Blue Planet II/ }),
     );
-    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
-      0,
-    );
+    expect(
+      screen.queryAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(0);
   });
 
   it('still allows collapsing a group while a filter is active', () => {
@@ -527,9 +536,9 @@ describe('OrganizePlanTable show tree and skip actions', () => {
     fireEvent.click(
       screen.getByRole('button', { name: /Collapse Blue Planet II/ }),
     );
-    expect(screen.queryAllByRole('button', { name: /More actions for/ })).toHaveLength(
-      0,
-    );
+    expect(
+      screen.queryAllByRole('button', { name: /More actions for/ }),
+    ).toHaveLength(0);
   });
 
   it('keeps a complete, collapsible show header while its files scroll', () => {
@@ -552,7 +561,9 @@ describe('OrganizePlanTable show tree and skip actions', () => {
     ).toBeTruthy();
     // The header lives in normal flow inside its group, so CSS sticky can pin
     // the real row (checkbox, collapse button and stats) instead of a copy.
-    expect(container.querySelectorAll('[role="row"]').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('[role="row"]').length).toBeGreaterThan(
+      0,
+    );
 
     fireEvent.scroll(screen.getByRole('grid', { name: 'Organize review' }), {
       target: { scrollTop: 120 },
@@ -610,17 +621,12 @@ describe('OrganizePlanTable show tree and skip actions', () => {
 describe('OrganizePlanTable selection and bulk actions', () => {
   it('selects any row, including conflicts', () => {
     const onSelectedChange = vi.fn();
-    renderTable(
-      vi.fn(),
-      'tv',
-      plan,
-      vi.fn(),
-      new Set(),
-      onSelectedChange,
-    );
+    renderTable(vi.fn(), 'tv', plan, vi.fn(), new Set(), onSelectedChange);
 
     fireEvent.click(
-      screen.getByRole('checkbox', { name: `Select ${conflictItem.sourcePath}` }),
+      screen.getByRole('checkbox', {
+        name: `Select ${conflictItem.sourcePath}`,
+      }),
     );
 
     expect(onSelectedChange).toHaveBeenCalledTimes(1);
@@ -661,22 +667,12 @@ describe('OrganizePlanTable selection and bulk actions', () => {
 
   it('marks only the chosen row as folder-only', () => {
     const onBulkAction = vi.fn();
-    renderTable(
-      vi.fn(),
-      'tv',
-      plan,
-      vi.fn(),
-      new Set(),
-      vi.fn(),
-      onBulkAction,
-    );
+    renderTable(vi.fn(), 'tv', plan, vi.fn(), new Set(), vi.fn(), onBulkAction);
 
     fireEvent.click(
       screen.getAllByRole('button', { name: /More actions for/ })[0],
     );
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Rename folder only' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Rename folder only' }));
 
     expect(onBulkAction).toHaveBeenCalledTimes(1);
     expect(onBulkAction).toHaveBeenCalledWith('folderOnly', [
@@ -704,15 +700,7 @@ describe('OrganizePlanTable selection and bulk actions', () => {
 
   it('approves only the row chosen in its action menu', () => {
     const onBulkAction = vi.fn();
-    renderTable(
-      vi.fn(),
-      'tv',
-      plan,
-      vi.fn(),
-      new Set(),
-      vi.fn(),
-      onBulkAction,
-    );
+    renderTable(vi.fn(), 'tv', plan, vi.fn(), new Set(), vi.fn(), onBulkAction);
 
     fireEvent.click(
       screen.getAllByRole('button', { name: /More actions for/ })[0],
@@ -729,20 +717,15 @@ describe('OrganizePlanTable selection and bulk actions', () => {
 describe('OrganizePlanTable range and group selection', () => {
   it('supports shift-click range selection across visible rows', () => {
     const onSelectedChange = vi.fn();
-    renderTable(
-      vi.fn(),
-      'tv',
-      plan,
-      vi.fn(),
-      new Set(),
-      onSelectedChange,
-    );
+    renderTable(vi.fn(), 'tv', plan, vi.fn(), new Set(), onSelectedChange);
 
     fireEvent.click(
       screen.getByRole('checkbox', { name: `Select ${baseItem.sourcePath}` }),
     );
     fireEvent.click(
-      screen.getByRole('checkbox', { name: `Select ${conflictItem.sourcePath}` }),
+      screen.getByRole('checkbox', {
+        name: `Select ${conflictItem.sourcePath}`,
+      }),
       { shiftKey: true },
     );
 
@@ -753,14 +736,7 @@ describe('OrganizePlanTable range and group selection', () => {
 
   it('selects every file in a show from the group header', () => {
     const onSelectedChange = vi.fn();
-    renderTable(
-      vi.fn(),
-      'tv',
-      plan,
-      vi.fn(),
-      new Set(),
-      onSelectedChange,
-    );
+    renderTable(vi.fn(), 'tv', plan, vi.fn(), new Set(), onSelectedChange);
     fireEvent.click(screen.getByRole('radio', { name: 'Show tree' }));
 
     fireEvent.click(
@@ -772,5 +748,310 @@ describe('OrganizePlanTable range and group selection', () => {
     const next = onSelectedChange.mock.calls.at(-1)?.[0] as Set<string>;
     expect(next.has(baseItem.id)).toBe(true);
     expect(next.has(conflictItem.id)).toBe(true);
+  });
+});
+
+describe('OrganizePlanTable split queue', () => {
+  const ep1 = {
+    tag: 'S01E01',
+    name: 'One Ocean',
+    seasonNumber: 1,
+    episodeNumber: 1,
+  };
+  const ep2 = {
+    tag: 'S01E02',
+    name: 'The Deep',
+    seasonNumber: 1,
+    episodeNumber: 2,
+  };
+  const multiItem: OrganizePlanItem = {
+    ...baseItem,
+    id: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    sourcePath: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    sourceRelativePath: 'Blue Planet II/S01E01-E02.mkv',
+    targetPath: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    relativeTarget: 'Blue Planet II/S01E01-E02.mkv',
+    action: 'skip',
+    reason: 'Already named',
+    episode: ep1,
+    episodes: [ep1, ep2],
+  };
+  const multiPlan: OrganizePlan = {
+    ...plan,
+    items: [multiItem],
+  };
+  const split: OrganizeSplitPlan = {
+    itemId: multiItem.id,
+    sourcePath: multiItem.sourcePath,
+    fileSize: 10,
+    fileDurationSeconds: 120,
+    estimate: { method: 'tvdb' },
+    cutMode: 'copy',
+    originalPolicy: 'backup',
+    sidecarPolicy: 'leave',
+    segments: [
+      { index: 0, startSeconds: 0, endSeconds: 60, episode: ep1 },
+      { index: 1, startSeconds: 60, endSeconds: 120, episode: ep2 },
+    ],
+    updatedAt: 1,
+  };
+
+  function renderSplitTable(
+    onSplit = vi.fn(),
+    onRemoveSplit = vi.fn(),
+    splits: OrganizeSplitPlan[] = [],
+    rowItem: OrganizePlanItem = multiItem,
+  ) {
+    return render(
+      <OrganizePlanTable
+        plan={{ ...multiPlan, items: [rowItem] }}
+        settings={createOrganizeSettings('tv')}
+        mediaType="tv"
+        selected={new Set([rowItem.id])}
+        onSelectedChange={vi.fn()}
+        onFixMatch={vi.fn()}
+        onSkipChange={vi.fn()}
+        onMultiEpisode={vi.fn()}
+        splits={splits}
+        onSplit={onSplit}
+        onRemoveSplit={onRemoveSplit}
+        onBulkAction={vi.fn()}
+      />,
+    );
+  }
+
+  it('offers a bulk split for selected multi-episode rows', () => {
+    const onSplit = vi.fn();
+    renderSplitTable(onSplit);
+    fireEvent.click(screen.getByRole('button', { name: 'Split files (1)' }));
+    expect(onSplit).toHaveBeenCalledWith([multiItem]);
+  });
+
+  it('shows a Split chip and edit/remove actions when a split is queued', () => {
+    const onRemoveSplit = vi.fn();
+    const onSplit = vi.fn();
+    renderSplitTable(onSplit, onRemoveSplit, [split]);
+    expect(screen.getByText('Split ×2')).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `More actions for ${multiItem.sourceRelativePath}`,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Edit split…' }));
+    expect(onSplit).toHaveBeenCalledWith([multiItem]);
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `More actions for ${multiItem.sourceRelativePath}`,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove split' }));
+    expect(onRemoveSplit).toHaveBeenCalledWith(multiItem);
+  });
+
+  it('offers Split file on every TV row, including single-episode matches', () => {
+    const singleItem: OrganizePlanItem = {
+      ...multiItem,
+      id: '/media/tv/Blue Planet II/S01E01.mkv',
+      sourcePath: '/media/tv/Blue Planet II/S01E01.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E01.mkv',
+      targetPath: '/media/tv/Blue Planet II/S01E01.mkv',
+      relativeTarget: 'Blue Planet II/S01E01.mkv',
+      episodes: undefined,
+    };
+    const onSplit = vi.fn();
+    renderSplitTable(onSplit, vi.fn(), [], singleItem);
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `More actions for ${singleItem.sourceRelativePath}`,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Split file…' }));
+    expect(onSplit).toHaveBeenCalledWith([singleItem]);
+  });
+
+  it('offers the bulk split action for a single-episode selection', () => {
+    const singleItem: OrganizePlanItem = {
+      ...multiItem,
+      id: '/media/tv/Blue Planet II/S01E01.mkv',
+      sourcePath: '/media/tv/Blue Planet II/S01E01.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E01.mkv',
+      targetPath: '/media/tv/Blue Planet II/S01E01.mkv',
+      relativeTarget: 'Blue Planet II/S01E01.mkv',
+      episodes: undefined,
+    };
+    const onSplit = vi.fn();
+    renderSplitTable(onSplit, vi.fn(), [], singleItem);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Split files (1)' }));
+    expect(onSplit).toHaveBeenCalledWith([singleItem]);
+  });
+});
+
+describe('OrganizePlanTable multi-episode helper', () => {
+  const ep1 = {
+    tag: 'S01E01',
+    name: 'One Ocean',
+    seasonNumber: 1,
+    episodeNumber: 1,
+  };
+  const ep2 = {
+    tag: 'S01E02',
+    name: 'The Deep',
+    seasonNumber: 1,
+    episodeNumber: 2,
+  };
+  const multiItem: OrganizePlanItem = {
+    ...baseItem,
+    id: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    sourcePath: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    sourceRelativePath: 'Blue Planet II/S01E01-E02.mkv',
+    targetPath: '/media/tv/Blue Planet II/S01E01-E02.mkv',
+    relativeTarget: 'Blue Planet II/S01E01-E02.mkv',
+    action: 'skip',
+    reason: 'Already named',
+    episode: ep1,
+    episodes: [ep1, ep2],
+  };
+  // A queued split is enough to treat the row as multi-episode even when the
+  // plan no longer carries the episode range.
+  const splitOnlyItem: OrganizePlanItem = {
+    ...baseItem,
+    id: '/media/tv/Blue Planet II/S01E03-E04.mkv',
+    sourcePath: '/media/tv/Blue Planet II/S01E03-E04.mkv',
+    sourceRelativePath: 'Blue Planet II/S01E03-E04.mkv',
+    targetPath: '/media/tv/Blue Planet II/S01E03-E04.mkv',
+    relativeTarget: 'Blue Planet II/S01E03-E04.mkv',
+    action: 'skip',
+    reason: 'Already named',
+  };
+  const splitOnly: OrganizeSplitPlan = {
+    itemId: splitOnlyItem.id,
+    sourcePath: splitOnlyItem.sourcePath,
+    fileSize: 10,
+    fileDurationSeconds: 120,
+    estimate: { method: 'tvdb' },
+    cutMode: 'copy',
+    originalPolicy: 'backup',
+    sidecarPolicy: 'leave',
+    segments: [
+      { index: 0, startSeconds: 0, endSeconds: 60, episode: ep1 },
+      { index: 1, startSeconds: 60, endSeconds: 120, episode: ep2 },
+    ],
+    updatedAt: 1,
+  };
+  const helperPlan: OrganizePlan = {
+    ...plan,
+    items: [baseItem, multiItem],
+  };
+
+  function renderHelperTable(
+    selection: Set<string>,
+    onSelectedChange = vi.fn(),
+    items: OrganizePlanItem[] = helperPlan.items,
+    splits: OrganizeSplitPlan[] = [],
+  ) {
+    return render(
+      <OrganizePlanTable
+        plan={{ ...plan, items }}
+        settings={createOrganizeSettings('tv')}
+        mediaType="tv"
+        selected={selection}
+        onSelectedChange={onSelectedChange}
+        onFixMatch={vi.fn()}
+        onSkipChange={vi.fn()}
+        onMultiEpisode={vi.fn()}
+        splits={splits}
+        onSplit={vi.fn()}
+        onRemoveSplit={vi.fn()}
+        onBulkAction={vi.fn()}
+      />,
+    );
+  }
+
+  it('adds a multi-episode filter chip for TV libraries only', () => {
+    renderTable(vi.fn(), 'movies');
+    expect(screen.queryByRole('button', { name: 'Multi-episode' })).toBeNull();
+    cleanup();
+    renderHelperTable(new Set());
+    expect(screen.getByRole('button', { name: 'Multi-episode' })).toBeTruthy();
+  });
+
+  it('filters the table to multi-episode files, including queued splits', () => {
+    renderHelperTable(
+      new Set(),
+      vi.fn(),
+      [baseItem, multiItem, splitOnlyItem],
+      [splitOnly],
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Multi-episode' }));
+    expect(screen.getByText('2 of 3 file(s)')).toBeTruthy();
+    expect(screen.queryByText('S01E01.mkv')).toBeNull();
+  });
+
+  it('selects every shown multi-episode file and clears them again', () => {
+    const onSelectedChange = vi.fn();
+    renderHelperTable(new Set(), onSelectedChange);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select multi-episode (1)' }),
+    );
+    const selected = onSelectedChange.mock.calls[0][0] as Set<string>;
+    expect([...selected]).toEqual([multiItem.id]);
+
+    cleanup();
+    const onClear = vi.fn();
+    renderHelperTable(new Set([multiItem.id]), onClear);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear multi-episode (1)' }),
+    );
+    const cleared = onClear.mock.calls[0][0] as Set<string>;
+    expect(cleared.size).toBe(0);
+  });
+
+  it('only targets multi-episode rows that pass the active filters', () => {
+    const onSelectedChange = vi.fn();
+    const otherMulti: OrganizePlanItem = {
+      ...multiItem,
+      id: '/media/tv/Blue Planet II/S01E05-E06.mkv',
+      sourcePath: '/media/tv/Blue Planet II/S01E05-E06.mkv',
+      sourceRelativePath: 'Blue Planet II/S01E05-E06.mkv',
+      targetPath: '/media/tv/Blue Planet II/S01E05-E06.mkv',
+      relativeTarget: 'Blue Planet II/S01E05-E06.mkv',
+      episode: {
+        tag: 'S01E05',
+        name: 'Big Blue',
+        seasonNumber: 1,
+        episodeNumber: 5,
+      },
+      episodes: [
+        {
+          tag: 'S01E05',
+          name: 'Big Blue',
+          seasonNumber: 1,
+          episodeNumber: 5,
+        },
+        {
+          tag: 'S01E06',
+          name: 'Coral',
+          seasonNumber: 1,
+          episodeNumber: 6,
+        },
+      ],
+    };
+    renderHelperTable(new Set(), onSelectedChange, [multiItem, otherMulti]);
+
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search the review table' }),
+      { target: { value: 'S01E01-E02' } },
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select multi-episode (1)' }),
+    );
+    const selected = onSelectedChange.mock.calls[0][0] as Set<string>;
+    expect([...selected]).toEqual([multiItem.id]);
   });
 });

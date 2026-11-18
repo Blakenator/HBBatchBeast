@@ -10,6 +10,7 @@ import {
   withTempMarker,
 } from '../../common';
 import { userPresetFiles } from '../helpers/handBrakePresets';
+import { resolveFfmpegExecutable } from '../helpers/ffmpeg';
 import { WorkerItemConfig } from '../workers/protocol';
 
 function truthy(value: number | undefined): boolean {
@@ -77,7 +78,12 @@ export function buildWorkerItemConfig(
   const ffmpeg = batch.FFmpeg_toggle === 1;
   const encoder = {
     kind: ffmpeg ? ('ffmpeg' as const) : ('handbrake' as const),
-    executable: ffmpeg ? 'ffmpeg' : handBrakeExecutable,
+    executable: ffmpeg
+      ? resolveFfmpegExecutable({
+          configured: globalSettings.ffmpegPath,
+          platform,
+        })
+      : handBrakeExecutable,
     preset: item.preset,
     presetImportFiles: ffmpeg ? [] : presetImportFiles,
   };

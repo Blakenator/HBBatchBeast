@@ -270,6 +270,43 @@ export interface OrganizeApplyResult {
   historyMoved: number;
   pendingHistoryTransfers: number;
   warnings: string[];
+  /** One entry per multi-episode file that was split. */
+  splits: OrganizeApplySplitResult[];
+  /** Files whose work did not start or finish because apply was cancelled. */
+  cancelled: string[];
+}
+
+export interface OrganizeApplySplitResult {
+  sourcePath: string;
+  outputs: string[];
+  /** Where the multi-episode source was moved, when the backup policy ran. */
+  backupPath?: string;
+  /** True when the original was intentionally left in place. */
+  originalKept: boolean;
+}
+
+export type OrganizeApplyPhase =
+  | 'preflight'
+  | 'renaming'
+  | 'splitting'
+  | 'plex'
+  | 'done';
+
+/** Live feedback streamed while a plan is applied. */
+export interface OrganizeApplyProgress {
+  phase: OrganizeApplyPhase;
+  completed: number;
+  total: number;
+  /** Source path of the task currently in flight. */
+  currentPath?: string;
+  currentKind?: 'rename' | 'split';
+  /** Progress of the current split file, 0..1. */
+  currentPercent?: number;
+  splitCompleted: number;
+  splitTotal: number;
+  elapsedMs: number;
+  etaMs?: number;
+  warnings: string[];
 }
 
 export type PlexServiceKind =

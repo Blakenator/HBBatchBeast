@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const icons = fileURLToPath(new URL('../src/assets/icons/', import.meta.url));
+const packaging = fileURLToPath(new URL('../packaging/', import.meta.url));
 
 function read(relativePath: string): Buffer {
   return fs.readFileSync(path.join(icons, relativePath));
@@ -32,5 +33,20 @@ describe('icon assets', () => {
     const icns = read('mac/icon.icns');
     expect(icns.subarray(0, 4).toString()).toBe('icns');
     expect(icns.readUInt32BE(4)).toBe(icns.length);
+  });
+
+  it('does not ship the legacy icon2 assets', () => {
+    for (const name of ['png/icon2.png', 'mac/icon2.icns', 'win/icon2.ico']) {
+      expect(fs.existsSync(path.join(icons, name))).toBe(false);
+    }
+  });
+
+  it('matches the Linux executable name in the desktop entry', () => {
+    const desktop = fs.readFileSync(
+      path.join(packaging, 'desktop.ejs'),
+      'utf8',
+    );
+    expect(desktop).toContain('StartupWMClass=<%= name %>');
+    expect(desktop).not.toContain('StartupWMClass=<%= productName %>');
   });
 });

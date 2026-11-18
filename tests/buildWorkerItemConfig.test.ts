@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { GlobalAppConfig } from '../src/common';
 import { buildWorkerItemConfig } from '../src/backend/run/buildWorkerItemConfig';
+import { resolveFfmpegExecutable } from '../src/backend/helpers/ffmpeg';
 
 function makeConfig(
   batch: GlobalAppConfig['configs'][number]['tab_batch'] = {},
@@ -139,7 +140,9 @@ describe('buildWorkerItemConfig', () => {
     );
 
     expect(config.encoder.kind).toBe('ffmpeg');
-    expect(config.encoder.executable).toBe('ffmpeg');
+    expect(config.encoder.executable).toBe(
+      resolveFfmpegExecutable({ platform: 'win32' }),
+    );
     // HandBrake preset imports do not apply to FFmpeg.
     expect(config.encoder.presetImportFiles).toEqual([]);
     expect(config.saveWorkerLogs).toBe(true);

@@ -9,6 +9,7 @@ import {
   PROMISE_CHANNEL,
   approvePlanItems,
   applyPlanOverride,
+  applyPlanOverrides,
   carryPlanRowFlags,
   setPlanFolderOnly,
   applyPlanSkips,
@@ -28,7 +29,10 @@ import {
   resolveShowMapping,
   setOverride,
   withLibraryMediaType,
+  pruneSplitPlans,
+  splitOutputCount,
   type MediaType,
+  type OrganizeApplyProgress,
   type OrganizeApplyResult,
   type OrganizeMatchOverride,
   type OrganizePlan,
@@ -37,6 +41,7 @@ import {
   type OrganizeScanProgress,
   type OrganizeScanScope,
   type OrganizeSettings,
+  type OrganizeSplitPlan,
   type PlexFixStep,
 } from '../../common';
 import { useBackend, useBackendAsync, backendFailure } from '../helpers';
@@ -49,8 +54,11 @@ import {
 } from '../ui/PlexStatusReport';
 import { SegmentedControl } from '../settings/SegmentedControl';
 import { MatchFixModal } from './MatchFixModal';
+import { MultiEpisodeModal } from './MultiEpisodeModal';
 import { NamingRulesEditor } from './NamingRulesEditor';
 import { OrganizePlanTable } from './OrganizePlanTable';
+import { ApplyProgress } from './ApplyProgress';
+import { SplitModal } from './SplitModal';
 import { ShowMappings } from './ShowMappings';
 import {
   readOrganizeSession,
@@ -139,6 +147,61 @@ const OrganizeScanRunner: React.FC<OrganizeScanRunnerProps> = ({
     console.error('Organize scan failed', scan.error);
     handlers.current.onError(describeOrganizeScanError(scan.error));
   }, [scan.error]);
+
+  return null;
+};
+
+interface OrganizeApplyRunnerProps {
+  library: Library;
+  plan: OrganizePlan;
+  splits: OrganizeSplitPlan[];
+  updatePlex: boolean;
+  onProgress: (progress: OrganizeApplyProgress) => void;
+  onComplete: (result: OrganizeApplyResult) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * Mounted once per apply so the async hook always starts with clean state.
+ * Progress arrives faster than the UI needs it, so the parent only stores the
+ * latest snapshot.
+ */
+const OrganizeApplyRunner: React.FC<OrganizeApplyRunnerProps> = ({
+  library,
+  plan,
+  splits,
+  updatePlex,
+  onProgress,
+  onComplete,
+  onError,
+}) => {
+  const [applyLibrary] = useState(library);
+  const [applyPlan] = useState(plan);
+  const [applySplits] = useState(splits);
+  const [applyPlex] = useState(updatePlex);
+  const handlers = useRef({ onProgress, onComplete, onError });
+  handlers.current = { onProgress, onComplete, onError };
+  const apply = useBackendAsync({
+    channel: ASYNC_CHANNEL.OrganizeApply,
+    props: {
+      library: applyLibrary,
+      plan: applyPlan,
+      splits: applySplits,
+      updatePlex: applyPlex,
+    },
+    skip: false,
+    onInit: (progress) => handlers.current.onProgress(progress),
+    onProgress: (progress) => handlers.current.onProgress(progress),
+    onComplete: (result) => handlers.current.onComplete(result),
+  });
+
+  useEffect(() => {
+    if (!apply.error) return;
+    console.error('Organize apply failed', apply.error);
+    handlers.current.onError(
+      apply.error.message || 'The organize apply failed.',
+    );
+  }, [apply.error]);
 
   return null;
 };
@@ -318,6 +381,11 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   const [scope, setScope] = useState<OrganizeScanScope[]>(
     initialSession?.scope ?? [],
   );
+  const [splits, setSplits] = useState<OrganizeSplitPlan[]>(
+    initialSession?.splits ?? [],
+  );
+  const splitsRef = useRef(splits);
+  splitsRef.current = splits;
   const plex = resolveGlobalSettings(config).plex;
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingSave = useRef<Library | null>(null);
@@ -366,6 +434,20 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   }>();
   const [plexPrompt, setPlexPrompt] = useState<OrganizePlanItem[]>();
   const [fixItem, setFixItem] = useState<OrganizePlanItem>();
+  const [multiEpisodeItems, setMultiEpisodeItems] = useState<
+    OrganizePlanItem[]
+  >();
+  const [splitModalItems, setSplitModalItems] = useState<OrganizePlanItem[]>();
+  const [applyRequest, setApplyRequest] = useState<{
+    plan: OrganizePlan;
+    splits: OrganizeSplitPlan[];
+    updatePlex: boolean;
+    items: OrganizePlanItem[];
+    token: number;
+  }>();
+  const [applyProgress, setApplyProgress] = useState<OrganizeApplyProgress>();
+  const [applying, setApplying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [busy, setBusy] = useState<string>();
   const [scanning, setScanning] = useState(false);
   const [scanToken, setScanToken] = useState(0);
@@ -386,8 +468,8 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     channel: PROMISE_CHANNEL.PickPath,
     skip: true,
   });
-  const applyPlan = useBackend({
-    channel: PROMISE_CHANNEL.OrganizeApplyPlan,
+  const cancelApply = useBackend({
+    channel: PROMISE_CHANNEL.OrganizeCancelApply,
     skip: true,
   });
   const checkPlex = useBackend({
@@ -707,13 +789,42 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setScanToken((token) => token + 1);
   }
 
+  const splitItemIds = useMemo(
+    () => new Set(splits.map((split) => split.itemId)),
+    [splits],
+  );
+
+  /**
+   * A queued split is an explicit action, so its row joins the apply even when
+   * the plan action is `skip` ("Already named") or the row is unchecked.
+   */
   const selectedItems = useMemo(
     () =>
       (plan?.items ?? []).filter(
-        (item) => item.action === 'rename' && selected.has(item.id),
+        (item) =>
+          splitItemIds.has(item.id) ||
+          (item.action === 'rename' && selected.has(item.id)),
       ),
-    [plan, selected],
+    [plan, selected, splitItemIds],
   );
+  const splitOutputs = useMemo(
+    () =>
+      splitOutputCount(
+        splits.filter((split) =>
+          selectedItems.some((item) => item.id === split.itemId),
+        ),
+      ),
+    [splits, selectedItems],
+  );
+  const selectedSplitCount = useMemo(
+    () =>
+      splits.filter((split) =>
+        selectedItems.some((item) => item.id === split.itemId),
+      ).length,
+    [splits, selectedItems],
+  );
+  const applyFileCount =
+    selectedItems.length - selectedSplitCount + splitOutputs;
 
   const beginApply = async () => {
     if (plan?.items.some((item) => item.action === 'conflict')) return;
@@ -745,57 +856,118 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     setConfirm({ items, updatePlex: false });
   };
 
-  const runApply = async (
+  const runApply = (
     items: OrganizePlanItem[],
     withPlex: boolean,
   ) => {
     if (!plan) return;
-    setBusy('apply');
     setConfirm(undefined);
     setPlexPrompt(undefined);
     setApplyResult(undefined);
+    setApplyProgress(undefined);
+    const subset: OrganizePlan = {
+      ...plan,
+      items,
+      warnings: plan.warnings.filter(
+        (warning) => !warning.includes('conflict'),
+      ),
+    };
+    const queuedSplits = splits.filter((split) =>
+      items.some((item) => item.id === split.itemId),
+    );
+    setCancelling(false);
+    setApplying(true);
+    setApplyRequest({
+      plan: subset,
+      splits: queuedSplits,
+      updatePlex: withPlex,
+      items,
+      token: Date.now(),
+    });
+  };
+
+  const finishApply = (applied: OrganizeApplyResult) => {
+    const request = applyRequest;
+    if (!request) return;
+    setApplyResult(applied);
+    const appliedSplits = applied.splits ?? [];
+    const cancelledList = applied.cancelled ?? [];
+    // Keep the rows whose move failed or never ran in the review so their
+    // error stays visible and the user can retry them.
+    const attempts = new Set(request.items.map((item) => item.id));
+    const failedPaths = new Set(applied.failed.map((failure) => failure.path));
+    const cancelledPaths = new Set(cancelledList);
+    const keep = (item: OrganizePlanItem) =>
+      !attempts.has(item.id) ||
+      failedPaths.has(item.sourcePath) ||
+      cancelledPaths.has(item.sourcePath);
+    const nextPlan: OrganizePlan = {
+      ...request.plan,
+      items: request.plan.items.filter(keep),
+    };
+    setPlan(nextPlan);
+    setSelected(
+      new Set(
+        request.items
+          .filter(
+            (item) =>
+              failedPaths.has(item.sourcePath) ||
+              cancelledPaths.has(item.sourcePath),
+          )
+          .map((item) => item.id),
+      ),
+    );
+    const completedSources = new Set(
+      appliedSplits.map((split) => split.sourcePath),
+    );
+    const remaining = splitsRef.current.filter(
+      (split) => !completedSources.has(split.sourcePath),
+    );
+    const pruned = pruneSplitPlans(remaining, nextPlan.items);
+    setSplits(pruned.splits);
+    if (pruned.dropped.length > 0) {
+      toast.info(
+        `Removed ${pruned.dropped.length} queued split(s) because their source rows are gone.`,
+      );
+    }
+    setApplying(false);
+    setCancelling(false);
+    setApplyProgress(undefined);
+    setApplyRequest(undefined);
+    if (cancelledList.length > 0) {
+      toast.info(
+        `Apply cancelled; ${cancelledList.length} task(s) did not run.`,
+      );
+    } else if (applied.failed.length === 0) {
+      toast.success(
+        `Applied ${applied.renamed.length} file move(s)${
+          appliedSplits.length > 0
+            ? ` and split ${appliedSplits.length} file(s)`
+            : ''
+        }.`,
+      );
+    }
+  };
+
+  const failApply = (message: string) => {
+    setApplying(false);
+    setCancelling(false);
+    setApplyProgress(undefined);
+    setApplyRequest(undefined);
+    toast.error(message);
+  };
+
+  const cancelRunningApply = async () => {
+    setCancelling(true);
     try {
-      const subset: OrganizePlan = {
-        ...plan,
-        items,
-        warnings: plan.warnings.filter(
-          (warning) => !warning.includes('conflict'),
-        ),
-      };
-      const result = await applyPlan.refetch({
-        library: current,
-        plan: subset,
-        updatePlex: withPlex,
-      });
-      if (reportFailure(result, 'Could not apply the organize plan.')) return;
-      if (result.data) {
-        const applied = result.data;
-        setApplyResult(applied);
-        // Keep the rows whose move failed in the review so their error stays
-        // visible and the user can retry them.
-        const attempts = new Set(items.map((item) => item.id));
-        const failedPaths = new Set(applied.failed.map((failure) => failure.path));
-        setPlan((previous) =>
-          previous
-            ? {
-                ...previous,
-                items: previous.items.filter(
-                  (item) =>
-                    !attempts.has(item.id) || failedPaths.has(item.sourcePath),
-                ),
-              }
-            : previous,
-        );
-        setSelected(
-          new Set(
-            items
-              .filter((item) => failedPaths.has(item.sourcePath))
-              .map((item) => item.id),
-          ),
-        );
+      const result = await cancelApply.refetch();
+      if (reportFailure(result, 'Could not cancel the apply.')) return;
+      if (!result.data?.cancelled) {
+        toast.info('There is no apply job to cancel.');
+        setCancelling(false);
       }
-    } finally {
-      setBusy(undefined);
+    } catch {
+      setCancelling(false);
     }
   };
 
@@ -868,6 +1040,18 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     }
   };
 
+  /** Keeps an open multi-episode preview in sync after a single match fix. */
+  const refreshMultiEpisodeItem = (itemId: string, nextPlan: OrganizePlan) => {
+    setMultiEpisodeItems((items) => {
+      if (!items) return items;
+      const next = nextPlan.items.find((candidate) => candidate.id === itemId);
+      if (!next) return items;
+      return items.map((candidate) =>
+        candidate.id === itemId ? next : candidate,
+      );
+    });
+  };
+
   const saveFix = (
     item: OrganizePlanItem,
     override: OrganizeMatchOverride | undefined,
@@ -881,13 +1065,13 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     commit({ ...current, organize: nextSettings }, { keepPlan: true });
     if (plan && override) {
       // Re-plan only this row; other review decisions stay untouched.
-      setPlan(
-        applyPlanOverride(plan, item.id, override, {
-          settings: nextSettings,
-          mediaType: current.mediaType,
-          caseInsensitive,
-        }),
-      );
+      const nextPlan = applyPlanOverride(plan, item.id, override, {
+        settings: nextSettings,
+        mediaType: current.mediaType,
+        caseInsensitive,
+      });
+      setPlan(nextPlan);
+      refreshMultiEpisodeItem(item.id, nextPlan);
     } else if (plan) {
       // Use best guess: drop the override and any skip, then keep this row's
       // top-ranked match even when it scored below the confidence threshold.
@@ -922,6 +1106,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
       } else {
         const promoted = applyPlanBestGuess(basePlan, [item.id], replanOptions);
         setPlan(promoted);
+        refreshMultiEpisodeItem(item.id, promoted);
         if (promoted === basePlan) {
           toast.info(
             'No automatic match is available for this file. Pick an episode or movie to fix it manually.',
@@ -1112,6 +1297,108 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     }
   };
 
+  const applyMultiEpisode = (
+    overrides: Map<string, OrganizeMatchOverride>,
+  ) => {
+    if (!plan || overrides.size === 0) {
+      setMultiEpisodeItems(undefined);
+      return;
+    }
+    const caseInsensitive = settings.caseInsensitive ?? false;
+    let nextSettings = settings;
+    for (const [itemId, override] of overrides) {
+      const item = plan.items.find((candidate) => candidate.id === itemId);
+      if (!item) continue;
+      nextSettings = setOverride(
+        nextSettings,
+        item.sourcePath,
+        override,
+        caseInsensitive,
+      );
+    }
+    if (nextSettings !== settings) {
+      commit({ ...current, organize: nextSettings }, { keepPlan: true });
+    }
+    setPlan(
+      applyPlanOverrides(plan, overrides, {
+        settings: nextSettings,
+        mediaType: current.mediaType,
+        caseInsensitive,
+      }),
+    );
+    toast.success(
+      `Saved multi-episode ranges for ${overrides.size} file(s).`,
+    );
+    const total = multiEpisodeItems?.length ?? 0;
+    if (total > overrides.size) {
+      toast.info(`${total - overrides.size} file(s) were left unchanged.`);
+    }
+    setMultiEpisodeItems(undefined);
+  };
+
+  const openSplitEditor = (items: OrganizePlanItem[]) => {
+    const merged = [
+      ...new Map(items.map((item) => [item.id, item])).values(),
+    ];
+    if (merged.length === 0) return;
+    // Every TV row can be split once it has at least one matched episode;
+    // non-contiguous episodes are handled inside the editor.
+    const eligible = merged.filter(
+      (item) =>
+        Boolean(item.episode) ||
+        (item.episodes?.length ?? 0) > 0 ||
+        splitItemIds.has(item.id),
+    );
+    if (eligible.length === 0) {
+      toast.info(
+        'Match at least one episode with Fix match, then split the file.',
+      );
+      return;
+    }
+    if (eligible.length < merged.length) {
+      toast.info(
+        `${merged.length - eligible.length} selected file(s) skipped: no episode is matched yet.`,
+      );
+    }
+    setSplitModalItems(eligible);
+  };
+
+  const saveSplits = (
+    upserts: OrganizeSplitPlan[],
+    removedIds: string[],
+  ) => {
+    const removed = new Set(removedIds);
+    setSplits((previous) => {
+      const byId = new Map(
+        previous
+          .filter((split) => !removed.has(split.itemId))
+          .map((split) => [split.itemId, split]),
+      );
+      for (const split of upserts) byId.set(split.itemId, split);
+      return [...byId.values()];
+    });
+    if (upserts.length > 0) {
+      setSelected(
+        (previous) =>
+          new Set([...previous, ...upserts.map((split) => split.itemId)]),
+      );
+      toast.success(
+        `Queued ${upserts.length} split(s) into ${splitOutputCount(upserts)} episode file(s).`,
+      );
+    }
+    if (removed.size > 0) {
+      toast.info(`Removed ${removed.size} queued split(s).`);
+    }
+    setSplitModalItems(undefined);
+  };
+
+  const removeSplit = (item: OrganizePlanItem) => {
+    setSplits((previous) =>
+      previous.filter((split) => split.itemId !== item.id),
+    );
+    toast.info(`Removed the queued split for ${item.sourceRelativePath}.`);
+  };
+
   const matchSignature = organizeMatchSignature(settings);
   const planSignature = organizePlanSignature(settings);
   const librarySignature = organizeLibrarySignature(current);
@@ -1122,6 +1409,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
       plan,
       selected: [...selected],
       scope,
+      splits,
       matchSignature,
       planSignature,
       librarySignature,
@@ -1135,8 +1423,21 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     planSignature,
     scope,
     selected,
+    splits,
     step,
   ]);
+
+  useEffect(() => {
+    if (!plan) return;
+    const currentSplits = splitsRef.current;
+    if (currentSplits.length === 0) return;
+    const result = pruneSplitPlans(currentSplits, plan.items);
+    if (result.dropped.length === 0) return;
+    setSplits(result.splits);
+    toast.warning(
+      `Removed ${result.dropped.length} queued split(s) because the episode match changed.`,
+    );
+  }, [plan]);
 
   useEffect(() => {
     setPlexStatus(undefined);
@@ -1185,6 +1486,53 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
 
   const plexConfigured = Boolean(plex?.dbPath);
   const warnings = compactWarnings(plan?.warnings ?? []);
+  const confirmSplitCount = confirm
+    ? splits.filter((split) =>
+        confirm.items.some((item) => item.id === split.itemId),
+      ).length
+    : 0;
+  const confirmSplitIds = new Set(
+    confirm
+      ? splits
+          .filter((split) =>
+            confirm.items.some((item) => item.id === split.itemId),
+          )
+          .map((split) => split.itemId)
+      : [],
+  );
+  const confirmMoveCount = confirm
+    ? confirm.items.filter(
+        (item) => item.action === 'rename' && !confirmSplitIds.has(item.id),
+      ).length
+    : 0;
+  const confirmSplitOutputs = confirm
+    ? splitOutputCount(
+        splits.filter((split) =>
+          confirm.items.some((item) => item.id === split.itemId),
+        ),
+      )
+    : 0;
+  const confirmActions = confirm
+    ? [
+        confirmMoveCount > 0
+          ? `move ${confirmMoveCount} file(s)${
+              confirm.items.some((item) => item.sidecars.length > 0)
+                ? ' and their subtitle sidecars'
+                : ''
+            }`
+          : undefined,
+        confirmSplitCount > 0
+          ? `split ${confirmSplitCount} multi-episode file(s) into ${confirmSplitOutputs} episodes`
+          : undefined,
+      ].filter((part): part is string => Boolean(part))
+    : [];
+  const confirmSentence = `${confirmActions
+    .join(' and ')
+    .replace(/^./, (char) => char.toUpperCase())}${
+    confirm?.updatePlex
+      ? '; update the Plex database, including watch history.'
+      : ' without changing Plex.'
+  }`;
 
   return (
     <div style={{ display: 'grid', gap: 'var(--hb-space-lg)' }}>
@@ -1211,6 +1559,8 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
 
       {applyResult && (() => {
         const failures = applyResult.failed;
+        const splitsApplied = applyResult.splits ?? [];
+        const cancelledApplied = applyResult.cancelled ?? [];
         const applyWarnings = applyResult.warnings.filter(
           (warning) => !(plan?.warnings ?? []).includes(warning),
         );
@@ -1218,11 +1568,20 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
           <Alert variant={failures.length > 0 ? 'danger' : 'success'}>
             <div>
               Renamed {applyResult.renamed.length} file(s).
+              {splitsApplied.length > 0
+                ? ` Split ${splitsApplied.length} multi-episode file(s) into ${splitsApplied.reduce(
+                    (total, split) => total + split.outputs.length,
+                    0,
+                  )} episode(s).`
+                : ''}
               {applyResult.plexUpdated > 0
                 ? ` Updated ${applyResult.plexUpdated} Plex item(s); moved ${applyResult.historyMoved} history row(s).`
                 : ''}
               {applyResult.pendingHistoryTransfers > 0
                 ? ` ${applyResult.pendingHistoryTransfers} history transfer(s) are waiting for a Plex rescan.`
+                : ''}
+              {cancelledApplied.length > 0
+                ? ` ${cancelledApplied.length} task(s) were cancelled and stay in the review.`
                 : ''}
               {failures.length > 0
                 ? ` ${failures.length} move(s) failed; those files stay in the review.`
@@ -1548,15 +1907,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
 
           {confirm && (
             <Alert variant="info" className="mb-0">
-              <div>
-                Move {confirm.items.length} file(s)
-                {confirm.items.some((item) => item.sidecars.length > 0)
-                  ? ' and their subtitle sidecars'
-                  : ''}
-                {confirm.updatePlex
-                  ? ' and update the Plex database, including watch history.'
-                  : ' without changing Plex.'}
-              </div>
+              <div>{confirmSentence}</div>
               <div style={{ display: 'flex', gap: 'var(--hb-space-xs)', marginTop: 'var(--hb-space-sm)' }}>
                 <Button
                   compact
@@ -1622,11 +1973,19 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 !plan ||
                 selectedItems.length === 0 ||
                 scanning ||
+                applying ||
                 busy !== undefined ||
                 (plan?.items.some((item) => item.action === 'conflict') ?? false)
               }
             >
-              Apply {selectedItems.length > 0 ? `(${selectedItems.length})` : ''}
+              Apply{' '}
+              {selectedItems.length > 0
+                ? `(${selectedItems.length}${
+                    splitOutputs > 0
+                      ? ` → ${applyFileCount} outputs`
+                      : ''
+                  })`
+                : ''}
             </Button>
             <Button
               variant="ghost"
@@ -1671,6 +2030,15 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
             />
           </div>
 
+          {(applying || applyProgress) && (
+            <ApplyProgress
+              progress={applyProgress}
+              applying={applying}
+              cancelling={cancelling}
+              onCancel={() => void cancelRunningApply()}
+            />
+          )}
+
           {scanning && <ScanProgress progress={scanProgress} />}
 
           {!plan && !scanning && (
@@ -1700,7 +2068,11 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 onSelectedChange={setSelected}
                 onFixMatch={setFixItem}
                 onSkipChange={skipItem}
+                onMultiEpisode={setMultiEpisodeItems}
                 onBulkAction={runBulkAction}
+                splits={splits}
+                onSplit={openSplitEditor}
+                onRemoveSplit={removeSplit}
               />
               {plan.items.some((item) => item.action === 'conflict') && (
                 <Alert variant="danger" className="mb-0">
@@ -1808,6 +2180,15 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 new Set([...selected].filter((id) => renameIds.has(id))),
               );
               setPlan(withBestGuess);
+              setMultiEpisodeItems((items) => {
+                if (!items) return items;
+                const byId = new Map(
+                  withBestGuess.items.map((candidate) => [candidate.id, candidate]),
+                );
+                return items.map(
+                  (candidate) => byId.get(candidate.id) ?? candidate,
+                );
+              });
             } else {
               pendingBestGuess.current = new Set();
               setPlan(next);
@@ -1827,6 +2208,44 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
             setScanProgress(undefined);
             setScanning(false);
           }}
+        />
+      )}
+
+      {multiEpisodeItems && multiEpisodeItems.length > 0 && (
+        <MultiEpisodeModal
+          items={multiEpisodeItems}
+          mediaType={current.mediaType}
+          settings={settings}
+          library={current}
+          onClose={() => setMultiEpisodeItems(undefined)}
+          onApply={applyMultiEpisode}
+          onFixMatch={setFixItem}
+        />
+      )}
+
+      {splitModalItems && splitModalItems.length > 0 && plan && (
+        <SplitModal
+          plan={plan}
+          items={splitModalItems}
+          splits={splits}
+          settings={settings}
+          library={current}
+          mediaType={current.mediaType}
+          onClose={() => setSplitModalItems(undefined)}
+          onSave={saveSplits}
+        />
+      )}
+
+      {applyRequest && (
+        <OrganizeApplyRunner
+          key={applyRequest.token}
+          library={current}
+          plan={applyRequest.plan}
+          splits={applyRequest.splits}
+          updatePlex={applyRequest.updatePlex}
+          onProgress={setApplyProgress}
+          onComplete={finishApply}
+          onError={failApply}
         />
       )}
 

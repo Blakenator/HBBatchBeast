@@ -44,9 +44,13 @@ const config: ForgeConfig = {
     },
   },
   packagerConfig: {
-    // Binaries cannot be executed from inside an asar archive, so ffprobe is
-    // unpacked next to it (the code swaps app.asar for app.asar.unpacked).
-    asar: { unpack: '**/node_modules/ffprobe-static/bin/**' },
+    // Binaries cannot be executed from inside an asar archive, so ffprobe and
+    // ffmpeg are unpacked next to it (the code swaps app.asar for
+    // app.asar.unpacked).
+    asar: {
+      unpack:
+        '**/node_modules/{ffprobe-static,ffmpeg-static}/**',
+    },
     icon: iconFor(process.platform),
     // Linux makers (and the generated .desktop `Exec=` line) look for the package
     // name, not the product name.

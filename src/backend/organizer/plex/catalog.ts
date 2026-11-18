@@ -40,6 +40,8 @@ interface PlexFileBase {
   height?: number;
   airDate?: string;
   addedAt?: string;
+  /** Metadata runtime in milliseconds; used as a split-estimate fallback. */
+  durationMs?: number;
   mediaItemId: number;
   mediaPartId: number;
   file: string;
@@ -87,6 +89,8 @@ interface MovieRow {
   /** Plex stores this as epoch seconds, not a date string. */
   airDate: string | number | null;
   addedAt: string | null;
+  /** Older Plex databases lack this column; it is read separately. */
+  durationMs?: number | null;
   mediaItemId: number;
   mediaPartId: number;
   file: string;
@@ -385,6 +389,27 @@ export function readPlexCatalog(dbPath: string): PlexCatalog {
           episodeTitle: row.episodeTitle,
         }) as PlexEpisodeFile,
     );
+
+    // Runtime is metadata used only to estimate split points. Some Plex
+    // databases (and the test fixtures) do not have the column, so read it
+    // separately instead of failing the whole catalog.
+    if (hasColumn(db, 'metadata_items', 'duration')) {
+      const durations = new Map(
+        (
+          db
+            .prepare(
+              'SELECT id, duration FROM metadata_items WHERE duration > 0',
+            )
+            .all() as unknown as { id: number; duration: number }[]
+        ).map((row) => [Number(row.id), Number(row.duration)] as const),
+      );
+      const applyDuration = (file: PlexFileBase): void => {
+        const duration = durations.get(file.metadataItemId);
+        if (duration && duration > 0) file.durationMs = duration;
+      };
+      for (const file of movies) applyDuration(file);
+      for (const file of episodes) applyDuration(file);
+    }
 
     return {
       movies,

@@ -5,6 +5,8 @@ import path from 'path';
 import {
   TvdbClient,
   parseTvdbEpisodeHtml,
+  parseTvdbEpisodeRuntimeHtml,
+  parseRuntimeMinutes,
 } from '../src/backend/organizer/tvdb/client';
 
 const searchPayload = {
@@ -96,6 +98,42 @@ describe('TVDB parsing', () => {
       episodes.find((episode) => episode.tag === 'S01E02')?.name,
     ).toBe('The Deep');
   });
+
+  it('captures episode ids from the all-seasons anchors', () => {
+    const episodes = parseTvdbEpisodeHtml(`
+      <div class="list-group-item">
+        <small class="text-muted episode-label">S01E01</small>
+        <h4 class="list-group-item-heading">
+          <a href="/series/blue-planet-ii/episodes/6359665">One Ocean</a>
+        </h4>
+      </div>
+    `);
+    expect(episodes[0]?.id).toBe('6359665');
+  });
+
+  it('reads the runtime line from an episode page', () => {
+    const runtimeHtml = `
+      <ul class="list-group">
+        <li class="list-group-item clearfix">
+          <strong>Originally Aired</strong>
+          <span><a href="/on-today/2017-10-29">October 29, 2017</a></span>
+        </li>
+        <li class="list-group-item clearfix">
+          <strong>Runtime</strong>
+          <span>58 minutes</span>
+        </li>
+      </ul>
+    `;
+    expect(parseTvdbEpisodeRuntimeHtml(runtimeHtml)).toBe(58);
+    expect(parseTvdbEpisodeRuntimeHtml('<div>No runtime here</div>')).toBeUndefined();
+  });
+
+  it('parses minute and hour runtime strings', () => {
+    expect(parseRuntimeMinutes('58 minutes')).toBe(58);
+    expect(parseRuntimeMinutes('1 hour 5 minutes')).toBe(65);
+    expect(parseRuntimeMinutes('   ')).toBeUndefined();
+    expect(parseRuntimeMinutes('0 minutes')).toBeUndefined();
+  });
 });
 
 describe('TVDB client', () => {
@@ -185,6 +223,41 @@ describe('TVDB client', () => {
     });
     await client.loadEpisodes('family-guy');
     expect(calls).toBe(1);
+  });
+
+  it('loads and caches episode runtimes', async () => {
+    let calls = 0;
+    const client = new TvdbClient({
+      cacheDir,
+      minIntervalMs: 0,
+      fetchImpl: async (url) => {
+        calls += 1;
+        expect(url).toContain('/series/family-guy/episodes/123');
+        return new Response(
+          `<li class="list-group-item"><strong>Runtime</strong><span>22 minutes</span></li>`,
+          { status: 200 },
+        );
+      },
+    });
+
+    const runtimes = await client.loadEpisodeRuntimes('family-guy', [
+      '123',
+      '123',
+    ]);
+    expect(runtimes).toEqual({ '123': 22 });
+    await client.loadEpisodeRuntimes('family-guy', ['123']);
+    expect(calls).toBe(1);
+  });
+
+  it('returns no runtime when the episode page has none or fails', async () => {
+    const client = new TvdbClient({
+      cacheDir,
+      minIntervalMs: 0,
+      fetchImpl: async () => new Response('<div>no runtime</div>', { status: 200 }),
+    });
+    await expect(
+      client.loadEpisodeRuntimes('family-guy', ['1']),
+    ).resolves.toEqual({ '1': undefined });
   });
 
   it('surfaces non-2xx responses', async () => {

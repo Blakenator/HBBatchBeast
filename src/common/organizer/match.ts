@@ -29,6 +29,8 @@ export const STRONG_NAME_MATCH_THRESHOLD = 0.9;
 export const EPISODE_TAG_WEIGHT = 0.4;
 export const EPISODE_NAME_WEIGHT = 0.5;
 export const EPISODE_AIR_DATE_WEIGHT = 0.1;
+/** Minimum improvement a joined-title run must show over the first title. */
+export const EPISODE_RUN_NAME_MARGIN = 0.05;
 
 const WEAK_CONFLICT_CAP = 0.45;
 const STRONG_NAME_CAP = 0.8;
@@ -706,6 +708,126 @@ export function rankMovies(
     .map((movie) => ({ movie, ...scoreMovie(parsed, movie) }))
     .sort((left, right) => right.score - left.score)
     .slice(0, limit);
+}
+
+/**
+ * A consecutive episode run whose joined titles explain the filename title.
+ * Declared here so the scoring helper does not depend on the bulk tooling.
+ */
+export interface EpisodeNameRun {
+  tag: string;
+  seasonNumber: number;
+  episodes: TvdbEpisode[];
+  /** Similarity between the filename title and the joined run titles. */
+  score: number;
+  /** Similarity between the filename title and the run's first title. */
+  singleScore: number;
+}
+
+function runLabel(run: EpisodeNameRun): string {
+  return `${run.tag} - ${run.episodes.map((episode) => episode.name).join(', ')}`;
+}
+
+/**
+ * Upgrades a single-episode resolution when the filename title actually names
+ * every episode in a consecutive run. The name component is re-scored against
+ * the joined titles, so a correctly detected multi-episode file is not pushed
+ * below the confidence threshold by its extra titles. Conflicting resolutions
+ * are left alone: they still need review.
+ */
+export function applyEpisodeRun(
+  resolution: EpisodeResolution,
+  parsed: ParsedMediaName,
+  run: EpisodeNameRun,
+  options: EpisodeMatchOptions = {},
+): EpisodeResolution | undefined {
+  // A present filename title that matches no single episode is the one
+  // conflict a detected run can resolve: the title names several episodes.
+  const resolvedByRun =
+    resolution.conflict &&
+    resolution.tagCandidate !== undefined &&
+    resolution.nameCandidate === undefined &&
+    resolution.airDateCandidate === undefined;
+  if (
+    (resolution.conflict && !resolvedByRun) ||
+    !resolution.episode ||
+    !resolution.candidate
+  ) {
+    return undefined;
+  }
+  const first = run.episodes[0];
+  if (
+    !first ||
+    first.seasonNumber !== resolution.episode.seasonNumber ||
+    first.episodeNumber !== resolution.episode.episodeNumber ||
+    run.episodes.length < 2
+  ) {
+    return undefined;
+  }
+  const nameText = episodeNameText(parsed, options.seriesName);
+  if (!nameText) return undefined;
+  if (run.score < NAME_MATCH_THRESHOLD) return undefined;
+  if (run.score - run.singleScore < EPISODE_RUN_NAME_MARGIN) return undefined;
+
+  const nameComponentScore = 0.8 + 0.2 * run.score;
+  const components = resolution.candidate.evidence.components.map((entry) =>
+    entry.kind === 'name'
+      ? {
+          ...entry,
+          present: true,
+          state: 'correct' as const,
+          similarity: run.score,
+          componentScore: nameComponentScore,
+          contribution: nameComponentScore * entry.weight,
+          detail: `Matches the combined titles of ${run.tag} (${percent(
+            run.score,
+          )})`,
+        }
+      : entry,
+  );
+  const coverage = components
+    .filter((entry) => entry.present)
+    .reduce((total, entry) => total + entry.weight, 0);
+  const contribution = components.reduce(
+    (total, entry) => total + entry.contribution,
+    0,
+  );
+  const rawScore = coverage > 0 ? contribution / coverage : 0;
+  const cap = resolution.candidate.evidence.cap;
+  const evidence: EpisodeMatchEvidence = {
+    ...resolution.candidate.evidence,
+    name: 'correct',
+    nameSimilarity: run.score,
+    nameText,
+    components,
+    coverage,
+    rawScore,
+    confidenceBeforeCap: clampConfidence(rawScore * (0.8 + 0.2 * coverage)),
+    ...(cap !== undefined ? { cap } : {}),
+  };
+  const confidence = clampConfidence(
+    Math.min(evidence.confidenceBeforeCap, cap ?? 1),
+  );
+  const reason = `Tag and filename title cover ${runLabel(run)}`;
+  const summary: EpisodeMatchSummary = {
+    ...evidence,
+    conflict: false,
+  };
+  return {
+    ...resolution,
+    conflict: false,
+    conflictKind: undefined,
+    conflictReason: undefined,
+    confidence,
+    reason,
+    summary,
+    candidate: {
+      ...resolution.candidate,
+      confidence,
+      reason,
+      evidence,
+    },
+  };
 }
 
 export function chooseBestEpisode(

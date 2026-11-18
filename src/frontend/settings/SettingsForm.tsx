@@ -13,6 +13,7 @@ import { useHandBrakePresets, useUpdateAppConfigDebounced } from './hooks';
 import { settingsMessages } from './messages';
 import { LanguageSelect } from './LanguageSelect';
 import { GlobalSystemSettings } from './GlobalSystemSettings';
+import { FfmpegSettings } from './FfmpegSettings';
 import { PlexSettings } from './PlexSettings';
 import { DiagnosticsPanel } from '../diagnostics/DiagnosticsPanel';
 import { Icon } from '../ui/Icon';
@@ -131,6 +132,17 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ config }) => {
                   app_settings: {
                     ...currentGlobalConfig.app_settings,
                     plex,
+                  },
+                })
+              }
+            />
+            <FfmpegSettings
+              value={currentGlobalConfig.app_settings?.ffmpegPath}
+              onChange={(ffmpegPath) =>
+                mergeAppUpdate({
+                  app_settings: {
+                    ...currentGlobalConfig.app_settings,
+                    ffmpegPath,
                   },
                 })
               }

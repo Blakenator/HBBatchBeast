@@ -77,6 +77,11 @@ export interface GlobalSettingsConfig {
   save_worker_logs_toggle: 0 | 1;
   /** One Plex server per machine, shared by every library. */
   plex?: PlexConnectionSettings;
+  /**
+   * Overrides the bundled ffmpeg executable. Conversions and episode splitting
+   * both use the resolved binary. Empty means auto-detect.
+   */
+  ffmpegPath?: string;
 }
 
 /**

@@ -5,6 +5,11 @@ import type {
   TvdbMovie,
   TvdbSeriesRef,
 } from './types';
+import type {
+  SplitCutMode,
+  SplitOriginalPolicy,
+  SplitSidecarPolicy,
+} from './split';
 import { sortEpisodes } from './filename';
 
 /** Ordered first-match naming rules for the Organize mode. */
@@ -73,6 +78,24 @@ export interface OrganizeNameReplacement {
   replace: string;
 }
 
+/** Defaults for the multi-episode split editor. */
+export interface OrganizeSplittingDefaults {
+  /** What happens to the original multi-episode source. */
+  originalPolicy: SplitOriginalPolicy;
+  /** `copy` is lossless and needs keyframe alignment; `exact` re-encodes. */
+  cutMode: SplitCutMode;
+  /** Parallel ffmpeg split jobs, 1-2. */
+  concurrency: number;
+  sidecarPolicy: SplitSidecarPolicy;
+}
+
+export const DEFAULT_ORGANIZE_SPLITTING: OrganizeSplittingDefaults = {
+  originalPolicy: 'backup',
+  cutMode: 'copy',
+  concurrency: 1,
+  sidecarPolicy: 'leave',
+};
+
 export interface OrganizeSettings {
   /** Movies only. TV uses TVDB by definition. */
   movieMetadata: MovieMetadataSource;
@@ -93,6 +116,8 @@ export interface OrganizeSettings {
   nameReplacements: OrganizeNameReplacement[];
   /** Manual match fixes keyed by the source file comparison key. */
   overrides?: Record<string, OrganizeMatchOverride>;
+  /** Defaults for queued multi-episode splits. */
+  splitting?: OrganizeSplittingDefaults;
 }
 
 export const DEFAULT_ORGANIZE_FILE_TEMPLATE = '{title} ({year}) [{resolution}]';
@@ -152,6 +177,7 @@ export function createOrganizeSettings(
     renameMovieFolders: true,
     nameReplacements: [],
     overrides: {},
+    splitting: { ...DEFAULT_ORGANIZE_SPLITTING },
   };
 }
 
@@ -320,6 +346,27 @@ export function resolveOrganizeSettings(
     renameMovieFolders: value?.renameMovieFolders !== false,
     nameReplacements: normalizeNameReplacements(value?.nameReplacements),
     overrides,
+    splitting: normalizeSplitting(value?.splitting),
+  };
+}
+
+function normalizeSplitting(
+  value: Partial<OrganizeSplittingDefaults> | undefined,
+): OrganizeSplittingDefaults {
+  const concurrency = Number(value?.concurrency);
+  return {
+    originalPolicy:
+      value?.originalPolicy === 'delete' || value?.originalPolicy === 'keep'
+        ? value.originalPolicy
+        : DEFAULT_ORGANIZE_SPLITTING.originalPolicy,
+    cutMode: value?.cutMode === 'exact' ? 'exact' : 'copy',
+    concurrency: Number.isFinite(concurrency)
+      ? Math.max(1, Math.min(2, Math.round(concurrency)))
+      : DEFAULT_ORGANIZE_SPLITTING.concurrency,
+    sidecarPolicy:
+      value?.sidecarPolicy === 'split' || value?.sidecarPolicy === 'copy'
+        ? value.sidecarPolicy
+        : DEFAULT_ORGANIZE_SPLITTING.sidecarPolicy,
   };
 }
 

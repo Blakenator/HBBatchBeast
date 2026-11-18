@@ -8,8 +8,10 @@ import { probeMedia as defaultProbeMedia } from '../helpers/probeMedia';
 import type { Library } from '../../common/library';
 import type {
   EpisodeResolution,
+  OrganizeApplyProgress,
   OrganizeApplyResult,
   OrganizePlan,
+  OrganizePlanItem,
   OrganizeSourceFile,
   ParsedMediaName,
   OrganizeScanProgress,
@@ -43,13 +45,27 @@ import {
   resolveShowMapping,
   sortEpisodes,
   episodeRangeFor,
+  applyEpisodeRun,
+  detectEpisodeRunFromName,
   type DetectedShow,
   type PlannedFileInput,
+  type OrganizeSplitPlan,
+  associationForSegment,
+  validateSplitPlan,
+  withSplitTargets,
 } from '../../common/organizer';
 import { expandHomePath, isPathInside } from '../../common/pathUtils';
 import { SIDECAR_EXTENSIONS, isMediaExtension } from '../../common/organizer/filename';
 import { TvdbClient } from './tvdb/client';
-import { mapWithConcurrency } from './concurrency';
+import { mapWithConcurrency, mapWithConcurrencyUntil } from './concurrency';
+import { ffmpegStatus } from '../helpers/ffmpeg';
+import {
+  executeSplitTask,
+  type SplitExecuteDeps,
+  type SplitRunResult,
+  type SplitTask,
+} from './split/apply';
+import { FfmpegCancelledError } from './split/execute';
 import {
   loadPlexCatalog,
   type PlexCatalog,
@@ -152,6 +168,15 @@ function rememberScanCache(cache: OrganizeScanCache): void {
   }
 }
 
+export interface OrganizeApplyDeps {
+  runFfmpeg?: SplitExecuteDeps['runFfmpeg'];
+  /** Replaces the whole split step; used by tests. */
+  splitFile?: SplitExecuteDeps['splitFile'];
+  ffmpegPath?: string;
+  /** Test hook for the availability probe. */
+  ffmpegStatus?: () => Promise<{ available: boolean; path: string }>;
+}
+
 export interface OrganizeApplyOptions {
   plan: OrganizePlan;
   settings: OrganizeSettings;
@@ -159,6 +184,16 @@ export interface OrganizeApplyOptions {
   platform?: NodeJS.Platform;
   updatePlex: boolean;
   plexDbPath?: string;
+  /** Queued multi-episode splits, joined to plan rows by item id. */
+  splits?: OrganizeSplitPlan[];
+  /** Cancels between tasks and terminates the running ffmpeg. */
+  signal?: AbortSignal;
+  onProgress?: (progress: OrganizeApplyProgress) => void;
+  /** Defaults to 1; ffmpeg splits are I/O bound. */
+  splitConcurrency?: number;
+  /** Defaults to 4; renames are cheap metadata operations. */
+  renameConcurrency?: number;
+  deps?: OrganizeApplyDeps;
 }
 
 export interface OrganizeJournalMove {
@@ -167,12 +202,33 @@ export interface OrganizeJournalMove {
   sidecars: { sourcePath: string; targetPath: string }[];
 }
 
+export interface OrganizeJournalSplit {
+  sourcePath: string;
+  sourceRoot: string;
+  outputs: {
+    targetPath: string;
+    episodeTag?: string;
+    startSeconds: number;
+    endSeconds: number;
+  }[];
+  backupPath?: string;
+  originalPolicy: OrganizeSplitPlan['originalPolicy'];
+  /** Subtitle files written for the segments; removed again on undo. */
+  sidecarOutputs?: string[];
+  /** Original sidecars moved into the backup; restored on undo. */
+  sidecarBackups?: { sourcePath: string; backupPath: string }[];
+  startedAt: string;
+  finishedAt: string;
+}
+
 export interface OrganizeJournal {
+  version?: number;
   planId: string;
   createdAt: string;
   status: 'in-progress' | 'applied' | 'failed';
   mediaType: OrganizePlan['mediaType'];
   moves: OrganizeJournalMove[];
+  splits?: OrganizeJournalSplit[];
   plex?: PlexUpdateResult;
   warning?: string;
 }
@@ -237,6 +293,7 @@ function associationFromEpisode(episode: PlexEpisodeFile): PlexAssociation {
       : {}),
     libraryRoot: episode.libraryRoot,
     ...(episode.airDate ? { airDate: episode.airDate } : {}),
+    ...(episode.durationMs ? { durationMs: episode.durationMs } : {}),
     ...(episode.directoryId ? { directoryId: episode.directoryId } : {}),
     ...(episode.directoryPath
       ? { directoryPath: episode.directoryPath }
@@ -864,9 +921,29 @@ async function buildTvPlan(
           conflict: false,
         }
       : resolveEpisode(parsed, episodes, { seriesName: series.name });
+    // An explicit tag range wins. Otherwise the filename title may name several
+    // consecutive episodes; only extend forward from the resolved episode and
+    // only when the joined titles clearly beat the first one.
+    const tagRange = episodesForRange(episodes, resolution.episode, parsed);
+    const detectedRun =
+      manualEpisodes ||
+      tagRange ||
+      !resolution.episode
+        ? undefined
+        : detectEpisodeRunFromName(parsed, episodes, {
+            seriesName: series.name,
+            anchorEpisode: resolution.episode,
+          });
+    const runResolution = detectedRun
+      ? applyEpisodeRun(resolution, parsed, detectedRun, {
+          seriesName: series.name,
+        })
+      : undefined;
+    const effective = runResolution ?? resolution;
     const rangeEpisodes =
       manualEpisodes ??
-      episodesForRange(episodes, resolution.episode, parsed);
+      tagRange ??
+      (runResolution ? detectedRun?.episodes : undefined);
     const plexFiles = catalog
       ? findEpisodeAssociations(catalog.episodes, file.path, caseInsensitive)
       : [];
@@ -877,15 +954,15 @@ async function buildTvPlan(
       planned: {
         ...file,
         parsed: parsedWithProbe(parsed, plexFile ?? {}),
-        confidence: resolution.confidence,
-        reason: resolution.reason || 'No matching TVDB episode',
+        confidence: effective.confidence,
+        reason: effective.reason || 'No matching TVDB episode',
         seriesName: series.name,
         showSubpath,
         ...(series.year ? { seriesYear: series.year } : {}),
         ...(input.showFolder ? { showFolder: input.showFolder } : {}),
-        ...(resolution.episode ? { episode: resolution.episode } : {}),
+        ...(effective.episode ? { episode: effective.episode } : {}),
         ...(rangeEpisodes ? { episodes: rangeEpisodes } : {}),
-        ...(resolution.summary ? { episodeMatch: resolution.summary } : {}),
+        ...(effective.summary ? { episodeMatch: effective.summary } : {}),
         ...(plexFile ? { plex: associationFromEpisode(plexFile) } : {}),
         ...(plexFiles.length > 1
           ? { plexEpisodes: plexFiles.map(associationFromEpisode) }
@@ -1412,6 +1489,76 @@ async function reverseMoves(moves: OrganizeJournalMove[]): Promise<void> {
   }
 }
 
+/**
+ * Deletes split outputs and restores the original when a backup exists. The
+ * restore runs first so a failed move never loses the multi-episode file.
+ */
+async function reverseSplits(
+  splits: OrganizeJournalSplit[] | undefined,
+): Promise<{ reversed: number; warnings: string[] }> {
+  const warnings: string[] = [];
+  let reversed = 0;
+  for (const split of [...(splits ?? [])].reverse()) {
+    let restored = split.originalPolicy === 'keep';
+    if (split.backupPath) {
+      try {
+        if (fs.existsSync(split.backupPath)) {
+          await fs.promises.mkdir(path.dirname(split.sourcePath), {
+            recursive: true,
+          });
+          await move(split.backupPath, split.sourcePath, { overwrite: false });
+          restored = true;
+        }
+      } catch (error) {
+        warnings.push(
+          `Could not restore ${split.sourcePath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    if (!restored) {
+      warnings.push(
+        `The original for ${split.sourcePath} was deleted; its split outputs were left in place.`,
+      );
+      continue;
+    }
+    for (const sidecar of split.sidecarBackups ?? []) {
+      try {
+        if (!fs.existsSync(sidecar.backupPath)) continue;
+        await fs.promises.mkdir(path.dirname(sidecar.sourcePath), {
+          recursive: true,
+        });
+        await move(sidecar.backupPath, sidecar.sourcePath, {
+          overwrite: false,
+        });
+      } catch (error) {
+        warnings.push(
+          `Could not restore ${sidecar.sourcePath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    for (const output of split.outputs) {
+      try {
+        await fs.promises.rm(output.targetPath, { force: true });
+      } catch {
+        // Best effort.
+      }
+    }
+    for (const sidecar of split.sidecarOutputs ?? []) {
+      try {
+        await fs.promises.rm(sidecar, { force: true });
+      } catch {
+        // Best effort.
+      }
+    }
+    reversed += 1;
+  }
+  return { reversed, warnings };
+}
+
 async function removeEmptyParents(
   directory: string,
   root: string,
@@ -1430,6 +1577,204 @@ async function removeEmptyParents(
   }
 }
 
+function freeBytesAt(directory: string): number | undefined {
+  let current = path.resolve(directory);
+  while (true) {
+    try {
+      const stat = fs.statfsSync(current);
+      return Number(stat.bavail) * Number(stat.bsize);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return undefined;
+      current = parent;
+    }
+  }
+}
+
+function volumeKey(directory: string): string {
+  const resolved = path.resolve(directory);
+  return path.parse(resolved).root || resolved;
+}
+
+/** Best-effort preflight: refuse to start a split that cannot fit on disk. */
+function ensureSplitDiskSpace(
+  tasks: readonly SplitTask[],
+  appPaths: AppPaths,
+): void {
+  const required = new Map<string, { directory: string; bytes: number }>();
+  const add = (directory: string, bytes: number) => {
+    const key = volumeKey(directory);
+    const entry = required.get(key) ?? { directory, bytes: 0 };
+    entry.bytes += bytes;
+    required.set(key, entry);
+  };
+  for (const task of tasks) {
+    const size = task.plan.fileSize;
+    const directories = new Set(
+      task.segments.flatMap((segment) =>
+        segment.targetPath ? [path.dirname(segment.targetPath)] : [],
+      ),
+    );
+    const share = size / Math.max(1, directories.size);
+    for (const directory of directories) add(directory, share);
+    if (task.plan.originalPolicy === 'backup') {
+      add(appPaths.backupDir, size);
+    }
+  }
+  const problems: string[] = [];
+  for (const entry of required.values()) {
+    const free = freeBytesAt(entry.directory);
+    if (free === undefined) continue;
+    if (free < entry.bytes * 1.05) {
+      problems.push(
+        `${formatBytes(free)} free at ${entry.directory}; about ${formatBytes(
+          entry.bytes * 1.05,
+        )} is needed for the queued splits.`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `Not enough disk space to split safely:\n\n${problems.join('\n')}`,
+    );
+  }
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value)) return 'unknown';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+/**
+ * Validates queued splits and renders one target per segment. Everything is
+ * checked before any file is touched.
+ */
+function resolveSplitTasks(
+  options: OrganizeApplyOptions,
+  caseInsensitive: boolean,
+): SplitTask[] {
+  const splits = options.splits ?? [];
+  if (splits.length === 0) return [];
+  const byId = new Map(options.plan.items.map((item) => [item.id, item]));
+  const splitItemIds = new Set<string>();
+  const usedTargets = new Set<string>();
+  const tasks: SplitTask[] = [];
+  for (const split of splits) {
+    const item = byId.get(split.itemId);
+    if (!item) {
+      throw new Error(
+        `The split for ${split.sourcePath} is no longer part of the review.`,
+      );
+    }
+    if (splitItemIds.has(item.id)) {
+      throw new Error(`Two splits target the same file: ${split.sourcePath}`);
+    }
+    splitItemIds.add(item.id);
+    const problems = validateSplitPlan(split);
+    if (problems.length > 0) {
+      throw new Error(`${split.sourcePath}:\n${problems.join('\n')}`);
+    }
+    if (!fs.existsSync(split.sourcePath)) {
+      throw new Error(`Source file is missing: ${split.sourcePath}`);
+    }
+    const stat = fs.statSync(split.sourcePath);
+    if (stat.size !== split.fileSize) {
+      throw new Error(
+        `The source file changed since the split was planned: ${split.sourcePath}. Open the split editor again.`,
+      );
+    }
+    const reservedPaths = options.plan.items
+      .filter((candidate) => candidate.id !== item.id)
+      .flatMap((candidate) => [
+        candidate.sourcePath,
+        candidate.targetPath,
+        ...candidate.sidecars.flatMap((sidecar) => [
+          sidecar.sourcePath,
+          sidecar.targetPath,
+        ]),
+      ]);
+    const rendered = withSplitTargets(item, split.segments, {
+      settings: options.settings,
+      mediaType: options.plan.mediaType,
+      caseInsensitive,
+      reservedPaths,
+    });
+    const conflicts = [...rendered.conflicts];
+    const keyedSegments = rendered.segments.map((segment) => {
+      if (!segment.targetPath) {
+        conflicts.push(`Segment ${segment.index + 1} has no target path.`);
+        return segment;
+      }
+      const key = organizerComparisonKey(segment.targetPath, { caseInsensitive });
+      if (usedTargets.has(key)) {
+        conflicts.push(
+          `Two queued splits write the same target: ${segment.targetPath}`,
+        );
+      }
+      usedTargets.add(key);
+      if (fs.existsSync(segment.targetPath)) {
+        conflicts.push(`Target already exists: ${segment.targetPath}`);
+      }
+      return segment;
+    });
+    if (conflicts.length > 0) {
+      throw new Error(
+        `${split.sourcePath}:\n${[...new Set(conflicts)].join('\n')}`,
+      );
+    }
+    tasks.push({ item, plan: split, segments: keyedSegments });
+  }
+  return tasks;
+}
+
+function splitPseudoItems(
+  successful: { task: SplitTask; result: SplitRunResult }[],
+  warnings: string[],
+): OrganizePlanItem[] {
+  const seenParts = new Set<number>();
+  const items: OrganizePlanItem[] = [];
+  for (const { task, result } of successful) {
+    const {
+      plexEpisodes: _ignoredEpisodes,
+      plex: _ignoredPlex,
+      episode: _ignoredEpisode,
+      episodes: _ignoredRange,
+      ...base
+    } = task.item;
+    for (const output of result.outputs) {
+      const episode = output.segment.episode;
+      if (!episode) continue;
+      const association = associationForSegment(task.item, episode);
+      if (association) {
+        if (seenParts.has(association.mediaPartId)) {
+          warnings.push(
+            `Plex stored ${episode.tag} in the same part as another split segment; rescans create separate parts. ${output.targetPath}`,
+          );
+        }
+        seenParts.add(association.mediaPartId);
+      }
+      items.push({
+        ...base,
+        id: `${task.item.id}#split-${output.segment.index}`,
+        action: 'rename',
+        targetPath: output.targetPath,
+        episode,
+        episodes: [episode],
+        sidecars: [],
+        ...(association ? { plex: association } : {}),
+      });
+    }
+  }
+  return items;
+}
+
 /** Applies a plan, journaling file moves before touching Plex. */
 export async function applyOrganizePlan(
   options: OrganizeApplyOptions,
@@ -1438,28 +1783,50 @@ export async function applyOrganizePlan(
   if (options.plan.items.some((item) => item.action === 'conflict')) {
     throw new Error('Resolve the target path conflicts before applying.');
   }
-  const actionable = options.plan.items.filter(
-    (item) => item.action === 'rename',
+  const caseInsensitive =
+    options.settings.caseInsensitive ?? isCaseInsensitivePlatform(platform);
+  const splitTasks = resolveSplitTasks(options, caseInsensitive);
+  const splitItemIds = new Set(splitTasks.map((task) => task.item.id));
+  const renameItems = options.plan.items.filter(
+    (item) => item.action === 'rename' && !splitItemIds.has(item.id),
   );
+  const signal = options.signal;
   const journal: OrganizeJournal = {
+    version: 2,
     planId: options.plan.createdAt,
     createdAt: new Date().toISOString(),
     status: 'in-progress',
     mediaType: options.plan.mediaType,
     moves: [],
+    splits: [],
   };
   const result: OrganizeApplyResult = {
     planId: journal.planId,
     renamed: [],
     skipped: options.plan.items
-      .filter((item) => item.action === 'skip')
+      .filter((item) => item.action === 'skip' && !splitItemIds.has(item.id))
       .map((item) => item.sourcePath),
     failed: [],
     plexUpdated: 0,
     historyMoved: 0,
     pendingHistoryTransfers: 0,
     warnings: [...options.plan.warnings],
+    splits: [],
+    cancelled: [],
   };
+
+  if (splitTasks.length > 0) {
+    const status = await (options.deps?.ffmpegStatus?.() ??
+      ffmpegStatus({
+        configured: options.deps?.ffmpegPath,
+      }));
+    if (!status.available) {
+      throw new Error(
+        `Splitting needs FFmpeg, but it could not be started (${status.path}). Install FFmpeg or set its path in Settings.`,
+      );
+    }
+    ensureSplitDiskSpace(splitTasks, options.appPaths);
+  }
 
   if (options.updatePlex) {
     const dbPath = options.plexDbPath;
@@ -1524,8 +1891,60 @@ export async function applyOrganizePlan(
     }
   }
 
+  const startedAt = Date.now();
+  const totalTasks = renameItems.length + splitTasks.length;
+  const totalWeight =
+    renameItems.length +
+    splitTasks.reduce((total, task) => total + Math.max(2, task.segments.length), 0);
+  const splitTotal = splitTasks.length;
+  let completed = 0;
+  let splitCompleted = 0;
+  let doneWeight = 0;
+  let lastReport = 0;
+  let currentPath: string | undefined;
+  let currentKind: 'rename' | 'split' | undefined;
+  let currentPercent: number | undefined;
+  let phaseValue: OrganizeApplyProgress['phase'] = 'preflight';
+
+  const progress = (force = false): void => {
+    if (!options.onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastReport < 100) return;
+    lastReport = now;
+    const elapsedMs = now - startedAt;
+    const weighted = doneWeight + (currentPercent ? 1 : 0);
+    const etaMs =
+      weighted > 0 && totalWeight > 0
+        ? Math.round((elapsedMs / weighted) * Math.max(0, totalWeight - weighted))
+        : undefined;
+    options.onProgress({
+      phase: phaseValue,
+      completed,
+      total: totalTasks,
+      ...(currentPath ? { currentPath } : {}),
+      ...(currentKind ? { currentKind } : {}),
+      ...(currentPercent !== undefined ? { currentPercent } : {}),
+      splitCompleted,
+      splitTotal,
+      elapsedMs,
+      ...(etaMs !== undefined ? { etaMs } : {}),
+      warnings: result.warnings.slice(-8),
+    });
+  };
+  const setPhase = (next: OrganizeApplyProgress['phase']) => {
+    phaseValue = next;
+    progress(true);
+  };
+
+  progress(true);
   writeJournal(options.appPaths, journal);
-  for (const item of actionable) {
+
+  const runRename = async (item: OrganizePlanItem): Promise<void> => {
+    startedRenames.add(item.sourcePath);
+    currentPath = item.sourcePath;
+    currentKind = 'rename';
+    currentPercent = undefined;
+    progress(true);
     try {
       await fs.promises.mkdir(path.dirname(item.targetPath), { recursive: true });
       if (item.caseOnly) {
@@ -1564,26 +1983,153 @@ export async function applyOrganizePlan(
         path: item.sourcePath,
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      completed += 1;
+      doneWeight += 1;
+      progress(true);
+    }
+  };
+
+  const successfulSplits: { task: SplitTask; result: SplitRunResult }[] = [];
+  const startedRenames = new Set<string>();
+  const runSplit = async (task: SplitTask): Promise<void> => {
+    if (signal?.aborted) return;
+    currentPath = task.plan.sourcePath;
+    currentKind = 'split';
+    currentPercent = 0;
+    progress(true);
+    const startedSplitAt = new Date().toISOString();
+    try {
+      const splitResult = await executeSplitTask(task, options.appPaths, {
+        ...(options.deps?.runFfmpeg
+          ? { runFfmpeg: options.deps.runFfmpeg }
+          : {}),
+        ...(options.deps?.ffmpegPath
+          ? { ffmpegPath: options.deps.ffmpegPath }
+          : {}),
+        ...(signal ? { signal } : {}),
+        onProgress: (fraction) => {
+          currentPercent = Math.max(0, Math.min(1, fraction));
+          progress();
+        },
+        ...(options.deps?.splitFile
+          ? { splitFile: options.deps.splitFile }
+          : {}),
+      });
+      successfulSplits.push({ task, result: splitResult });
+      result.renamed.push(...splitResult.outputs.map((output) => output.targetPath));
+      result.splits.push({
+        sourcePath: splitResult.sourcePath,
+        outputs: splitResult.outputs.map((output) => output.targetPath),
+        ...(splitResult.backupPath
+          ? { backupPath: splitResult.backupPath }
+          : {}),
+        originalKept: splitResult.originalKept,
+      });
+      result.warnings.push(...splitResult.warnings);
+      journal.splits?.push({
+        sourcePath: splitResult.sourcePath,
+        sourceRoot: task.item.sourceRoot,
+        outputs: splitResult.outputs.map((output) => ({
+          targetPath: output.targetPath,
+          ...(output.segment.episode?.tag
+            ? { episodeTag: output.segment.episode.tag }
+            : {}),
+          startSeconds: output.segment.startSeconds,
+          endSeconds: output.segment.endSeconds,
+        })),
+        ...(splitResult.backupPath
+          ? { backupPath: splitResult.backupPath }
+          : {}),
+        ...(splitResult.sidecarOutputs?.length
+          ? { sidecarOutputs: splitResult.sidecarOutputs }
+          : {}),
+        ...(splitResult.sidecarBackups?.length
+          ? { sidecarBackups: splitResult.sidecarBackups }
+          : {}),
+        originalPolicy: task.plan.originalPolicy,
+        startedAt: startedSplitAt,
+        finishedAt: new Date().toISOString(),
+      });
+      writeJournal(options.appPaths, journal);
+    } catch (error) {
+      if (error instanceof FfmpegCancelledError || signal?.aborted) {
+        result.cancelled.push(task.plan.sourcePath);
+      } else {
+        result.failed.push({
+          path: task.plan.sourcePath,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      completed += 1;
+      splitCompleted += 1;
+      doneWeight += Math.max(2, task.segments.length);
+      currentPercent = undefined;
+      progress(true);
+    }
+  };
+
+  setPhase(splitTasks.length > 0 ? 'splitting' : 'renaming');
+  await Promise.all([
+    mapWithConcurrencyUntil(
+      renameItems,
+      Math.max(1, Math.min(8, options.renameConcurrency ?? 4)),
+      runRename,
+      signal,
+    ),
+    mapWithConcurrencyUntil(
+      splitTasks,
+      Math.max(1, Math.min(2, options.splitConcurrency ?? 1)),
+      runSplit,
+      signal,
+    ),
+  ]);
+  writeJournal(options.appPaths, journal);
+
+  const attemptedSplits = new Set(successfulSplits.map((entry) => entry.task.item.id));
+  if (signal?.aborted) {
+    for (const item of renameItems) {
+      if (!startedRenames.has(item.sourcePath)) {
+        result.cancelled.push(item.sourcePath);
+      }
+    }
+    for (const task of splitTasks) {
+      if (
+        !attemptedSplits.has(task.item.id) &&
+        !result.failed.some((failure) => failure.path === task.plan.sourcePath) &&
+        !result.cancelled.includes(task.plan.sourcePath)
+      ) {
+        result.cancelled.push(task.plan.sourcePath);
+      }
     }
   }
 
-  writeJournal(options.appPaths, journal);
-  if (options.updatePlex && result.failed.length === 0) {
+  if (options.updatePlex && result.failed.length === 0 && !signal?.aborted) {
+    setPhase('plex');
     try {
-      const plex = updatePlexFromPlan(options.plan, {
-        dbPath: path.resolve(
-          expandHomePath(
-            options.plexDbPath ?? '',
-            process.env.HOME ?? process.env.USERPROFILE ?? '',
+      const pseudoItems = splitPseudoItems(successfulSplits, result.warnings);
+      const plex = updatePlexFromPlan(
+        {
+          ...options.plan,
+          items: [
+            ...options.plan.items.filter((item) => !splitItemIds.has(item.id)),
+            ...pseudoItems,
+          ],
+        },
+        {
+          dbPath: path.resolve(
+            expandHomePath(
+              options.plexDbPath ?? '',
+              process.env.HOME ?? process.env.USERPROFILE ?? '',
+            ),
           ),
-        ),
-        backupDir: options.appPaths.backupDir,
-        pendingPath: pendingPath(options.appPaths),
-        platform,
-        caseInsensitive:
-          options.settings.caseInsensitive ??
-          isCaseInsensitivePlatform(platform),
-      });
+          backupDir: options.appPaths.backupDir,
+          pendingPath: pendingPath(options.appPaths),
+          platform,
+          caseInsensitive,
+        },
+      );
       journal.plex = plex;
       journal.status = 'applied';
       result.plexUpdated = plex.updated;
@@ -1595,14 +2141,20 @@ export async function applyOrganizePlan(
       journal.warning = error instanceof Error ? error.message : String(error);
       writeJournal(options.appPaths, journal);
       await reverseMoves(journal.moves);
+      const splitReversal = await reverseSplits(journal.splits);
+      result.warnings.push(...splitReversal.warnings);
       throw error;
     }
   } else {
-    journal.status = result.failed.length > 0 ? 'failed' : 'applied';
-    if (result.failed.length > 0) {
+    journal.status =
+      result.failed.length > 0 || signal?.aborted ? 'failed' : 'applied';
+    if (signal?.aborted) {
+      journal.warning = 'Apply was cancelled.';
+    } else if (result.failed.length > 0) {
       journal.warning = 'Some file moves failed; Plex was not updated.';
     }
   }
+  setPhase('done');
   writeJournal(options.appPaths, journal);
   return result;
 }
@@ -1616,6 +2168,8 @@ export async function undoLastOrganize(
   if (!journal) throw new Error('There is no organize journal to undo.');
   const warnings: string[] = [];
   await reverseMoves(journal.moves);
+  const splitReversal = await reverseSplits(journal.splits);
+  warnings.push(...splitReversal.warnings);
   if (options.restorePlex && journal.plex?.backupPath) {
     const dbPath = journal.plex.backupPath;
     warnings.push(
@@ -1625,7 +2179,10 @@ export async function undoLastOrganize(
   journal.status = 'failed';
   journal.warning = 'Undone from the organize journal';
   writeJournal(appPaths, journal);
-  return { reversed: journal.moves.length, warnings };
+  return {
+    reversed: journal.moves.length + splitReversal.reversed,
+    warnings,
+  };
 }
 
 export { completePendingHistoryTransfers };

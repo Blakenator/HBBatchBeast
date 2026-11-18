@@ -27,12 +27,12 @@ import {
   diffTargetName,
   episodeSelectionTag,
   pathDirname,
-  type DiffSegment,
   type MediaType,
   type NamingRule,
   type OrganizePlan,
   type OrganizePlanItem,
   type OrganizeSettings,
+  type OrganizeSplitPlan,
   titleComparisonKey,
 } from '../../common';
 import { useBackend } from '../helpers';
@@ -41,17 +41,26 @@ import { Button, IconButton } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import type { AppIconName } from '../ui/icons';
 import { MatchBadge } from './MatchBadge';
+import { DiffSegments } from './NameDiff';
 
-type PlanFilter = 'all' | 'rename' | 'skip' | 'conflict' | 'low' | 'review';
+type PlanFilter =
+  | 'all'
+  | 'rename'
+  | 'skip'
+  | 'conflict'
+  | 'low'
+  | 'review'
+  | 'multi';
 type PlanView = 'flat' | 'grouped';
 
-const FILTERS: { value: PlanFilter; label: string }[] = [
+const FILTERS: { value: PlanFilter; label: string; tvOnly?: boolean }[] = [
   { value: 'all', label: 'All files' },
   { value: 'rename', label: 'Will rename' },
   { value: 'skip', label: 'Skipped' },
   { value: 'conflict', label: 'Conflicts' },
   { value: 'low', label: 'Low confidence' },
   { value: 'review', label: 'Match review' },
+  { value: 'multi', label: 'Multi-episode', tvOnly: true },
 ];
 
 const ROW_HEIGHT = 44;
@@ -331,20 +340,6 @@ const NameText = styled(EllipsisText)`
   font-size: var(--hb-font-sm);
 `;
 
-const Removed = styled.span`
-  color: var(--hb-danger);
-  background: color-mix(in srgb, var(--hb-danger) 16%, transparent);
-  border-radius: 2px;
-  text-decoration: line-through;
-`;
-
-const Added = styled.span`
-  color: var(--hb-success);
-  background: color-mix(in srgb, var(--hb-success) 18%, transparent);
-  border-radius: 2px;
-  font-weight: 600;
-`;
-
 const Muted = styled.span`
   color: var(--hb-textMuted);
   font-size: var(--hb-font-xs);
@@ -523,34 +518,6 @@ function parsePercent(value: string): number | undefined {
   return Math.min(100, Math.max(0, parsed));
 }
 
-function DiffSegments({
-  segments,
-  changedStyle,
-}: {
-  segments: DiffSegment[];
-  changedStyle: 'removed' | 'added';
-}) {
-  return (
-    <>
-      {segments.map((segment, index) =>
-        segment.changed ? (
-          changedStyle === 'removed' ? (
-            <Removed key={index} data-diff="removed">
-              {segment.text}
-            </Removed>
-          ) : (
-            <Added key={index} data-diff="added">
-              {segment.text}
-            </Added>
-          )
-        ) : (
-          <React.Fragment key={index}>{segment.text}</React.Fragment>
-        ),
-      )}
-    </>
-  );
-}
-
 function ruleLabel(
   item: OrganizePlanItem,
   rules: NamingRule[],
@@ -607,6 +574,11 @@ function needsConflictReview(
   );
 }
 
+/** A file matched to two or more episodes, so it can be split. */
+function isMultiEpisode(item: OrganizePlanItem): boolean {
+  return (item.episodes?.length ?? 0) >= 2;
+}
+
 function groupStatsFor(
   items: OrganizePlanItem[],
   confidenceThreshold: number,
@@ -661,7 +633,23 @@ const RowActionsMenu: React.FC<{
   onSkipChange: (item: OrganizePlanItem, skip: boolean) => void;
   onApprove: (item: OrganizePlanItem) => void;
   onFolderOnly: (item: OrganizePlanItem) => void;
-}> = ({ item, onFixMatch, onSkipChange, onApprove, onFolderOnly }) => {
+  /** Two or more matched episodes, so a split can be planned. */
+  canSplit: boolean;
+  /** A split is already queued for this row. */
+  hasSplit: boolean;
+  onSplit: (item: OrganizePlanItem) => void;
+  onRemoveSplit: (item: OrganizePlanItem) => void;
+}> = ({
+  item,
+  onFixMatch,
+  onSkipChange,
+  onApprove,
+  onFolderOnly,
+  canSplit,
+  hasSplit,
+  onSplit,
+  onRemoveSplit,
+}) => {
   const popoverId = useId();
   const [open, setOpen] = useState(false);
   const openFolder = useBackend({
@@ -737,6 +725,32 @@ const RowActionsMenu: React.FC<{
                 ? 'Rename file too'
                 : 'Rename folder only'}
             </RowActionButton>
+            {(canSplit || hasSplit) && (
+              <RowActionButton
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onSplit(item);
+                }}
+              >
+                {hasSplit
+                  ? 'Edit split…'
+                  : (item.episodes?.length ?? 0) >= 2
+                    ? 'Split episodes…'
+                    : 'Split file…'}
+              </RowActionButton>
+            )}
+            {hasSplit && (
+              <RowActionButton
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onRemoveSplit(item);
+                }}
+              >
+                Remove split
+              </RowActionButton>
+            )}
             {(item.action !== 'skip' || item.manualSkip) && (
               <RowActionButton
                 type="button"
@@ -775,6 +789,11 @@ interface OrganizePlanTableProps {
   onSelectedChange: (next: Set<string>) => void;
   onFixMatch: (item: OrganizePlanItem) => void;
   onSkipChange: (item: OrganizePlanItem, skip: boolean) => void;
+  onMultiEpisode: (items: OrganizePlanItem[]) => void;
+  /** Queued multi-episode splits, joined to the plan by item id. */
+  splits: OrganizeSplitPlan[];
+  onSplit: (items: OrganizePlanItem[]) => void;
+  onRemoveSplit: (item: OrganizePlanItem) => void;
   onBulkAction: (
     action: 'skip' | 'useBestGuess' | 'rescan' | 'approve' | 'folderOnly',
     items: OrganizePlanItem[],
@@ -794,6 +813,10 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
   onSelectedChange,
   onFixMatch,
   onSkipChange,
+  onMultiEpisode,
+  splits,
+  onSplit,
+  onRemoveSplit,
   onBulkAction,
 }) => {
   const columnsPopoverId = useId();
@@ -925,6 +948,10 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
 
   const minConfidence = parsePercent(minPercent);
   const maxConfidence = parsePercent(maxPercent);
+  useEffect(() => {
+    // The chip only exists for TV; a movie library must not keep the filter.
+    if (mediaType !== 'tv' && filter === 'multi') setFilter('all');
+  }, [filter, mediaType]);
   const filtersActive =
     filter !== 'all' ||
     search.trim() !== '' ||
@@ -937,12 +964,24 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     setMaxPercent('');
   };
 
+  const splitById = useMemo(
+    () => new Map(splits.map((split) => [split.itemId, split])),
+    [splits],
+  );
+
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const normalizedNeedle = titleComparisonKey(search);
     return plan.items.filter((item) => {
       if (filter === 'rename' && item.action !== 'rename') return false;
       if (filter === 'skip' && item.action !== 'skip') return false;
+      if (
+        filter === 'multi' &&
+        !isMultiEpisode(item) &&
+        !splitById.has(item.id)
+      ) {
+        return false;
+      }
       if (
         filter === 'conflict' &&
         item.action !== 'conflict' &&
@@ -1007,6 +1046,7 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     plan.items,
     search,
     settings.confidenceThreshold,
+    splitById,
   ]);
 
   const columns = useMemo(
@@ -1216,6 +1256,24 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
           size: DEFAULT_COLUMN_SIZES.action,
           sortFn: 'text',
           cell: (info) => {
+            const item = info.row.original;
+            const split = splitById.get(item.id);
+            if (split) {
+              return (
+                <StateChip
+                  $color="var(--hb-success)"
+                  title={`Split into ${split.segments.length} episodes: ${split.segments
+                    .map(
+                      (segment) =>
+                        segment.episode?.tag ?? `segment ${segment.index + 1}`,
+                    )
+                    .join(', ')}`}
+                >
+                  <Icon name="split" size="xs" />
+                  Split ×{split.segments.length}
+                </StateChip>
+              );
+            }
             const tone = actionTone[info.getValue()];
             return (
               <StateChip
@@ -1278,6 +1336,10 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
                   onFolderOnly={(target) =>
                     onBulkAction('folderOnly', [target])
                   }
+                  canSplit={mediaType === 'tv'}
+                  hasSplit={splitById.has(item.id)}
+                  onSplit={(target) => onSplit([target])}
+                  onRemoveSplit={onRemoveSplit}
                 />
               </RowActionGroup>
             );
@@ -1288,11 +1350,14 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
       mediaType,
       onBulkAction,
       onFixMatch,
+      onRemoveSplit,
       onSelectedChange,
       onSkipChange,
+      onSplit,
       selected,
       settings.confidenceThreshold,
       settings.namingRules,
+      splitById,
     ],
   );
 
@@ -1325,6 +1390,39 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
         .map((row) => row.original),
     [selected, tableRows],
   );
+  // Splitting is available for every selected TV row, including files matched
+  // to a single episode and files whose episodes are non-contiguous in TVDB.
+  const splitEligibleRows = useMemo(
+    () =>
+      mediaType === 'tv'
+        ? selectedRows.filter(
+            (row) =>
+              Boolean(row.episode) ||
+              (row.episodes?.length ?? 0) > 0 ||
+              splitById.has(row.id),
+          )
+        : [],
+    [mediaType, selectedRows, splitById],
+  );
+  // The quick selection helper targets multi-episode rows that are currently
+  // shown, so it follows the active filters just like "Select all shown".
+  const multiRows = useMemo(
+    () =>
+      tableRows
+        .map((row) => row.original)
+        .filter((row) => isMultiEpisode(row) || splitById.has(row.id)),
+    [splitById, tableRows],
+  );
+  const allMultiSelected =
+    multiRows.length > 0 && multiRows.every((row) => selected.has(row.id));
+  const toggleMultiSelection = () => {
+    const next = new Set(selected);
+    for (const row of multiRows) {
+      if (allMultiSelected) next.delete(row.id);
+      else next.add(row.id);
+    }
+    onSelectedChange(next);
+  };
   const showGroups = useMemo(() => {
     if (view !== 'grouped') return [];
     const groups = new Map<
@@ -1669,17 +1767,19 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
   return (
     <div style={{ minWidth: 0, maxWidth: '100%' }}>
       <Toolbar role="group" aria-label="Review filters">
-        {FILTERS.map((option) => (
-          <FilterButton
-            key={option.value}
-            type="button"
-            aria-pressed={filter === option.value}
-            $active={filter === option.value}
-            onClick={() => setFilter(option.value)}
-          >
-            {option.label}
-          </FilterButton>
-        ))}
+        {FILTERS.filter((option) => !option.tvOnly || mediaType === 'tv').map(
+          (option) => (
+            <FilterButton
+              key={option.value}
+              type="button"
+              aria-pressed={filter === option.value}
+              $active={filter === option.value}
+              onClick={() => setFilter(option.value)}
+            >
+              {option.label}
+            </FilterButton>
+          ),
+        )}
         <span
           style={{
             display: 'inline-flex',
@@ -1778,6 +1878,23 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
                 Select all shown
               </Button>
             )}
+            {mediaType === 'tv' && multiRows.length > 0 && (
+              <Button
+                compact
+                variant="ghost"
+                icon={allMultiSelected ? 'close' : 'addGroup'}
+                title={
+                  allMultiSelected
+                    ? 'Clear the multi-episode files from the selection'
+                    : 'Select every multi-episode file that is currently shown'
+                }
+                onClick={toggleMultiSelection}
+              >
+                {allMultiSelected
+                  ? `Clear multi-episode (${multiRows.length})`
+                  : `Select multi-episode (${multiRows.length})`}
+              </Button>
+            )}
             {selectedRows.length > 0 && (
               <>
                 <Button
@@ -1806,6 +1923,28 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
                 >
                   Approve ({selectedRows.length})
                 </Button>
+                {mediaType === 'tv' && (
+                  <Button
+                    compact
+                    variant="secondary"
+                    icon="addGroup"
+                    title="Mark the selected files as multi-episode and fill in the episode range"
+                    onClick={() => onMultiEpisode(selectedRows)}
+                  >
+                    Multi-episode ({selectedRows.length})
+                  </Button>
+                )}
+                {mediaType === 'tv' && splitEligibleRows.length > 0 && (
+                  <Button
+                    compact
+                    variant="secondary"
+                    icon="split"
+                    title="Estimate cut points and queue splits for the selected TV files"
+                    onClick={() => onSplit(splitEligibleRows)}
+                  >
+                    Split files ({splitEligibleRows.length})
+                  </Button>
+                )}
                 <Button
                   compact
                   variant="ghost"

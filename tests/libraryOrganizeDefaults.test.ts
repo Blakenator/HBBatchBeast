@@ -78,6 +78,43 @@ describe('library organizer defaults', () => {
     ).toBe('{show}/Season {season:02}');
   });
 
+  it('normalizes the multi-episode split defaults', () => {
+    expect(resolveOrganizeSettings(undefined, 'tv').splitting).toEqual({
+      originalPolicy: 'backup',
+      cutMode: 'copy',
+      concurrency: 1,
+      sidecarPolicy: 'leave',
+    });
+    const custom = resolveOrganizeSettings(
+      {
+        splitting: {
+          originalPolicy: 'delete',
+          cutMode: 'exact',
+          concurrency: 9,
+          sidecarPolicy: 'copy',
+        },
+      } as never,
+      'tv',
+    ).splitting;
+    expect(custom).toEqual({
+      originalPolicy: 'delete',
+      cutMode: 'exact',
+      concurrency: 2,
+      sidecarPolicy: 'copy',
+    });
+    expect(
+      resolveOrganizeSettings(
+        { splitting: { concurrency: 0, cutMode: 'nope' } } as never,
+        'tv',
+      ).splitting,
+    ).toMatchObject({
+      originalPolicy: 'backup',
+      cutMode: 'copy',
+      concurrency: 1,
+      sidecarPolicy: 'leave',
+    });
+  });
+
   it('hoists the legacy media type, Plex path and folder series', () => {
     const legacy = {
       ...v2Config(),

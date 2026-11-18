@@ -2,7 +2,7 @@
 
 ## How this document was derived
 
-The legacy feature inventory (≈65 inputs across six tabs, plus the README) describes *what the tool can do*.
+The legacy feature inventory (≈65 inputs across six tabs, plus the README) describes _what the tool can do_.
 That is an implementation inventory, not a design. Working **backwards** from it yields a small set of
 underlying intents; those intents are restated here as user stories, and then the document works **forward**
 again into the flows a real user walks through.
@@ -14,27 +14,27 @@ again into the flows a real user walks through.
 
 ## Personas
 
-| ID | Persona | Context | What "good" means to them |
-| --- | --- | --- | --- |
-| **P1** | Library owner *(primary)* | 100–10,000 video files in nested folders on a personal machine. Converts in occasional long sittings, often overnight. Not an encoding expert. | "Point it at my folders, get smaller files, don't make me think." |
-| **P2** | Server operator | Always-on machine, very large trees, may run multi-hour jobs. Cares about resilience and knowing what is happening. | "Show me status at a glance; let me pause/stop without wrecking the run." |
-| **P3** | Encoding tinkerer | Knows HandBrake, custom/imported presets, hardware encoders, compares output sizes. | "Give me exact control per folder, and don't dumb it down." |
+| ID     | Persona                   | Context                                                                                                                                        | What "good" means to them                                                 |
+| ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **P1** | Library owner _(primary)_ | 100–10,000 video files in nested folders on a personal machine. Converts in occasional long sittings, often overnight. Not an encoding expert. | "Point it at my folders, get smaller files, don't make me think."         |
+| **P2** | Server operator           | Always-on machine, very large trees, may run multi-hour jobs. Cares about resilience and knowing what is happening.                            | "Show me status at a glance; let me pause/stop without wrecking the run." |
+| **P3** | Encoding tinkerer         | Knows HandBrake, custom/imported presets, hardware encoders, compares output sizes.                                                            | "Give me exact control per folder, and don't dumb it down."               |
 
 ## Core intents
 
-These are the *why* behind the inventory. Every feature must trace to one; anything that traces to none is a
+These are the _why_ behind the inventory. Every feature must trace to one; anything that traces to none is a
 candidate to cut.
 
-| ID | Intent | In the inventory this appeared as… |
-| --- | --- | --- |
-| **I1** | *Convert everything under my folders and keep my layout.* | recursive scan, destination mirroring, "unconverted files" comparison, temp folders |
-| **I2** | *Encode by my rules.* | HandBrake/FFmpeg toggle, presets, container, suffix, per-folder preset lists, filters |
-| **I3** | *Show me what you're about to do.* | scan-only mode, source queue table, extra-action flags |
-| **I4** | *Stay in control while it runs.* | pause/resume/stop, cancel item, worker count, low priority, queue table |
-| **I5** | *Tell me what went wrong.* | error/cancelled/other row filters, per-item status, error log, console |
-| **I6** | *Don't destroy my originals unless I said so.* | delete-source, replace-original (always / if smaller), caches |
-| **I7** | *Reuse my setup.* | libraries, reusable presets, mapping rules, language, persisted config file |
-| **I8** | *Help me understand a file.* | media info viewer |
+| ID     | Intent                                                    | In the inventory this appeared as…                                                    |
+| ------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| **I1** | _Convert everything under my folders and keep my layout._ | recursive scan, destination mirroring, "unconverted files" comparison, temp folders   |
+| **I2** | _Encode by my rules._                                     | HandBrake/FFmpeg toggle, presets, container, suffix, per-folder preset lists, filters |
+| **I3** | _Show me what you're about to do._                        | scan-only mode, source queue table, extra-action flags                                |
+| **I4** | _Stay in control while it runs._                          | pause/resume/stop, cancel item, worker count, low priority, queue table               |
+| **I5** | _Tell me what went wrong._                                | error/cancelled/other row filters, per-item status, error log, console                |
+| **I6** | _Don't destroy my originals unless I said so._            | delete-source, replace-original (always / if smaller), caches                         |
+| **I7** | _Reuse my setup._                                         | libraries, reusable presets, mapping rules, language, persisted config file           |
+| **I8** | _Help me understand a file._                              | media info viewer                                                                     |
 
 ## User stories
 
@@ -42,20 +42,23 @@ Format: **ID — story.** Acceptance criteria follow; slice references are in `M
 
 ### I1 — Convert and keep layout
 
-**US-01 — Convert a folder tree.** *As a library owner, I want to point at source and destination folders and
-have every media file under them converted, so that I don't manage files by hand.*
+**US-01 — Convert a folder tree.** _As a library owner, I want to point at source and destination folders and
+have every media file under them converted, so that I don't manage files by hand._
+
 - Subfolders are scanned recursively; the destination mirrors the source structure.
 - Non-media files are ignored; already-present destination files are not re-queued.
 - Partial runs resume safely — re-running never duplicates work.
 
-**US-02 — Multiple sources, each with its own destination.** *As a server operator, I want several
-source→destination pairs, so that I can convert several libraries in one run.*
+**US-02 — Multiple sources, each with its own destination.** _As a server operator, I want several
+source→destination pairs, so that I can convert several libraries in one run._
+
 - Sources and destinations are edited as paired rows, not as two newline-aligned text boxes.
 - A count mismatch blocks the run and names which row is missing its pair.
 - A destination inside its source is rejected with an explanation of the infinite-recursion risk.
 
-**US-03 — Stage conversions in a temp folder.** *As an encoding tinkerer, I want files written to a temp
-folder and moved into the destination when finished, so that broken conversions never appear in my library.*
+**US-03 — Stage conversions in a temp folder.** _As an encoding tinkerer, I want files written to a temp
+folder and moved into the destination when finished, so that broken conversions never appear in my library._
+
 - One temp folder per source row; counts must match.
 - A file that fails never reaches the destination.
 - In-progress outputs carry a `.temp` marker (`movie.temp.mkv`) and are renamed only when complete, so a
@@ -63,160 +66,188 @@ folder and moved into the destination when finished, so that broken conversions 
 
 ### I2 — Encode by my rules
 
-**US-04 — Choose encoder and output shape.** *As a library owner, I want to pick HandBrake or FFmpeg, a
-preset, a container and an optional suffix, so that output matches my devices.*
+**US-04 — Choose encoder and output shape.** _As a library owner, I want to pick HandBrake or FFmpeg, a
+preset, a container and an optional suffix, so that output matches my devices._
+
 - One choice applies to all rows unless overridden per row.
 - The chosen preset is shown in plain language, not as raw CLI flags.
 
-**US-05 — Per-folder presets.** *As an encoding tinkerer, I want a different preset per source row, so that
-720p TV rips and 4K movies get different treatment.*
+**US-05 — Per-folder presets.** _As an encoding tinkerer, I want a different preset per source row, so that
+720p TV rips and 4K movies get different treatment._
+
 - Each source row carries its own preset and optional filename suffix.
 - The review screen shows the resolved preset per file before anything runs.
 
-**US-06 — Filter what gets converted.** *As a server operator, I want to include or exclude files by type,
-size, filename words and media properties, so that an unattended run does not do the wrong thing.*
+**US-06 — Filter what gets converted.** _As a server operator, I want to include or exclude files by type,
+size, filename words and media properties, so that an unattended run does not do the wrong thing._
+
 - Filters are a step-by-step rule stack with nested **Match all** / **Match any** groups; unused filter
   types appear only in the Add-stage menu.
 - Media-property rules use searchable ffprobe property and value pickers, while still accepting custom keys.
 - The chip summary shows the whole expression, and every stage is evaluated at scan time.
 
-**US-07 — Copy sidecar subtitles.** *As a library owner, I want `.srt` files copied next to converted output,
-so that subtitles survive the conversion.*
+**US-07 — Copy sidecar subtitles.** _As a library owner, I want `.srt` files copied next to converted output,
+so that subtitles survive the conversion._
+
 - SRT copying is a single toggle with a clear effect on the review list.
 
-**US-08 — Use a custom or imported preset.** *As an encoding tinkerer, I want to paste or import a HandBrake
-preset, so that I can use my own tuning.*
+**US-08 — Use a custom or imported preset.** _As an encoding tinkerer, I want to paste or import a HandBrake
+preset, so that I can use my own tuning._
+
 - Imported JSON is validated before it can be used.
 - Presets containing `nvenc` surface a warning about worker concurrency.
 
 ### I3 — Preview before committing
 
-**US-09 — Preview the queue.** *As a library owner, I want to scan without converting and see exactly what
-would happen, so that I can catch mistakes before a multi-hour run.*
+**US-09 — Preview the queue.** _As a library owner, I want to scan without converting and see exactly what
+would happen, so that I can catch mistakes before a multi-hour run._
+
 - Scan-only produces, per file: path, resolved preset, any extra action (copy / skip / copy SRT), and a
   stage-by-stage filter trace reachable from the Filter column.
 - Counts are summarised (found, to convert, already converted, filtered out, ignored by type).
 - The preview can be cancelled instantly and leaves no partial output.
 
-**US-10 — Catch misconfiguration while editing.** *As a library owner, I want problems flagged as I fill in
-the form, so that I don't discover them after waiting for a scan.*
+**US-10 — Catch misconfiguration while editing.** _As a library owner, I want problems flagged as I fill in
+the form, so that I don't discover them after waiting for a scan._
+
 - Folder existence, source/destination/temp pairing, preset counts, suffix counts and file-type values are
   validated on blur with a fix-oriented message.
 - A single "review problems" summary lists every blocking issue before a run starts.
 
 ### I4 — Control during a run
 
-**US-11 — Pause and resume.** *As a server operator, I want to pause new work while letting in-flight items
-finish, so that I can use the machine for something else.*
+**US-11 — Pause and resume.** _As a server operator, I want to pause new work while letting in-flight items
+finish, so that I can use the machine for something else._
+
 - Pause stops dispatching and reports the drain state; resume continues from the same queue position.
 
-**US-12 — Stop cleanly.** *As a server operator, I want to stop a run and know what completed, so that I can
-make a decision without guessing.*
+**US-12 — Stop cleanly.** _As a server operator, I want to stop a run and know what completed, so that I can
+make a decision without guessing._
+
 - Stop terminates workers, marks in-flight items cancelled, and leaves a summary.
 
-**US-13 — Cancel a single item.** *As a server operator, I want to drop one file from the run, so that a
-problem file doesn't force me to stop everything.*
+**US-13 — Cancel a single item.** _As a server operator, I want to drop one file from the run, so that a
+problem file doesn't force me to stop everything._
+
 - Cancelling one item terminates only that item's process; the rest continue.
 
-**US-14 — Bound resource usage.** *As an encoding tinkerer, I want to set the worker count and optionally run
-at low priority, so that the machine stays usable.*
+**US-14 — Bound resource usage.** _As an encoding tinkerer, I want to set the worker count and optionally run
+at low priority, so that the machine stays usable._
+
 - Worker count is validated against a sane range and reflected immediately in the run view.
 
-**US-15 — See per-worker progress.** *As a server operator, I want overall and per-worker progress, so that I
-can tell the run is healthy and estimate completion.*
+**US-15 — See per-worker progress.** _As a server operator, I want overall and per-worker progress, so that I
+can tell the run is healthy and estimate completion._
+
 - Overall: done/total, failures, elapsed, ETA if derivable.
 - Per worker: current file, stage, percentage.
 
 ### I5 — Failures are actionable
 
-**US-16 — See per-item outcome.** *As a library owner, I want each file's result, so that I can confirm
-success rather than assume it.*
+**US-16 — See per-item outcome.** _As a library owner, I want each file's result, so that I can confirm
+success rather than assume it._
+
 - Every item ends in exactly one state: success, error, cancelled, skipped.
 - Rows are filterable by state and searchable by path.
 
-**US-17 — Understand a failure.** *As a server operator, I want the reason and the log for a failed item, so
-that I can fix the cause.*
+**US-17 — Understand a failure.** _As a server operator, I want the reason and the log for a failed item, so
+that I can fix the cause._
+
 - The error text is attached to the row; opening the log jumps to that item's output.
 - Raw console output is available without leaving the run.
 
-**US-18 — Retry failed items.** *As a library owner, I want to re-queue failures without rescanning, so that a
-transient problem doesn't cost a full rescan.*
+**US-18 — Retry failed items.** _As a library owner, I want to re-queue failures without rescanning, so that a
+transient problem doesn't cost a full rescan._
+
 - Retry operates on the filtered selection and never re-adds already-successful items.
 
 ### I6 — Protect source files
 
-**US-19 — Safe defaults.** *As a library owner, I want destructive options off by default, so that a careless
-click cannot delete my library.*
+**US-19 — Safe defaults.** _As a library owner, I want destructive options off by default, so that a careless
+click cannot delete my library._
+
 - Delete-source and replace-original default to off.
 - Destructive controls are visually distinct and explain their effect in one sentence.
 
-**US-20 — Replace originals deliberately.** *As an encoding tinkerer, I want to replace the original only when
-the converted file is smaller, or always, with a confirmation.*
+**US-20 — Replace originals deliberately.** _As an encoding tinkerer, I want to replace the original only when
+the converted file is smaller, or always, with a confirmation._
+
 - Replacement is confirmed once per run setup, not per file.
 - Replaced files are recorded in a list the user can review.
 
 ### I7 — Reuse my setup
 
-**US-21 — Libraries.** *As a server operator, I want separate saved libraries (e.g. Movies vs TV), so that I
-don't re-enter paths and presets each time.*
+**US-21 — Libraries.** _As a server operator, I want separate saved libraries (e.g. Movies vs TV), so that I
+don't re-enter paths and presets each time._
+
 - Create, rename, duplicate and delete libraries; switching is immediate and applies to the run screen.
 - The active library is visible in the header, never ambiguous.
 - Presets and mapping rules are reusable building blocks, not part of the folder definition.
 
-**US-22 — Language.** *As a library owner, I want the UI in my language, so that I can use it comfortably.*
+**US-22 — Language.** _As a library owner, I want the UI in my language, so that I can use it comfortably._
+
 - Language change applies without restart; missing strings fall back to English.
 
-**US-23 — Survive restarts and bad config.** *As a library owner, I want my settings back when I reopen the
-app, even if the config file was corrupted.*
+**US-23 — Survive restarts and bad config.** _As a library owner, I want my settings back when I reopen the
+app, even if the config file was corrupted._
+
 - Settings persist on change; an unreadable config is archived rather than crashing, and the app explains
   what happened.
 
-**US-28 — Convert one folder once.** *As a library owner, I want to convert a folder without creating or
-editing a saved library, so that a one-off task stays a one-off.*
+**US-28 — Convert one folder once.** _As a library owner, I want to convert a folder without creating or
+editing a saved library, so that a one-off task stays a one-off._
+
 - The Convert picker offers a one-off conversion row alongside saved libraries.
 - A one-off conversion asks for source, destination and preset, then uses the normal scan/review/run
   flow.
 - It never overwrites the last library; after a successful run the user may save it as a library.
 
-**US-29 — Reuse encoding recipes and map by media.** *As an encoding tinkerer, I want named presets and
-ordered rules such as “480p → mobile, 1080p → TV”, so that one library can serve several devices.*
+**US-29 — Reuse encoding recipes and map by media.** _As an encoding tinkerer, I want named presets and
+ordered rules such as “480p → mobile, 1080p → TV”, so that one library can serve several devices._
+
 - Presets are reusable across libraries and reference installed HandBrake presets or FFmpeg arguments.
 - Mapping rules are evaluated top to bottom; the first match wins and the fallback is the library default.
 - Rules can use folder/path, filename, file size, file type and media properties.
 
 ### I8 — Understand a file
 
-**US-24 — Inspect media properties.** *As an encoding tinkerer, I want to inspect a file's streams before or
-after conversion, so that I can verify the result.*
+**US-24 — Inspect media properties.** _As an encoding tinkerer, I want to inspect a file's streams before or
+after conversion, so that I can verify the result._
+
 - Shows container, video stream (codec, resolution, bitrate, fps), audio and subtitle streams.
 - Reachable from a converted item and from a file picker.
 
 ### Operational
 
-**US-25 — Status while backgrounded.** *As a server operator, I want the tray/window to reflect idle,
-running and error states, so that I notice failures without watching the app.*
+**US-25 — Status while backgrounded.** _As a server operator, I want the tray/window to reflect idle,
+running and error states, so that I notice failures without watching the app._
+
 - One glanceable state; a way to acknowledge an error and return to idle.
 
-**US-26 — Know about updates.** *As a library owner, I want a changelog when the app updates, so that I know
-what changed.*
+**US-26 — Know about updates.** _As a library owner, I want a changelog when the app updates, so that I know
+what changed._
+
 - Shown once per version, dismissible, and does not block the run screen.
 
-**US-27 — Find the logs.** *As a server operator, I want to open the log folder and clear the
-replace-attempt cache, so that I can diagnose and reset state.*
+**US-27 — Find the logs.** _As a server operator, I want to open the log folder and clear the
+replace-attempt cache, so that I can diagnose and reset state._
+
 - Log viewer lists the known logs with sensible empty states.
 
 ### I9 — Organize an existing library
 
-**US-28 — Rename without converting.** *As a media collector, I want to rename files into a clean library
-layout without re-encoding them, so that files that are already fine are not touched.*
+**US-28 — Rename without converting.** _As a media collector, I want to rename files into a clean library
+layout without re-encoding them, so that files that are already fine are not touched._
+
 - Organize is a peer mode to Convert on the same library; there is no separate library kind. Libraries
   carry their media type, and one-off organize runs on an unsaved copy that can be saved afterwards.
 - Nothing moves until the review plan is confirmed; the previous plan can be undone.
 - The review list is sortable, its columns can be resized, reordered and hidden (remembered), and the
   changed part of each new name is highlighted against the old one.
 
-**US-29 — Match episodes and movies.** *As a media collector, I want the app to work out which episode or
-movie each file is, so that names are correct without manual research.*
+**US-29 — Match episodes and movies.** _As a media collector, I want the app to work out which episode or
+movie each file is, so that names are correct without manual research._
+
 - A TV library root holds many shows. Show folders are detected, matched to TVDB by folder name, and the
   match is persisted per folder; each can be changed with a prefilled search (reusing the failed
   auto-match results) or cleared. A folder can be declared a single show instead, and any subset of
@@ -226,21 +257,52 @@ movie each file is, so that names are correct without manual research.*
 - TV files use the series matched to their show folder. Each file resolves two independent signals —
   the `SxxEyy` tag and the filename's episode title — with an embedded air date as a tiebreaker.
   Confidence is a transparent weighted mix, conflicts are labeled, and weak conflicts stay in review
-  instead of being guessed. The review table shows a two-faced `strong`/`weak`/`mixed signals` badge with
+  instead of being guessed. When the filename lists several episode titles, the scan extends the
+  match forward into the consecutive run they describe, so the joined titles vote as one signal. The
+  review table shows a two-faced `strong`/`weak`/`mixed signals` badge with
   a hover/focus breakdown, and **Fix match** ranks episode results with the same evidence and previews
   the resulting filename for the current selection.
 - Files that hold several episodes can be marked as multi-episode in **Fix match**: the selection is
   a consecutive run within one season, a range already present in the filename is preselected, and
   the rendered tag follows Plex's first/last form (`S01E02-E03`). Plex history moves for every
-  episode the file covers.
+  episode the file covers. A whole selection can also be declared multi-episode in bulk: **Detect
+  from filename** uses the tag plus joined episode titles, **Sequential** renumbers the files in
+  show/season order with the same number of episodes per file, and **Keep current numbering**
+  appends the following episodes to each file's existing number. The preview highlights the changed
+  parts of every new filename, shows the current match confidence, and each row can be corrected
+  with the shared **Fix match** dialog before the batch is applied. Rows with no matched show, no
+  season, or a run past the last episode are flagged, and the result is stored as per-file
+  overrides.
+- Files that hold several episodes can also be **split** into one file per episode, and **Split file**
+  is available on every TV row so non-contiguous episodes in one file can be separated manually. The
+  same editor opens for a whole selection with **Split files**, including single-episode rows. The
+  split editor estimates cuts from the TVDB runtimes when it can, shows a zoomable frame filmstrip for
+  finding title cards, displays the exact frame at the playhead above the strip while scrubbing or
+  moving a cut, and can recenter the pan on the nearest split. Cuts can be added at the playhead,
+  snapped to the nearest black run, or generated for every black gap the file contains. The
+  black-frame scan reports its percentage on the button and in a progress bar while it decodes the
+  file, and both black-frame tools can run across every file at once with a combined progress bar and
+  an ETA. Hovering or focusing a control explains it. Copy mode previews the keyframe the cut will
+  actually land on and marks
+  the five nearest alternative keyframes as pickable ticks, so a better split point is one click
+  away. Each segment's quick episode list is limited to the file's detected range, and
+  **Select other episode** opens the shared **Fix match** dialog for a show or episode outside it. A
+  split must be approved (individually or with **Approve all**) before Save writes it; unapproved
+  edits are discarded and a previously queued split stays queued. An adjusted split shows a pending
+  marker and says **ready for review**, while an approved split is outlined in green. A split can back
+  up, delete or keep
+  the original, text subtitle sidecars can be cut per segment, and a queued split runs with the normal
+  renames in one background job with a progress bar and cancellation. Merging episodes is not
+  supported; files are only ever divided.
 - Specials always use `S00`/`Season 00`; generated names strip filesystem-invalid characters.
 - Each review row has a `…` menu with **Fix match** and **Open folder**.
 - Rows whose rendered file and folder names are already identical are skipped automatically.
 - Movies use Plex's metadata when a Plex database is available, and TVDB search when it is not.
 - Resolution comes from the file itself, never from the metadata provider.
 
-**US-30 — Keep watch history when renaming.** *As a Plex user, I want renamed files to keep their watch
-state, so that history and "next episode" are not reset.*
+**US-30 — Keep watch history when renaming.** _As a Plex user, I want renamed files to keep their watch
+state, so that history and "next episode" are not reset._
+
 - Updating Plex is optional per apply. When enabled, the app stops Plex, backs up the database, updates
   the file/directory paths in one transaction, and moves watch rows to the correct episode GUID.
 - If Plex has not scanned the new file yet, the transfer is queued and can be completed later.
@@ -249,7 +311,7 @@ state, so that history and "next episode" are not reset.*
 
 Each flow is the forward direction: what the user does, what the app shows, where it can go wrong.
 
-### F1 — First run → first conversion *(P1, happy path)*
+### F1 — First run → first conversion _(P1, happy path)_
 
 1. **Launch.** No configuration exists → run screen in an **empty state** that asks for a source folder and a
    destination folder, with the default preset preselected. No dead controls.
@@ -269,7 +331,7 @@ Each flow is the forward direction: what the user does, what the app shows, wher
 **Failure branches:** scan finds nothing → empty state explains likely causes (wrong folder, all filtered,
 all already converted); destination unwritable → inline error before the run starts, not mid-run.
 
-### F2 — Repeat conversion on an existing library *(P1/P2)*
+### F2 — Repeat conversion on an existing library _(P1/P2)_
 
 1. Launch → home screen with **Convert** and **Organize** doors; the Convert door offers the
    last-used library to reopen.
@@ -277,7 +339,7 @@ all already converted); destination unwritable → inline error before the run s
 3. Run → same monitoring as F1.
 4. Optional: replace/delete originals if configured; otherwise nothing destructive happens.
 
-### F3 — Large queue, long run *(P2)*
+### F3 — Large queue, long run _(P2)_
 
 1. Scan a very large tree; the queue view virtualises and stays responsive as counts grow.
 2. While running: pause to reclaim CPU, resume, cancel a specific problem file, stop entirely.
@@ -287,21 +349,21 @@ all already converted); destination unwritable → inline error before the run s
 **Failure branches:** worker dies → item marked error, run continues, failure is surfaced in the summary; app
 quit mid-run → next launch clearly reports the interrupted run rather than pretending it finished.
 
-### F4 — Failure triage *(P2)*
+### F4 — Failure triage _(P2)_
 
 1. Error badge/count appears in the run view (and tray, if enabled).
 2. Filter to errors; each row shows the failure reason.
 3. Open the log for that item; read the tool output.
 4. Choose retry (re-queue just those) or skip and move on.
 
-### F5 — Multiple libraries *(P2)*
+### F5 — Multiple libraries _(P2)_
 
 1. Settings → Libraries → create "Movies", configure folders and filters.
 2. Duplicate to "TV", change paths, default preset and mapping rules, save.
 3. Open either library from the Convert picker; the run screen updates immediately and scanning is
    scoped to that library.
 
-### F6 — Reusable presets & mapping rules *(P3)*
+### F6 — Reusable presets & mapping rules _(P3)_
 
 1. Settings → Presets → create a HandBrake or FFmpeg recipe.
 2. Choose a library default preset from the compatible presets.
@@ -310,25 +372,25 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 4. `nvenc` in a preset raises a concurrency warning.
 5. Preview confirms the resolved preset per file before running; the queue shows which rule selected it.
 
-### F7 — Post-run review *(P1)*
+### F7 — Post-run review _(P1)_
 
 1. Summary shows counts and duration.
 2. Review successful items; optionally open the destination folder or inspect a file's media info.
 3. If replace-original was enabled, review the replaced-file list.
 
-### F8 — Inspect a file *(P3)*
+### F8 — Inspect a file _(P3)_
 
 1. From a converted item or a file picker, open media info.
 2. Read video/audio/subtitle stream details.
 3. Close without leaving the run context.
 
-### F9 — Background status & updates *(P2/P1)*
+### F9 — Background status & updates _(P2/P1)_
 
 1. Minimise; tray reflects running/idle/error.
 2. Error state is noticeable; acknowledging returns it to idle.
 3. On a new version, a dismissible changelog appears once.
 
-### F10 — One-off conversion *(P1)*
+### F10 — One-off conversion _(P1)_
 
 1. Launch → home screen with **Convert** and **Organize** doors.
 2. Choose **Convert → Set up a one-off conversion**, or use a library row’s overflow menu to prefill
@@ -338,7 +400,7 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 4. Run and review as usual; the saved libraries and last active library are untouched.
 5. Optionally save the quick job as a library for next time.
 
-### F11 — Library with mapping rules *(P3)*
+### F11 — Library with mapping rules _(P3)_
 
 1. Open a library in settings; choose encoder and container.
 2. Add ordered rules (for example resolution/height ranges) and pick a preset for each. The locked
@@ -347,7 +409,7 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 4. Change a rule or preset and rescan; the previous queue is discarded because it no longer describes
    the current configuration.
 
-### F12 — Organize files into a library *(P1)*
+### F12 — Organize files into a library _(P1)_
 
 1. Choose **Organize** and start a saved library, or choose **Set up a one-off organize**; a library
    row’s overflow menu seeds the one-off with that library’s folders and organizer defaults (never
@@ -382,29 +444,29 @@ quit mid-run → next launch clearly reports the interrupted run rather than pre
 
 ## Non-goals (deliberately dropped)
 
-| Capability | Why it is out |
-| --- | --- |
+| Capability                                                    | Why it is out                                           |
+| ------------------------------------------------------------- | ------------------------------------------------------- |
 | Periodic scanning, "folder watching", daily run windows (S22) | Runs are explicit and manual; no background scheduling. |
-| Video health check / repair (S26) | Out of scope for this rewrite. |
-| Remote monitoring, status upload, API keys (S29) | Depends on a third-party service and is unwanted. |
-| Email error alerts (S25) | Insecure credential handling for little value. |
-| Benchmark tab (S28) | Side utility unrelated to the rewrite goal. |
-| In-app help tab and 33 tooltip blobs (S30) | Replaced by inline helper text and a docs link. |
-| Custom frameless window chrome (S05) | Native frame on all platforms. |
-| Autostart scan on launch, hide-to-tray on minimise (S08) | Removed with the custom window/tray behaviour. |
+| Video health check / repair (S26)                             | Out of scope for this rewrite.                          |
+| Remote monitoring, status upload, API keys (S29)              | Depends on a third-party service and is unwanted.       |
+| Email error alerts (S25)                                      | Insecure credential handling for little value.          |
+| Benchmark tab (S28)                                           | Side utility unrelated to the rewrite goal.             |
+| In-app help tab and 33 tooltip blobs (S30)                    | Replaced by inline helper text and a docs link.         |
+| Custom frameless window chrome (S05)                          | Native frame on all platforms.                          |
+| Autostart scan on launch, hide-to-tray on minimise (S08)      | Removed with the custom window/tray behaviour.          |
 
 Implication for design: the app must be **good at the manual run**, because it is the only way work happens.
 
 ## Traceability
 
-| Intent | Stories | Flows | Slices |
-| --- | --- | --- | --- |
-| I1 | US-01–03 | F1, F2 | S15, S14, S17 |
-| I2 | US-04–08 | F1, F6 | S16, S17, S18 |
-| I3 | US-09–10 | F1 step 4–5, F6 | S14, S15, S16 |
-| I4 | US-11–15 | F3 | S19, S20, S24 |
-| I5 | US-16–18 | F3, F4 | S19, S21, S31 |
-| I6 | US-19–20 | F1, F7 | S18, S21 |
-| I7 | US-21–23, US-28–29 | F2, F5, F10, F11 | S23, S13, S04 |
-| I8 | US-24 | F8 | S27 |
-| Operational | US-25–27 | F9 | S06, S09, S10 |
+| Intent      | Stories            | Flows            | Slices        |
+| ----------- | ------------------ | ---------------- | ------------- |
+| I1          | US-01–03           | F1, F2           | S15, S14, S17 |
+| I2          | US-04–08           | F1, F6           | S16, S17, S18 |
+| I3          | US-09–10           | F1 step 4–5, F6  | S14, S15, S16 |
+| I4          | US-11–15           | F3               | S19, S20, S24 |
+| I5          | US-16–18           | F3, F4           | S19, S21, S31 |
+| I6          | US-19–20           | F1, F7           | S18, S21      |
+| I7          | US-21–23, US-28–29 | F2, F5, F10, F11 | S23, S13, S04 |
+| I8          | US-24              | F8               | S27           |
+| Operational | US-25–27           | F9               | S06, S09, S10 |

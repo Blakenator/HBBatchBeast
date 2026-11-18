@@ -13,6 +13,7 @@ import {
 import type { AppConfigV2, Library } from './library';
 import type { DetectedShow } from './organizer/shows';
 import type {
+  OrganizeApplyProgress,
   OrganizeApplyResult,
   OrganizeJournalSummary,
   OrganizePendingResult,
@@ -26,6 +27,14 @@ import type {
   TvdbMovie,
   TvdbSeriesRef,
 } from './organizer/types';
+import type {
+  OrganizeBlackScanProgress,
+  OrganizeSplitPlan,
+  OrganizeSplitProbe,
+  OrganizeSplitThumbnailFrame,
+  SplitBlackInterval,
+  SplitFfmpegStatus,
+} from './organizer/split';
 import type { RunState } from '../backend/run/runManager';
 
 import {
@@ -58,7 +67,11 @@ export enum PROMISE_CHANNEL {
   OrganizeSearchMovies = 'ORGANIZE_SEARCH_MOVIES',
   OrganizeLoadEpisodes = 'ORGANIZE_LOAD_EPISODES',
   OrganizeDetectShows = 'ORGANIZE_DETECT_SHOWS',
-  OrganizeApplyPlan = 'ORGANIZE_APPLY_PLAN',
+  OrganizeCancelApply = 'ORGANIZE_CANCEL_APPLY',
+  OrganizeProbeSplit = 'ORGANIZE_PROBE_SPLIT',
+  OrganizeSplitThumbnails = 'ORGANIZE_SPLIT_THUMBNAILS',
+  OrganizeEpisodeRuntimes = 'ORGANIZE_EPISODE_RUNTIMES',
+  OrganizeFfmpegStatus = 'ORGANIZE_FFMPEG_STATUS',
   OrganizeUndo = 'ORGANIZE_UNDO',
   OrganizeCompletePending = 'ORGANIZE_COMPLETE_PENDING',
   OrganizeReadJournal = 'ORGANIZE_READ_JOURNAL',
@@ -68,6 +81,8 @@ export enum ASYNC_CHANNEL {
   RunBatchOperation = 'RUN_BATCH_OPERATION',
   RunConversion = 'RUN_CONVERSION',
   OrganizeScan = 'ORGANIZE_SCAN',
+  OrganizeApply = 'ORGANIZE_APPLY',
+  OrganizeDetectBlackFrames = 'ORGANIZE_DETECT_BLACK_FRAMES',
 }
 
 export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
@@ -163,13 +178,40 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
     props: { slug: string };
     result: TvdbEpisode[];
   };
+  [PROMISE_CHANNEL.OrganizeEpisodeRuntimes]: {
+    props: { slug: string; episodeIds: string[] };
+    result: Record<string, number | undefined>;
+  };
+  [PROMISE_CHANNEL.OrganizeFfmpegStatus]: {
+    props: void;
+    result: SplitFfmpegStatus;
+  };
+  [PROMISE_CHANNEL.OrganizeProbeSplit]: {
+    props: {
+      path: string;
+      /** Optional cut markers to snap to nearby video keyframes. */
+      markerTimes?: number[];
+      keyframeWindowSeconds?: number;
+    };
+    result: OrganizeSplitProbe;
+  };
+  [PROMISE_CHANNEL.OrganizeSplitThumbnails]: {
+    props: {
+      path: string;
+      times: number[];
+      maxWidth?: number;
+      /** Extract at the exact time instead of the 0.25 s cache bucket. */
+      exact?: boolean;
+    };
+    result: { frames: OrganizeSplitThumbnailFrame[] };
+  };
   [PROMISE_CHANNEL.OrganizeDetectShows]: {
     props: { library: Library };
     result: { folders: DetectedShow[]; warnings: string[] };
   };
-  [PROMISE_CHANNEL.OrganizeApplyPlan]: {
-    props: { library: Library; plan: OrganizePlan; updatePlex: boolean };
-    result: OrganizeApplyResult;
+  [PROMISE_CHANNEL.OrganizeCancelApply]: {
+    props: void;
+    result: { cancelled: boolean };
   };
   [PROMISE_CHANNEL.OrganizeUndo]: {
     props: { restorePlex?: boolean };
@@ -210,5 +252,31 @@ export interface BackendAsyncApi extends BackendAsyncApiType<ASYNC_CHANNEL> {
     initResult: OrganizeScanProgress;
     progressResult: OrganizeScanProgress;
     completeResult: OrganizePlan;
+  };
+  [ASYNC_CHANNEL.OrganizeApply]: {
+    props: {
+      library: Library;
+      plan: OrganizePlan;
+      /** Queued splits, joined to the plan by item id. */
+      splits: OrganizeSplitPlan[];
+      updatePlex: boolean;
+    };
+    initResult: OrganizeApplyProgress;
+    progressResult: OrganizeApplyProgress;
+    completeResult: OrganizeApplyResult;
+  };
+  [ASYNC_CHANNEL.OrganizeDetectBlackFrames]: {
+    props: {
+      path: string;
+      /** Video timeline offset; defaults to probing the file. */
+      startTimeSeconds?: number;
+      /** Source length used to turn ffmpeg progress into a percentage. */
+      durationSeconds?: number;
+      minDurationSeconds?: number;
+      pixelThreshold?: number;
+    };
+    initResult: OrganizeBlackScanProgress;
+    progressResult: OrganizeBlackScanProgress;
+    completeResult: { intervals: SplitBlackInterval[] };
   };
 }

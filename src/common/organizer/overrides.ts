@@ -13,11 +13,14 @@ import type {
   ParsedMediaName,
   TvdbEpisode,
   TvdbMovie,
+  TvdbSeriesRef,
 } from './types';
 import type { OrganizeMatchOverride, OrganizeSettings } from './settings';
+import type { Library } from '../library';
 import { buildOrganizePlan, type PlannedFileInput } from './planner';
 import { parseMediaFilename } from './filename';
 import { organizerComparisonKey, organizerIsPathInside } from './paths';
+import { resolveShowMapping } from './shows';
 
 export function overrideKey(
   filePath: string,
@@ -32,6 +35,27 @@ export function overrideFor(
   caseInsensitive: boolean,
 ): OrganizeMatchOverride | undefined {
   return settings.overrides?.[overrideKey(filePath, caseInsensitive)];
+}
+
+/**
+ * The series a review row belongs to: an explicit per-file fix wins, otherwise
+ * the show-folder mapping. Shared by the match-review and multi-episode tools.
+ */
+export function seriesForPlanItem(
+  item: Pick<OrganizePlanItem, 'sourcePath' | 'sourceRelativePath'>,
+  settings: OrganizeSettings,
+  library: Library,
+): TvdbSeriesRef | undefined {
+  const caseInsensitive = settings.caseInsensitive ?? false;
+  const override = overrideFor(settings, item.sourcePath, caseInsensitive);
+  if (override?.series) return override.series;
+  const folder = library.folders.find((candidate) =>
+    organizerIsPathInside(item.sourcePath, candidate.source, { caseInsensitive }),
+  );
+  if (!folder) return undefined;
+  return resolveShowMapping(settings, folder.id, item.sourceRelativePath, {
+    caseInsensitive,
+  })?.series;
 }
 
 export function setOverride(

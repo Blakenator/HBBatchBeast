@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyPlanBestGuess,
   applyPlanOverride,
+  applyPlanOverrides,
   approvePlanItems,
   applyPlanSkips,
   buildOrganizePlan,
@@ -811,5 +812,134 @@ describe('folder-only rows', () => {
       renameFolderOnly: true,
       targetPath: '/media/tv/Blue Planet II/Season 01/One Ocean.mkv',
     });
+  });
+});
+
+describe('bulk match overrides', () => {
+  function multiPlan() {
+    const base = {
+      root: '/media/tv',
+      extension: 'mkv',
+      size: 0,
+      confidence: 0.2,
+      reason: 'Low confidence',
+      seriesName: 'Blue Planet II',
+      showSubpath: 'Blue Planet II',
+    };
+    return buildOrganizePlan({
+      mediaType: 'tv',
+      sourceRoots: ['/media/tv'],
+      rules: [createNamingRule('tv')],
+      confidenceThreshold: 0.6,
+      renameMovieFolders: true,
+      caseInsensitive: false,
+      collisions: 'block',
+      sidecarPolicy: 'rename',
+      files: [
+        {
+          ...base,
+          path: '/media/tv/Blue Planet II/S01E01.mkv',
+          relativePath: 'Blue Planet II/S01E01.mkv',
+          filename: 'S01E01.mkv',
+          parsed: { ...parsed, episodeNumber: 1 },
+        },
+        {
+          ...base,
+          path: '/media/tv/Blue Planet II/S01E03.mkv',
+          relativePath: 'Blue Planet II/S01E03.mkv',
+          filename: 'S01E03.mkv',
+          parsed: { ...parsed, episodeNumber: 3 },
+        },
+      ],
+    });
+  }
+
+  const episodes = [
+    { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+    { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+    { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+    { tag: 'S01E04', name: 'Big Blue', seasonNumber: 1, episodeNumber: 4 },
+  ];
+
+  it('applies several ranges in one replan', () => {
+    const plan = multiPlan();
+    expect(plan.items.map((item) => item.action)).toEqual(['skip', 'skip']);
+    const settings = createOrganizeSettings('tv');
+    const overrides = new Map([
+      [
+        plan.items[0].id,
+        {
+          episode: episodes[0],
+          episodes: [episodes[0], episodes[1]],
+        },
+      ],
+      [
+        plan.items[1].id,
+        {
+          episode: episodes[2],
+          episodes: [episodes[2], episodes[3]],
+        },
+      ],
+    ]);
+
+    const next = applyPlanOverrides(plan, overrides, {
+      settings,
+      mediaType: 'tv',
+    });
+
+    expect(next.items.map((item) => item.action)).toEqual([
+      'rename',
+      'rename',
+    ]);
+    expect(next.items[0]).toMatchObject({
+      confidence: 1,
+      reason: 'Manual match',
+      targetPath:
+        '/media/tv/Blue Planet II/Season 01/S01E01-E02 - One Ocean, The Deep.mkv',
+    });
+    expect(next.items[1]).toMatchObject({
+      confidence: 1,
+      reason: 'Manual match',
+      targetPath:
+        '/media/tv/Blue Planet II/Season 01/S01E03-E04 - Coral Reefs, Big Blue.mkv',
+    });
+  });
+
+  it('keeps manual skips while storing the new range', () => {
+    const settings = createOrganizeSettings('tv');
+    const plan = applyPlanSkips(multiPlan(), ['/media/tv/Blue Planet II/S01E01.mkv'], {
+      settings,
+      mediaType: 'tv',
+    });
+    expect(plan.items[0].manualSkip).toBe(true);
+
+    const next = applyPlanOverrides(
+      plan,
+      new Map([
+        [
+          plan.items[0].id,
+          { episode: episodes[0], episodes: [episodes[0], episodes[1]] },
+        ],
+      ]),
+      { settings, mediaType: 'tv' },
+    );
+
+    expect(next.items[0]).toMatchObject({
+      action: 'skip',
+      manualSkip: true,
+      reason: 'Skipped manually',
+    });
+    expect(next.items[0].episodes).toEqual([episodes[0], episodes[1]]);
+    expect(next.items[1]).toEqual(plan.items[1]);
+  });
+
+  it('returns the same plan without overrides', () => {
+    const plan = multiPlan();
+    expect(
+      applyPlanOverrides(plan, new Map(), {
+        settings: createOrganizeSettings('tv'),
+        mediaType: 'tv',
+      }),
+    ).toBe(plan);
   });
 });

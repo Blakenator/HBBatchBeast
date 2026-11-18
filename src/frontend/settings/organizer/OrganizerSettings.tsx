@@ -2,6 +2,7 @@ import React from 'react';
 import styled from 'styled-components';
 import { Form } from 'react-bootstrap';
 import {
+  DEFAULT_ORGANIZE_SPLITTING,
   createNameReplacementId,
   libraryOrganizeSettings,
   type AppConfigV2,
@@ -72,6 +73,10 @@ export const OrganizerSettings: React.FC<OrganizerSettingsProps> = ({
       ),
     });
   const isTv = library.mediaType === 'tv';
+  const splitting = settings.splitting ?? DEFAULT_ORGANIZE_SPLITTING;
+  const updateSplitting = (
+    patch: Partial<typeof DEFAULT_ORGANIZE_SPLITTING>,
+  ) => update({ splitting: { ...splitting, ...patch } });
 
   return (
     <Wrap>
@@ -117,6 +122,93 @@ export const OrganizerSettings: React.FC<OrganizerSettingsProps> = ({
           }
         />
       </Section>
+
+      {isTv && (
+        <Section>
+          <SectionTitle>Episode splitting</SectionTitle>
+          <Muted>
+            Defaults for the Split episodes editor. Splits are planned per file
+            and only run when you Apply; nothing changes on disk here.
+          </Muted>
+          <Form.Group style={{ maxWidth: '24rem' }}>
+            <Form.Label>Original multi-episode file</Form.Label>
+            <Form.Select
+              value={splitting.originalPolicy}
+              onChange={(event) =>
+                updateSplitting({
+                  originalPolicy:
+                    event.target.value === 'delete' ||
+                    event.target.value === 'keep'
+                      ? event.target.value
+                      : 'backup',
+                })
+              }
+            >
+              <option value="backup">Move it to the backup folder</option>
+              <option value="delete">Delete it after a successful split</option>
+              <option value="keep">Leave it in place</option>
+            </Form.Select>
+          </Form.Group>
+          <Form.Group style={{ maxWidth: '24rem' }}>
+            <Form.Label>Cut precision</Form.Label>
+            <Form.Select
+              value={splitting.cutMode}
+              onChange={(event) =>
+                updateSplitting({
+                  cutMode: event.target.value === 'exact' ? 'exact' : 'copy',
+                })
+              }
+            >
+              <option value="copy">
+                Copy (lossless, keyframe-aligned)
+              </option>
+              <option value="exact">
+                Exact (re-encodes video, frame-accurate)
+              </option>
+            </Form.Select>
+          </Form.Group>
+          <Form.Group style={{ maxWidth: '24rem' }}>
+            <Form.Label>Subtitle sidecars</Form.Label>
+            <Form.Select
+              value={splitting.sidecarPolicy}
+              onChange={(event) =>
+                updateSplitting({
+                  sidecarPolicy:
+                    event.target.value === 'split' ||
+                    event.target.value === 'copy'
+                      ? event.target.value
+                      : 'leave',
+                })
+              }
+            >
+              <option value="leave">Leave them with the original</option>
+              <option value="split">Cut text subtitles per segment</option>
+              <option value="copy">Copy the full subtitle to each segment</option>
+            </Form.Select>
+          </Form.Group>
+          <Form.Group style={{ maxWidth: '24rem' }}>
+            <Form.Label>Parallel splits</Form.Label>
+            <Form.Control
+              type="number"
+              min={1}
+              max={2}
+              value={splitting.concurrency}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                updateSplitting({
+                  concurrency: Number.isFinite(value)
+                    ? Math.max(1, Math.min(2, Math.round(value)))
+                    : 1,
+                });
+              }}
+            />
+            <Form.Text muted>
+              Splits are I/O bound; one at a time is usually fastest on a
+              single disk.
+            </Form.Text>
+          </Form.Group>
+        </Section>
+      )}
 
       <Section>
         <SectionTitle>Name replacements</SectionTitle>

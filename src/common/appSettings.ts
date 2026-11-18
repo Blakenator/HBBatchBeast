@@ -39,6 +39,10 @@ export function resolveGlobalSettings(
       legacy?.save_worker_logs_toggle ??
       DEFAULT_GLOBAL_SETTINGS.save_worker_logs_toggle,
     ...(plex ? { plex } : {}),
+    ...(typeof config.app_settings?.ffmpegPath === 'string' &&
+    config.app_settings.ffmpegPath.trim()
+      ? { ffmpegPath: config.app_settings.ffmpegPath }
+      : {}),
   };
 }
 

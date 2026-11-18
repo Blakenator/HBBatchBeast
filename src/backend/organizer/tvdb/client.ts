@@ -19,6 +19,7 @@ const USER_AGENT =
   'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0';
 const SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const EPISODE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const RUNTIME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SEARCH_BATCH_SIZE = 8;
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const CACHE_MAX_FILES = 6000;
@@ -49,6 +50,7 @@ export interface TvdbClientOptions {
   minIntervalMs?: number;
   searchTtlMs?: number;
   episodeTtlMs?: number;
+  runtimeTtlMs?: number;
 }
 
 function asString(value: unknown): string {
@@ -159,6 +161,12 @@ function parseEpisodeTag(
   return undefined;
 }
 
+function parseEpisodeId(href: string | null | undefined): string | undefined {
+  if (!href) return undefined;
+  const match = /\/episodes\/(\d+)/.exec(href);
+  return match ? match[1] : undefined;
+}
+
 export function parseTvdbEpisodeHtml(html: string): TvdbEpisode[] {
   const { document } = parseHTML(html);
   const rows = [...document.querySelectorAll('.list-group-item')];
@@ -167,17 +175,20 @@ export function parseTvdbEpisodeHtml(html: string): TvdbEpisode[] {
     const tag = row.querySelector('.episode-label')?.textContent?.trim() ?? '';
     const parsed = parseEpisodeTag(tag);
     if (!parsed) continue;
+    const anchor = row.querySelector('.list-group-item-heading a');
     const heading =
-      row.querySelector('.list-group-item-heading a')?.textContent ??
+      anchor?.textContent ??
       row.querySelector('.list-group-item-heading')?.textContent ??
       '';
     const name = heading.trim();
     if (!name) continue;
     const description =
       row.querySelector('.list-group-item-text p')?.textContent?.trim() ?? '';
+    const id = parseEpisodeId(anchor?.getAttribute('href'));
     episodes.push({
       tag,
       name,
+      ...(id ? { id } : {}),
       ...(description ? { description } : {}),
       seasonNumber: parsed.seasonNumber,
       episodeNumber: parsed.episodeNumber,
@@ -188,6 +199,35 @@ export function parseTvdbEpisodeHtml(html: string): TvdbEpisode[] {
       left.seasonNumber - right.seasonNumber ||
       left.episodeNumber - right.episodeNumber,
   );
+}
+
+/** Parses strings such as `58 minutes` or `1 hour 5 minutes`. */
+export function parseRuntimeMinutes(text: string): number | undefined {
+  const hours = /(\d+)\s*(?:hours?|hrs?)\b/i.exec(text)?.[1];
+  const minutes = /(\d+)\s*(?:minutes?|mins?)\b/i.exec(text)?.[1];
+  if (hours !== undefined || minutes !== undefined) {
+    const total = Number(hours ?? 0) * 60 + Number(minutes ?? 0);
+    return total > 0 ? total : undefined;
+  }
+  const bare = /^\s*(\d+)\s*$/.exec(text);
+  if (bare) {
+    const value = Number(bare[1]);
+    return value > 0 ? value : undefined;
+  }
+  return undefined;
+}
+
+/** Reads the runtime from one TVDB episode page. */
+export function parseTvdbEpisodeRuntimeHtml(html: string): number | undefined {
+  const { document } = parseHTML(html);
+  for (const row of document.querySelectorAll('.list-group-item')) {
+    const label = row.querySelector('strong')?.textContent?.trim().toLowerCase();
+    if (label !== 'runtime') continue;
+    return parseRuntimeMinutes(
+      row.querySelector('span')?.textContent ?? row.textContent ?? '',
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -202,10 +242,12 @@ export class TvdbClient {
   private readonly minIntervalMs: number;
   private readonly searchTtlMs: number;
   private readonly episodeTtlMs: number;
+  private readonly runtimeTtlMs: number;
   private lastRequestAt = 0;
   private rateGate: Promise<void> = Promise.resolve();
   private readonly searchRequests = new Map<string, Promise<TvdbSearchResult>>();
   private readonly episodeRequests = new Map<string, Promise<TvdbEpisode[]>>();
+  private readonly runtimeRequests = new Map<string, Promise<number | undefined>>();
   private lastPruneAt = 0;
 
   constructor(options: TvdbClientOptions) {
@@ -215,6 +257,7 @@ export class TvdbClient {
     this.minIntervalMs = options.minIntervalMs ?? 250;
     this.searchTtlMs = options.searchTtlMs ?? SEARCH_TTL_MS;
     this.episodeTtlMs = options.episodeTtlMs ?? EPISODE_TTL_MS;
+    this.runtimeTtlMs = options.runtimeTtlMs ?? RUNTIME_TTL_MS;
   }
 
   private cachePath(key: string): string {
@@ -448,7 +491,8 @@ export class TvdbClient {
   async loadEpisodes(slug: string): Promise<TvdbEpisode[]> {
     const trimmed = slug.trim();
     if (!trimmed) return [];
-    const cacheKey = `episodes:${trimmed.toLowerCase()}`;
+    // v2 adds episode ids used by the split editor's runtime lookups.
+    const cacheKey = `episodes:v2:${trimmed.toLowerCase()}`;
     const cached = this.readCache<TvdbEpisode[]>(cacheKey, this.episodeTtlMs);
     if (cached) return cached;
     const existing = this.episodeRequests.get(cacheKey);
@@ -479,5 +523,66 @@ export class TvdbClient {
     const episodes = parseTvdbEpisodeHtml(await response.text());
     this.writeCache(cacheKey, episodes);
     return episodes;
+  }
+
+  /**
+   * Loads expected runtimes for specific episodes. The all-seasons page does
+   * not include them, so each episode page is read once and cached for a month.
+   */
+  async loadEpisodeRuntimes(
+    slug: string,
+    episodeIds: readonly string[],
+  ): Promise<Record<string, number | undefined>> {
+    const trimmed = slug.trim();
+    const ids = [...new Set(episodeIds.map((id) => id.trim()).filter(Boolean))];
+    const result: Record<string, number | undefined> = {};
+    if (!trimmed || ids.length === 0) return result;
+    for (const id of ids) {
+      result[id] = await this.loadEpisodeRuntime(trimmed, id);
+    }
+    return result;
+  }
+
+  private async loadEpisodeRuntime(
+    slug: string,
+    episodeId: string,
+  ): Promise<number | undefined> {
+    const cacheKey = `runtime:${slug.toLowerCase()}:${episodeId}`;
+    const cached = this.readCache<number>(cacheKey, this.runtimeTtlMs);
+    if (cached !== undefined) return cached;
+    const existing = this.runtimeRequests.get(cacheKey);
+    if (existing) return existing;
+    const promise = this.fetchEpisodeRuntime(slug, episodeId, cacheKey);
+    this.runtimeRequests.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.runtimeRequests.delete(cacheKey);
+    }
+  }
+
+  private async fetchEpisodeRuntime(
+    slug: string,
+    episodeId: string,
+    cacheKey: string,
+  ): Promise<number | undefined> {
+    try {
+      const response = await this.request(
+        `${SERIES_PAGE}/${encodeURIComponent(slug)}/episodes/${encodeURIComponent(episodeId)}`,
+        {
+          method: 'GET',
+          headers: {
+            'user-agent': USER_AGENT,
+            accept: 'text/html,application/xhtml+xml',
+          },
+        },
+      );
+      const minutes = parseTvdbEpisodeRuntimeHtml(await response.text());
+      if (minutes !== undefined) this.writeCache(cacheKey, minutes);
+      return minutes;
+    } catch {
+      // A missing runtime must never block splitting; callers fall back.
+      return undefined;
+    }
   }
 }

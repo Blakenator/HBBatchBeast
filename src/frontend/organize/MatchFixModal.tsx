@@ -6,14 +6,12 @@ import {
   episodeDisplayTag,
   episodeNameText,
   episodeRangeTag,
-  organizerIsPathInside,
-  overrideFor,
   parseMediaFilename,
   pathBasename,
   previewTargetForItem,
   rankEpisodes,
   resolveEpisode,
-  resolveShowMapping,
+  seriesForPlanItem,
   sortEpisodes,
   titleComparisonKey,
   type EpisodeMatchSummary,
@@ -190,18 +188,7 @@ function currentSeries(
   settings: OrganizeSettings,
   library: Library,
 ): TvdbSeriesRef | undefined {
-  const caseInsensitive = settings.caseInsensitive ?? false;
-  const folder = library.folders.find((candidate) =>
-    organizerIsPathInside(item.sourcePath, candidate.source, {
-      caseInsensitive,
-    }),
-  );
-  const override = overrideFor(settings, item.sourcePath, caseInsensitive);
-  if (override?.series) return override.series;
-  if (!folder) return undefined;
-  return resolveShowMapping(settings, folder.id, item.sourceRelativePath, {
-    caseInsensitive,
-  })?.series;
+  return seriesForPlanItem(item, settings, library);
 }
 
 /**
@@ -594,7 +581,8 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
       return;
     }
     if (selectedEpisodes.some((entry) => sameEpisode(entry, candidate))) {
-      if (selectedEpisodes.length === 1) return;
+      // Deselecting is always allowed, including the last episode. A wrong
+      // guess must not trap the user into toggling the single-episode mode.
       setSelectedEpisodes(
         selectedEpisodes.filter((entry) => !sameEpisode(entry, candidate)),
       );
@@ -707,6 +695,7 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
   }, [displayEpisodes, episodeFilter, episodes]);
 
   const save = () => {
+    if (mediaType === 'tv' && selectedEpisodes.length === 0) return;
     if (!series && !episode && !movie) {
       onSave(undefined);
       return;
@@ -816,12 +805,14 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
             {multiEpisode && (
               <Muted style={{ whiteSpace: 'normal' }}>
                 Select every episode in the file. Episodes must be consecutive
-                and in one season; the first episode sets the title.
+                and in one season; the first episode sets the title. Click a
+                selected episode again to deselect it.
               </Muted>
             )}
             {multiError && (
               <Alert variant="warning" className="mb-0" role="alert">
-                {multiError}
+                {multiError} Deselect a highlighted episode to start a new
+                range.
               </Alert>
             )}
 
@@ -959,7 +950,9 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
         <Button variant="secondary" onClick={() => onSave(undefined)}>
           Use best guess
         </Button>
-        <Button variant="success" icon="passed" onClick={save}>
+        <Button variant="success" icon="passed" onClick={save} disabled={
+          mediaType === 'tv' ? selectedEpisodes.length === 0 : !movie
+        }>
           Save match
         </Button>
       </Modal.Footer>

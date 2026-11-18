@@ -34,5 +34,4 @@ writes:
 | `win/icon.ico`         | Windows app icon                     |
 
 The `iconrunning`, `iconwatching` and `iconerror` `.icns`/`.ico` files are
-regenerated for consistency but the runtime tray uses the PNGs. The `icon2.*`
-files are legacy and unused; they are left untouched.
+regenerated for consistency but the runtime tray uses the PNGs.

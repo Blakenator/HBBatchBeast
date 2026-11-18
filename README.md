@@ -68,10 +68,10 @@ rules, confidence, sidecars, collisions and show matches — are saved on the li
 The Plex database is one machine-wide setting shared by every library.
 
 1. Choose **Movies** or **TV shows**, then add one or more source folders. A TV source folder is a
-   *library root that contains shows*; a folder that directly contains media is treated as a single
+   _library root that contains shows_; a folder that directly contains media is treated as a single
    show.
 2. For TV, choose **Detect & match shows**. Each first-level show folder is listed with its file
-   count and matched to TVDB from the folder name (`Blue.Planet.II.2017.1080p` → *Blue Planet II*
+   count and matched to TVDB from the folder name (`Blue.Planet.II.2017.1080p` → _Blue Planet II_
    (2017)). Every match shows its cover art and can be changed or cleared; matches are persisted on
    the library. Opening the search pre-fills the folder-derived query and reuses the results from the
    automatic attempt, so a failed auto-match is one click away from a manual pick. A folder can also
@@ -84,13 +84,17 @@ The Plex database is one machine-wide setting shared by every library.
    Regional tags often disagree with the title, so conflicts are labeled and low-confidence rows stay
    in review instead of being guessed. For a multi-episode file the filename title is compared with
    the joined titles of every episode in the tag, so `S01E07-E08 - The Demon in the Mattress and
-   Freaky Fred` matches instead of conflicting.
+Freaky Fred` matches instead of conflicting. When the tag names only the first episode but the
+   filename lists several episode titles, the scan extends the match forward into the consecutive
+   run that best explains the title (for example `S01E02 - The Deep and Coral Reefs` becomes
+   `S01E02-E03`) and scores the name evidence against the joined titles, so the extra titles do not
+   push the file below the confidence threshold.
 3. Edit the ordered **naming rules**. Rules are evaluated top to bottom and the first match wins; the
    last rule is a locked default. Conditions can use media type, path, filename, extension,
    resolution, season, episode, title and year with `is`, `is not`, `contains`, `does not contain`,
    `at least` and `at most`.
    - The default TV templates are `{tag} - {name}.{ext}` inside `{show}/Season {season:02}`. When the
-     source folder *is* the show, the `{show}` segment is dropped, so single-show libraries keep a
+     source folder _is_ the show, the `{show}` segment is dropped, so single-show libraries keep a
      flat `Season NN` layout. A file that covers several episodes renders `{tag}` as Plex's
      first/last range (`S01E02-E03`), renders `{episode}` as `2-3` (or `02-03` with `:02`, and just
      `2` for a single episode), keeps `{episodeEnd}` as the last number, and joins every episode
@@ -141,8 +145,11 @@ The Plex database is one machine-wide setting shared by every library.
    together with the full reason. Each row has a one-click **Skip** action and a `…` menu with
    **Fix match**, **Skip file / Include file** and **Open folder**; skipping re-plans the review so
    the file no longer reserves its target, which can clear a conflict for another row. Selecting any
-   rows, including conflicts and skipped rows, shows bulk **Rescan**, **Use best guess** and
-   **Skip** actions, plus **Select all shown** and **Clear selection**. **Rescan** re-walks the
+   rows, including conflicts and skipped rows, shows bulk **Rescan**, **Use best guess**,
+   **Multi-episode** and **Skip** actions, plus **Select all shown** and **Clear selection**. A
+   **Multi-episode** filter chip narrows the table to files that cover two or more episodes
+   (including files with a queued split), and the **Select multi-episode** helper selects every such
+   file currently shown — or clears them when they are all selected. **Rescan** re-walks the
    parent folders of the selected rows so files added, removed or renamed on disk are picked up and
    re-matched, then merges them back into the review. Shift-clicking a checkbox selects the visible
    range. Rows whose file and folder names are already identical are skipped automatically. Full paths stay in the
@@ -163,9 +170,41 @@ The Plex database is one machine-wide setting shared by every library.
    the list, and the **New filename** preview shows the resulting range before saving. The fix is
    saved on the library (so a later scan keeps it) and re-plans only that row; **Use best guess**
    clears the override, re-includes the file if it was skipped, and rematches from the cached scan.
-   The bulk action does the same for every selected file.
-6. **Apply** first shows a confirmation with the exact move count and whether Plex will be updated.
-   **Undo last** reverses the previous file moves from its journal.
+   The bulk action does the same for every selected file. **Multi-episode** on a selection opens a
+   batch editor with three modes: **Detect from filename** fills the run from the tag and episode
+   titles, **Sequential** renumbers the selection in show/season order with the same number of
+   episodes in every file (each group starts at E01 and editing a start number cascades to the rows
+   after it), and **Keep current numbering** appends the following episodes to each file's existing
+   number. The preview highlights the changed parts of each new filename, shows the current match
+   confidence, and has a per-row **Fix match** button that opens the same match dialog used in the
+   review table. It flags rows that would cross a season boundary or have no matched show, and
+   applies only the checked rows. The ranges are stored as per-file overrides, so they survive
+   rescans and can be cleared with **Use best guess**.
+6. **Split files** on any TV selection, or **Split file** on a single row, opens the split editor.
+   It estimates each cut from the TVDB episode runtimes (any leftover runtime is spread
+   evenly across the cuts) and draws a frame filmstrip you can zoom and drag-scrub to find the title
+   cards. A single-episode file opens with a two-segment plan so non-contiguous episodes in one file
+   can still be split: add cuts with **Add split at playhead**, **Snap to black frames**, or
+   **Add all black gaps**, then assign each segment. Both black-frame tools also run across every
+   file at once with a combined progress bar and ETA; files already scanned reuse their result.
+   The scan shows its percentage on the button and in a progress bar because scanning a whole file
+   takes a while. The exact frame at the playhead is shown above the strip while you scrub or move a
+   cut, and hovering or focusing a control explains what it does. Copy mode previews the frame the
+   cut will actually land on, marks the five nearest
+   alternative keyframes as clickable ticks, and has a **Center on split** button for the pan; the
+   matched episodes are assigned to the segments automatically with a per-segment override. Each
+   segment's quick episode list only shows the file's detected range, and **Select other episode**
+   opens the shared **Fix match** dialog for anything outside it. A split must be approved —
+   individually or with **Approve all** — before **Save approved** writes it; unapproved edits are
+   discarded while an already-queued split stays queued. A split whose cuts were adjusted shows a
+   pending marker and **ready for review**, and an approved split is outlined in green. Each split
+   can back up, delete or keep the
+   original, and text subtitle sidecars can be cut per segment. Queued splits get a `Split ×N` chip
+   in the **State** column and run alongside the normal renames when you apply.
+7. **Apply** first shows a confirmation with the exact move count, any queued splits and whether
+   Plex will be updated. The background job runs renames and splits in parallel and shows a progress
+   bar with the current file, an ETA and a **Cancel apply** action; **Undo last** reverses the
+   previous file moves and split outputs from its journal.
 
 **One-off organize** starts from the Organize picker (blank) or from a library row’s overflow menu
 (seeded with that library’s folders and organizer defaults). It works on an unsaved copy, so nothing
@@ -196,11 +235,11 @@ systemd, launchd or the Windows process), **Apply without Plex** (files only), o
 restarted after an apply attempt when HBBatchBeast stopped it. If Plex is managed by Docker or a
 remote host, stop it there and use **Check** to recheck.
 
-| OS | Plex database candidate | Service |
-| --- | --- | --- |
-| Windows | `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\com.plexapp.plugins.library.db` | Plex tray icon, or `Plex Media Server.exe` |
-| macOS | `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` | launchd job `com.plexapp.plexmediaserver` |
-| Linux | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` (or `~/.config/plex/...`) | `systemctl stop plexmediaserver` |
+| OS      | Plex database candidate                                                                                                                                     | Service                                    |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Windows | `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\com.plexapp.plugins.library.db`                                                                 | Plex tray icon, or `Plex Media Server.exe` |
+| macOS   | `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db`                                                  | launchd job `com.plexapp.plexmediaserver`  |
+| Linux   | `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db` (or `~/.config/plex/...`) | `systemctl stop plexmediaserver`           |
 
 The Plex data directory is usually owned by the `plex` service account. **Settings → Global** and
 the organizer's Plex panel report the database and service state as a structured issue list. When
@@ -238,21 +277,21 @@ Settings save automatically as you edit them. The header's back button returns t
 Config, presets and run state live in Electron's `userData` directory; logs live in Electron's
 `logs` directory. The exact paths follow the OS conventions:
 
-| Location | Purpose |
-| --- | --- |
-| `<userData>/Configuration.json` | libraries, presets and app settings (a `.v1.bak` or `.v2.bak` copy is written before a schema migration) |
-| `<userData>/run-journal.json` | state of the last run, used to report an interrupted run |
-| `<userData>/organize-journal.json` | file moves and Plex changes from the last organize apply, used by **Undo last** |
-| `<userData>/organize-pending.json` | watch-history transfers waiting for a Plex rescan |
-| `<userData>/backups/` | timestamped Plex database backups taken before an update |
-| `<userData>/cache/tvdb/` | cached TVDB search and episode pages |
-| `<logs>/` | master, error, conversion and scan logs plus filter caches |
+| Location                           | Purpose                                                                                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `<userData>/Configuration.json`    | libraries, presets and app settings (a `.v1.bak` or `.v2.bak` copy is written before a schema migration) |
+| `<userData>/run-journal.json`      | state of the last run, used to report an interrupted run                                                 |
+| `<userData>/organize-journal.json` | file moves and Plex changes from the last organize apply, used by **Undo last**                          |
+| `<userData>/organize-pending.json` | watch-history transfers waiting for a Plex rescan                                                        |
+| `<userData>/backups/`              | timestamped Plex database backups taken before an update                                                 |
+| `<userData>/cache/tvdb/`           | cached TVDB search and episode pages                                                                     |
+| `<logs>/`                          | master, error, conversion and scan logs plus filter caches                                               |
 
-| OS | `userData` | `logs` |
-| --- | --- | --- |
-| Windows | `%APPDATA%\HBBatchBeast` | `%APPDATA%\HBBatchBeast\logs` |
-| macOS | `~/Library/Application Support/HBBatchBeast` | `~/Library/Logs/HBBatchBeast` |
-| Linux | `$XDG_CONFIG_HOME/HBBatchBeast` (or `~/.config/HBBatchBeast`) | `$XDG_CONFIG_HOME/HBBatchBeast/logs` |
+| OS      | `userData`                                                    | `logs`                               |
+| ------- | ------------------------------------------------------------- | ------------------------------------ |
+| Windows | `%APPDATA%\HBBatchBeast`                                      | `%APPDATA%\HBBatchBeast\logs`        |
+| macOS   | `~/Library/Application Support/HBBatchBeast`                  | `~/Library/Logs/HBBatchBeast`        |
+| Linux   | `$XDG_CONFIG_HOME/HBBatchBeast` (or `~/.config/HBBatchBeast`) | `$XDG_CONFIG_HOME/HBBatchBeast/logs` |
 
 On first launch after upgrading from a build that used `~/Documents/HBBatchBeast`, the existing
 config, run journal and logs are copied into these locations. The old files are left untouched, so
@@ -319,15 +358,15 @@ after the merge. Docs, tests, CI and tooling changes do not need one.
 4. Review the draft and publish it.
 
 The Release workflow is a no-op on ordinary pushes: it only continues when the pushed commit changed
-the version *and* no release exists for that version yet. Start it from the Actions tab
+the version _and_ no release exists for that version yet. Start it from the Actions tab
 (`workflow_dispatch`) to retry a failed build — delete the draft release first if the earlier run got
 that far.
 
-| Target | Assets |
-| --- | --- |
-| Windows x64 | `HBBatchBeast-<version>-windows-x64-Setup.exe` plus the Squirrel `.nupkg` and `RELEASES` |
-| macOS arm64 / x64 | `HBBatchBeast-<version>-macos-<arch>.dmg` and `.zip` |
-| Linux x64 | `HBBatchBeast-<version>-linux-x64.deb` and `.rpm` |
+| Target            | Assets                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Windows x64       | `HBBatchBeast-<version>-windows-x64-Setup.exe` plus the Squirrel `.nupkg` and `RELEASES` |
+| macOS arm64 / x64 | `HBBatchBeast-<version>-macos-<arch>.dmg` and `.zip`                                     |
+| Linux x64         | `HBBatchBeast-<version>-linux-x64.deb` and `.rpm`                                        |
 
 Version tags are `v<version>`; tags from before changesets (`2.1.5`, `2.1.4`, …) keep their original
 form.

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { OrganizePlan, OrganizeScanScope } from '../../common';
+import type { OrganizeSplitPlan } from '../../common/organizer/split';
 
 export type OrganizeStep = 'setup' | 'rules' | 'review';
 
@@ -9,6 +10,8 @@ export interface OrganizeSession {
   plan?: OrganizePlan;
   selected: string[];
   scope: OrganizeScanScope[];
+  /** Queued multi-episode splits, joined to the plan by item id. */
+  splits?: OrganizeSplitPlan[];
   matchSignature: string;
   planSignature: string;
   librarySignature: string;

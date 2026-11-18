@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { toast } from 'react-toastify';
 import {
   APP_CONFIG_SCHEMA_VERSION,
+  ASYNC_CHANNEL,
   AppConfigV2,
   emptyLibrary,
   createOrganizeSettings,
@@ -42,10 +43,15 @@ Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
   get: () => 900,
 });
 
-const { mockRefetch, asyncScan } = vi.hoisted(() => ({
+const { mockRefetch, asyncScan, asyncApply } = vi.hoisted(() => ({
   mockRefetch: vi.fn(),
   asyncScan: {
     plan: undefined as unknown,
+    completeDelay: 0,
+    props: undefined as unknown,
+  },
+  asyncApply: {
+    result: undefined as unknown,
     completeDelay: 0,
     props: undefined as unknown,
   },
@@ -60,13 +66,41 @@ vi.mock('../src/frontend/helpers', async (importOriginal) => ({
     refetch: mockRefetch,
   }),
   // Mirrors the real async hook: emits discovery/matching progress, then the
-  // finished plan. The parent remounts this runner for every scan.
+  // finished plan. The parent remounts this runner for every scan. Apply runs
+  // through the same hook, so its channel selects the queued apply result.
   useBackendAsync: (options: {
+    channel?: string;
     props?: unknown;
     onInit?: (progress: unknown) => void;
     onProgress?: (progress: unknown) => void;
     onComplete?: (plan: unknown) => void;
   }) => {
+    if (options.channel === ASYNC_CHANNEL.OrganizeApply) {
+      asyncApply.props = options.props;
+      React.useEffect(() => {
+        options.onInit?.({
+          phase: 'preflight',
+          completed: 0,
+          total: 1,
+          splitCompleted: 0,
+          splitTotal: 0,
+          elapsedMs: 0,
+          warnings: [],
+        });
+        const timer = setTimeout(
+          () => options.onComplete?.(asyncApply.result),
+          asyncApply.completeDelay,
+        );
+        return () => clearTimeout(timer);
+      }, []);
+      return {
+        loading: true,
+        error: undefined,
+        completeData: undefined,
+        lastProgressData: undefined,
+        refetch: vi.fn(),
+      };
+    }
     asyncScan.props = options.props;
     React.useEffect(() => {
       options.onInit?.({
@@ -109,6 +143,9 @@ afterEach(() => {
   asyncScan.plan = undefined;
   asyncScan.completeDelay = 0;
   asyncScan.props = undefined;
+  asyncApply.result = undefined;
+  asyncApply.completeDelay = 0;
+  asyncApply.props = undefined;
 });
 
 function library() {
@@ -458,6 +495,130 @@ describe('OrganizePage', () => {
     });
   });
 
+  it('applies a multi-episode range to the selected rows', async () => {
+    const onUpdateLibrary = vi.fn();
+    asyncScan.plan = {
+      ...planData,
+      items: [
+        {
+          ...planData.items[0],
+          parsed: {
+            title: 'Blue Planet II',
+            cleanTitle: 'blue planet ii',
+            seasonNumber: 1,
+            episodeNumber: 1,
+          },
+        },
+        {
+          ...planData.items[0],
+          id: '/media/tv/Blue Planet II/S01E03.mkv',
+          sourcePath: '/media/tv/Blue Planet II/S01E03.mkv',
+          sourceRelativePath: 'Blue Planet II/S01E03.mkv',
+          targetPath:
+            '/media/tv/Blue Planet II/Season 01/S01E03 - Coral Reefs.mkv',
+          relativeTarget:
+            'Blue Planet II/Season 01/S01E03 - Coral Reefs.mkv',
+          episode: {
+            tag: 'S01E03',
+            name: 'Coral Reefs',
+            seasonNumber: 1,
+            episodeNumber: 3,
+          },
+          parsed: {
+            title: 'Blue Planet II',
+            cleanTitle: 'blue planet ii',
+            seasonNumber: 1,
+            episodeNumber: 3,
+          },
+        },
+      ],
+    };
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+        { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+        { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+        { tag: 'S01E04', name: 'Big Blue', seasonNumber: 1, episodeNumber: 4 },
+      ],
+    });
+    renderPage(library(), undefined, onUpdateLibrary);
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Multi-episode (2)' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('radio', { name: 'Keep current numbering' }),
+    );
+    expect(await screen.findByText('S01E01-E02')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Apply to 2 file/ }));
+
+    await waitFor(
+      () => expect(onUpdateLibrary).toHaveBeenCalled(),
+      { timeout: 1500 },
+    );
+    const saved = onUpdateLibrary.mock.calls.at(-1)?.[0] as ReturnType<
+      typeof library
+    >;
+    expect(
+      saved.organize.overrides?.['/media/tv/Blue Planet II/S01E01.mkv']
+        ?.episodes?.map((episode) => episode.tag),
+    ).toEqual(['S01E01', 'S01E02']);
+    expect(
+      saved.organize.overrides?.['/media/tv/Blue Planet II/S01E03.mkv']
+        ?.episodes?.map((episode) => episode.tag),
+    ).toEqual(['S01E03', 'S01E04']);
+  });
+
+  it('fixes a match from the multi-episode preview', async () => {
+    const onUpdateLibrary = vi.fn();
+    asyncScan.plan = planData;
+    mockRefetch.mockImplementation((args: { slug?: string }) => {
+      if (args.slug) {
+        return Promise.resolve({
+          data: [
+            { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+            { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+            { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+            { tag: 'S01E04', name: 'Big Blue', seasonNumber: 1, episodeNumber: 4 },
+          ],
+        });
+      }
+      return Promise.resolve({ data: planData });
+    });
+    renderPage(library(), undefined, onUpdateLibrary);
+    fireEvent.click(screen.getByRole('tab', { name: /Review and apply/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
+    await screen.findByRole('grid', { name: 'Organize review' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Multi-episode (1)' }));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Fix match for Blue Planet II/S01E01.mkv',
+      }),
+    );
+    fireEvent.click(await screen.findByText('The Deep'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save match' }));
+
+    // The batch preview stays open and now starts from the corrected episode.
+    fireEvent.click(
+      await screen.findByRole('radio', { name: 'Keep current numbering' }),
+    );
+    expect(await screen.findByText('S01E02-E03')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Apply to 1 file/ }));
+
+    await waitFor(() => expect(onUpdateLibrary).toHaveBeenCalled());
+    const saved = onUpdateLibrary.mock.calls.at(-1)?.[0] as ReturnType<
+      typeof library
+    >;
+    expect(
+      saved.organize.overrides?.['/media/tv/Blue Planet II/S01E01.mkv']
+        ?.episodes?.map((episode) => episode.tag),
+    ).toEqual(['S01E02', 'S01E03']);
+  });
+
   it('skips only the row chosen in its action menu', async () => {
     const tags = ['S01E01', 'S01E02', 'S01E03'];
     asyncScan.plan = {
@@ -530,23 +691,23 @@ describe('OrganizePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Scan files/ }));
     await screen.findByRole('grid', { name: 'Organize review' });
 
-    mockRefetch.mockResolvedValueOnce({
-      data: {
-        planId: 'plan-1',
-        renamed: [],
-        skipped: [],
-        failed: [
-          {
-            path: '/media/tv/Blue Planet II/S01E01.mkv',
-            message: 'EACCES: permission denied, rename',
-          },
-        ],
-        plexUpdated: 0,
-        historyMoved: 0,
-        pendingHistoryTransfers: 0,
-        warnings: [],
-      },
-    });
+    asyncApply.result = {
+      planId: 'plan-1',
+      renamed: [],
+      skipped: [],
+      failed: [
+        {
+          path: '/media/tv/Blue Planet II/S01E01.mkv',
+          message: 'EACCES: permission denied, rename',
+        },
+      ],
+      plexUpdated: 0,
+      historyMoved: 0,
+      pendingHistoryTransfers: 0,
+      warnings: [],
+      splits: [],
+      cancelled: [],
+    };
 
     fireEvent.click(screen.getByRole('button', { name: /Apply \(1\)/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm apply' }));

@@ -2,6 +2,10 @@ onlyBuiltDependencies:
   - electron
   - electron-winstaller
   - esbuild
+  # ffmpeg-static downloads the target platform's ffmpeg binary in a postinstall
+  # script. Splitting and the filmstrip need it, and pnpm 10 skips install
+  # scripts unless they are listed here.
+  - ffmpeg-static
   # appdmg (used by maker-dmg) reaches these through ds-store. They are native
   # modules, and pnpm skips their node-gyp builds unless they are listed here, so
   # the DMG maker fails with a missing build/Release/*.node file.

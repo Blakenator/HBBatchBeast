@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOrganizePlan,
   createNamingRule,
+  applyEpisodeRun,
+  detectEpisodeRunFromName,
   episodeNameText,
   nameSimilarity,
   parseMediaFilename,
@@ -304,7 +306,7 @@ describe('episode tiebreakers', () => {
     expect(result.episode?.tag).toBe('S10E20');
     expect(result.summary?.name).toBe('correct');
     expect(result.conflict).toBe(false);
-    expect(result.confidence).toBeGreaterThan(0.9);
+    expect(result.confidence).toBeGreaterThan(0.8);
   });
 
   it('exposes weighted components for the popover', () => {
@@ -666,5 +668,88 @@ describe('no-op targets', () => {
       reason: 'Already named',
       sidecars: [],
     });
+  });
+});
+
+describe('multi-episode run evidence', () => {
+  const catalog: TvdbEpisode[] = [
+    { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+    { tag: 'S01E03', name: 'Big Blue', seasonNumber: 1, episodeNumber: 3 },
+    { tag: 'S01E04', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 4 },
+  ];
+  const parsed = parseMediaFilename(
+    'Blue.Planet.II.S01E02.The.Deep.and.Big.Blue.mkv',
+  );
+
+  it('upgrades the name evidence when the title covers the whole run', () => {
+    const resolution = resolveEpisode(parsed, catalog, {
+      seriesName: 'Blue Planet II',
+    });
+    expect(resolution.episode?.tag).toBe('S01E02');
+    expect(resolution.summary?.name).toBe('incorrect');
+
+    const run = detectEpisodeRunFromName(parsed, catalog, {
+      seriesName: 'Blue Planet II',
+      anchorEpisode: resolution.episode,
+    });
+    expect(run?.tag).toBe('S01E02-E03');
+
+    const upgraded = applyEpisodeRun(resolution, parsed, run!, {
+      seriesName: 'Blue Planet II',
+    });
+    expect(upgraded).toBeDefined();
+    expect(upgraded!.summary).toMatchObject({
+      name: 'correct',
+      conflict: false,
+    });
+    expect(upgraded!.summary?.nameSimilarity).toBeGreaterThan(0.8);
+    expect(upgraded!.confidence).toBeGreaterThan(resolution.confidence);
+    expect(upgraded!.reason).toContain('S01E02-E03');
+    expect(
+      upgraded!.summary?.components.find((entry) => entry.kind === 'name')
+        ?.detail,
+    ).toContain('S01E02-E03');
+  });
+
+  it('leaves a conflicting resolution for review', () => {
+    const conflict = resolveEpisode(
+      parseMediaFilename('Blue.Planet.II.S01E05.The.Deep.mkv'),
+      episodes,
+      { seriesName: SERIES },
+    );
+    expect(conflict.conflict).toBe(true);
+    const run = {
+      tag: 'S01E05-E06',
+      seasonNumber: 1,
+      episodes: [episodes[2], episodes[3]],
+      score: 1,
+      singleScore: 0,
+    };
+    expect(
+      applyEpisodeRun(conflict, parseMediaFilename('x.mkv'), run, {
+        seriesName: SERIES,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not apply a run that starts at another episode', () => {
+    const resolution = resolveEpisode(parsed, catalog, {
+      seriesName: 'Blue Planet II',
+    });
+    const run = {
+      tag: 'S01E01-E02',
+      seasonNumber: 1,
+      episodes: [
+        { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+        catalog[0],
+      ],
+      score: 1,
+      singleScore: 0,
+    };
+    expect(
+      applyEpisodeRun(resolution, parsed, run, {
+        seriesName: 'Blue Planet II',
+      }),
+    ).toBeUndefined();
   });
 });

@@ -553,6 +553,76 @@ describe('MatchFixModal', () => {
     ).toBe(false);
   });
 
+  it('deselects a wrong guess before starting a new range', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+        { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
+        { tag: 'S01E05', name: 'Big Blue', seasonNumber: 1, episodeNumber: 5 },
+      ],
+    });
+    const lib = library();
+    const onSave = vi.fn();
+    const guessed = {
+      tag: 'S01E05',
+      name: 'Big Blue',
+      seasonNumber: 1,
+      episodeNumber: 5,
+    };
+    render(
+      <MatchFixModal
+        item={{
+          ...item,
+          parsed: {
+            title: 'Big Blue',
+            cleanTitle: 'big blue',
+            seasonNumber: 1,
+            episodeNumber: 5,
+          },
+          episode: guessed,
+        }}
+        mediaType="tv"
+        settings={lib.organize!}
+        library={lib}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    await screen.findByText('Big Blue');
+    fireEvent.click(
+      screen.getByLabelText('This file contains multiple episodes'),
+    );
+
+    const guessBox = screen.getByRole('checkbox', {
+      name: 'Include Big Blue',
+    }) as HTMLInputElement;
+    expect(guessBox.checked).toBe(true);
+    fireEvent.click(guessBox);
+    expect(guessBox.checked).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: 'Save match' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByText('One Ocean'));
+    fireEvent.click(screen.getByText('The Deep'));
+    expect(
+      screen.getByText('S01E01-E02 - One Ocean, The Deep.mkv'),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save match' }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        episode: expect.objectContaining({ tag: 'S01E01' }),
+        episodes: [
+          expect.objectContaining({ tag: 'S01E01' }),
+          expect.objectContaining({ tag: 'S01E02' }),
+        ],
+      }),
+    );
+  });
+
   it('clears the fix with Use best guess', async () => {
     mockRefetch.mockResolvedValue({ data: [] });
     const onSave = renderModal();

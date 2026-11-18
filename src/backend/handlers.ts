@@ -9,6 +9,8 @@ import {
   migrateLegacyData,
   openFolder,
   pickPath,
+  resolveFfmpegExecutable,
+  ffmpegStatus,
   resolveHandBrakeExecutable,
   saveAppConfig,
   userPresetFiles,
@@ -30,6 +32,7 @@ import {
   parseMappedRows,
   OrganizePlexCheck,
   OrganizeScanProgress,
+  OrganizeApplyProgress,
   PROMISE_CHANNEL,
   RunBatchOperationResult,
   isCaseInsensitivePlatform,
@@ -69,6 +72,13 @@ import {
 } from './organizer/service';
 import { completePendingHistoryTransfers } from './organizer/plex/writer';
 import { readPlexLibraryOrdering } from './organizer/plex/catalog';
+import {
+  probeSplitSource,
+  findKeyframesNear,
+  readMediaStartTime,
+} from './organizer/split/probe';
+import { detectBlackIntervals } from './organizer/split/blackFrames';
+import { readSplitThumbnails } from './organizer/split/thumbnails';
 import {
   plexDatabaseCandidates,
   plexExecutableCandidates,
@@ -336,6 +346,16 @@ function configuredPlexPath(app: Electron.App): string | undefined {
   return resolveGlobalSettings(loadConfiguration(app)).plex?.dbPath;
 }
 
+/** Shared ffmpeg resolution for conversions and episode splitting. */
+function configuredFfmpegExecutable(app: Electron.App): string {
+  return resolveFfmpegExecutable({
+    configured: resolveGlobalSettings(loadConfiguration(app)).ffmpegPath,
+    home: app.getPath('home'),
+  });
+}
+
+let activeOrganizeApply: AbortController | undefined;
+
 export const BackendHandlers: BackendSyncHandlersType<
   PROMISE_CHANNEL,
   BackendPromiseApi
@@ -446,16 +466,38 @@ export const BackendHandlers: BackendSyncHandlersType<
       home: app.getPath('home'),
       tvdbClient: getTvdbClient(app),
     }),
-  [PROMISE_CHANNEL.OrganizeApplyPlan]: async ({ app, args }) => {
-    const plexDbPath = configuredPlexPath(app);
-    return applyOrganizePlan({
-      plan: args.plan,
-      settings: libraryOrganizeSettings(args.library),
-      appPaths: prepareAppPaths(app),
-      platform: process.platform,
-      updatePlex: args.updatePlex,
-      ...(plexDbPath ? { plexDbPath } : {}),
+  [PROMISE_CHANNEL.OrganizeEpisodeRuntimes]: ({ app, args }) =>
+    getTvdbClient(app).loadEpisodeRuntimes(args.slug, args.episodeIds),
+  [PROMISE_CHANNEL.OrganizeFfmpegStatus]: ({ app }) =>
+    ffmpegStatus({
+      configured: resolveGlobalSettings(loadConfiguration(app)).ffmpegPath,
+      home: app.getPath('home'),
+    }),
+  [PROMISE_CHANNEL.OrganizeProbeSplit]: async ({ app, args }) => {
+    const probe = await probeSplitSource(args.path);
+    if (!args.markerTimes || args.markerTimes.length === 0) return probe;
+    const keyframes = await findKeyframesNear(args.path, args.markerTimes, {
+      windowSeconds: args.keyframeWindowSeconds ?? 10,
+      startTimeSeconds: probe.startTimeSeconds,
     });
+    return { ...probe, keyframes };
+  },
+  [PROMISE_CHANNEL.OrganizeSplitThumbnails]: async ({ app, args }) => ({
+    frames: await readSplitThumbnails(
+      {
+        path: args.path,
+        times: args.times,
+        ...(args.maxWidth ? { maxWidth: args.maxWidth } : {}),
+        ...(args.exact ? { exact: true } : {}),
+        cacheDir: prepareAppPaths(app).cacheDir,
+      },
+      { ffmpegPath: configuredFfmpegExecutable(app) },
+    ),
+  }),
+  [PROMISE_CHANNEL.OrganizeCancelApply]: () => {
+    if (!activeOrganizeApply) return { cancelled: false };
+    activeOrganizeApply.abort();
+    return { cancelled: true };
   },
   [PROMISE_CHANNEL.OrganizeUndo]: async ({ app, args }) =>
     undoLastOrganize(prepareAppPaths(app), {
@@ -550,6 +592,105 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
         error instanceof AppError
           ? error
           : new AppError('Organize scan failed', { inner: error }),
+      );
+    }
+  },
+  [ASYNC_CHANNEL.OrganizeApply]: async ({
+    app,
+    args,
+    handlers: { onInit, onProgress, onComplete, onError },
+  }) => {
+    const paths = prepareAppPaths(app);
+    const settings = libraryOrganizeSettings(args.library);
+    const plexDbPath = configuredPlexPath(app);
+    const ffmpegPath = configuredFfmpegExecutable(app);
+    const splitTotal = args.splits.length;
+    // Only pay for a process spawn when a split actually needs ffmpeg.
+    const ffmpeg =
+      splitTotal > 0
+        ? await ffmpegStatus({
+            configured: resolveGlobalSettings(loadConfiguration(app)).ffmpegPath,
+            home: app.getPath('home'),
+          })
+        : undefined;
+    const moveCount = args.plan.items.filter(
+      (item) => item.action === 'rename' && !args.splits.some((split) => split.itemId === item.id),
+    ).length;
+    const initialProgress: OrganizeApplyProgress = {
+      phase: 'preflight',
+      completed: 0,
+      total: splitTotal + moveCount,
+      splitCompleted: 0,
+      splitTotal,
+      elapsedMs: 0,
+      warnings: [],
+    };
+    onInit(initialProgress);
+    const controller = new AbortController();
+    activeOrganizeApply = controller;
+    try {
+      const result = await applyOrganizePlan({
+        plan: args.plan,
+        splits: args.splits,
+        settings,
+        appPaths: paths,
+        platform: process.platform,
+        updatePlex: args.updatePlex,
+        ...(plexDbPath ? { plexDbPath } : {}),
+        signal: controller.signal,
+        onProgress,
+        splitConcurrency: settings.splitting?.concurrency ?? 1,
+        renameConcurrency: 4,
+        deps: {
+          ffmpegPath,
+          ...(ffmpeg ? { ffmpegStatus: async () => ffmpeg } : {}),
+        },
+      });
+      onComplete(result);
+    } catch (error) {
+      logOrganizeFailure(paths, error);
+      onError(
+        error instanceof AppError
+          ? error
+          : new AppError('Organize apply failed', { inner: error }),
+      );
+    } finally {
+      if (activeOrganizeApply === controller) activeOrganizeApply = undefined;
+    }
+  },
+  [ASYNC_CHANNEL.OrganizeDetectBlackFrames]: async ({
+    app,
+    args,
+    handlers: { onInit, onProgress, onComplete, onError },
+  }) => {
+    const durationSeconds = Math.max(0, args.durationSeconds ?? 0);
+    onInit({ percent: 0 });
+    try {
+      const startTimeSeconds =
+        args.startTimeSeconds ?? (await readMediaStartTime(args.path));
+      const intervals = await detectBlackIntervals(args.path, {
+        executable: configuredFfmpegExecutable(app),
+        startTimeSeconds,
+        ...(args.minDurationSeconds !== undefined
+          ? { minDurationSeconds: args.minDurationSeconds }
+          : {}),
+        ...(args.pixelThreshold !== undefined
+          ? { pixelThreshold: args.pixelThreshold }
+          : {}),
+        onProgress: (seconds) => {
+          const percent =
+            durationSeconds > 0
+              ? Math.min(99, Math.round((seconds / durationSeconds) * 100))
+              : 0;
+          onProgress({ percent });
+        },
+      });
+      onComplete({ intervals });
+    } catch (error) {
+      onError(
+        error instanceof AppError
+          ? error
+          : new AppError('Black-frame scan failed', { inner: error }),
       );
     }
   },

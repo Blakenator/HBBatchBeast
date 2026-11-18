@@ -265,7 +265,7 @@ async function main() {
   console.log('Tray idle');
   write('png/tray.png', await pngFor(small, 64));
   await writeBundle();
-  console.log('\nDone. Unused legacy icon2.* assets were left untouched.');
+  console.log('\nDone.');
 }
 
 app.whenReady().then(async () => {
