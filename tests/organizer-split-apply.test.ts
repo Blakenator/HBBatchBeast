@@ -150,6 +150,8 @@ describe('ffmpeg argument builders', () => {
     expect(args.indexOf('-ss')).toBeGreaterThan(args.indexOf('-i'));
     expect(args[args.indexOf('-ss') + 1]).toBe('10.500');
     expect(args[args.indexOf('-t') + 1]).toBe('59.750');
+    expect(args.filter((arg) => arg === '-map')).toHaveLength(3);
+    expect(args[args.indexOf('-map') + 1]).toBe('0:v');
     expect(args[args.indexOf('-c:v') + 1]).toBe('libx264');
     expect(args[args.indexOf('-crf') + 1]).toBe('18');
     expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
@@ -164,6 +166,8 @@ describe('ffmpeg argument builders', () => {
       segmentTimes: [1210.5, 2420],
     });
     expect(args[args.indexOf('-i') + 1]).toBe('/src/a.mkv');
+    expect(args.filter((arg) => arg === '-map')).toHaveLength(3);
+    expect(args[args.indexOf('-map') + 1]).toBe('0:v');
     expect(args[args.indexOf('-c') + 1]).toBe('copy');
     expect(args[args.indexOf('-f') + 1]).toBe('segment');
     expect(args[args.indexOf('-segment_times') + 1]).toBe('1210.500,2420.000');
@@ -411,6 +415,144 @@ describe('executeSplitTask', () => {
       expect.objectContaining({ startTimeSeconds: 5.4 }),
     );
     expect(segmentTimes(calls)).toBe('58.400');
+  });
+
+  it('applies the original-file policy when segments are skipped', async () => {
+    const result = await executeSplitTask(
+      task({ skippedSegments: [1], originalPolicy: 'delete' }),
+      paths,
+      { runFfmpeg: fakeRun },
+    );
+    expect(result.outputs.map((output) => output.targetPath)).toEqual([
+      path.join(root, 'out', 'S01E01.mkv'),
+    ]);
+    expect(fs.existsSync(path.join(root, 'out', 'S01E01.mkv'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'out', 'S01E02.mkv'))).toBe(false);
+    expect(fs.existsSync(source)).toBe(false);
+    expect(result.originalKept).toBe(false);
+  });
+
+  it('backs up the original when it is skipped and the policy asks for it', async () => {
+    const result = await executeSplitTask(
+      task({ skippedSegments: [1], originalPolicy: 'backup' }),
+      paths,
+      { runFfmpeg: fakeRun },
+    );
+    expect(fs.existsSync(source)).toBe(false);
+    expect(result.backupPath).toBeTruthy();
+    expect(fs.readFileSync(result.backupPath as string, 'utf8')).toBe(
+      '0123456789',
+    );
+  });
+
+  it('keeps a cut skipped in copy mode from shifting the remaining segments', async () => {
+    const calls: string[][] = [];
+    const copySegments = segments().map((segment) => ({ ...segment }));
+    const result = await executeSplitTask(
+      {
+        item: item(),
+        plan: split({
+          cutMode: 'copy',
+          segments: copySegments,
+          skippedSegments: [1],
+          originalPolicy: 'backup',
+        }),
+        segments: copySegments,
+      },
+      paths,
+      { runFfmpeg: fakeSegmentRun(calls) },
+    );
+
+    // Both pieces are cut so episode one still ends at the real boundary, but
+    // the skipped piece is discarded instead of being written to its target.
+    expect(segmentTimes(calls)).toBe('60.000');
+    expect(result.outputs).toHaveLength(1);
+    expect(fs.existsSync(path.join(root, 'out', 'S01E01.mkv'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'out', 'S01E02.mkv'))).toBe(false);
+    // The backup policy still moves the source once the remaining cut is done.
+    expect(fs.existsSync(source)).toBe(false);
+    expect(result.backupPath).toBeTruthy();
+  });
+
+  it('replaces an existing target and keeps the old file for undo', async () => {
+    const existing = path.join(root, 'out', 'S01E01.mkv');
+    fs.mkdirSync(path.dirname(existing), { recursive: true });
+    fs.writeFileSync(existing, 'old segment');
+
+    const result = await executeSplitTask(task({ overwrite: true }), paths, {
+      runFfmpeg: fakeRun,
+    });
+
+    expect(fs.readFileSync(existing, 'utf8')).toBe('segment');
+    const replaced = result.outputs[0].replacedBackupPath;
+    expect(replaced).toBeTruthy();
+    expect(fs.readFileSync(replaced as string, 'utf8')).toBe('old segment');
+    expect(result.warnings.join('\n')).toMatch(/existing file.*replaced/i);
+  });
+
+  it('restores an overwritten target when a later segment fails', async () => {
+    const existing = path.join(root, 'out', 'S01E01.mkv');
+    fs.mkdirSync(path.dirname(existing), { recursive: true });
+    fs.writeFileSync(existing, 'old segment');
+    let calls = 0;
+    const failingRun = async (args: readonly string[]) => {
+      calls += 1;
+      if (calls === 2) throw new Error('disk full');
+      return fakeRun(args);
+    };
+
+    await expect(
+      executeSplitTask(task({ overwrite: true }), paths, {
+        runFfmpeg: failingRun,
+      }),
+    ).rejects.toThrow(/disk full/);
+
+    expect(fs.readFileSync(existing, 'utf8')).toBe('old segment');
+    expect(fs.existsSync(path.join(root, 'out', 'S01E02.mkv'))).toBe(false);
+  });
+
+  it('still refuses an existing target without the overwrite flag', async () => {
+    const existing = path.join(root, 'out', 'S01E01.mkv');
+    fs.mkdirSync(path.dirname(existing), { recursive: true });
+    fs.writeFileSync(existing, 'old segment');
+
+    await expect(
+      executeSplitTask(task(), paths, { runFfmpeg: fakeRun }),
+    ).rejects.toThrow(/Target already exists/);
+    expect(fs.readFileSync(existing, 'utf8')).toBe('old segment');
+  });
+
+  it('backs up a subtitle replaced with its overwritten target', async () => {
+    const sidecarPath = path.join(root, 'library', 'Show', 'S01E01-E02.en.srt');
+    fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
+    fs.writeFileSync(sidecarPath, 'source subtitle');
+    const media = path.join(root, 'out', 'S01E01.mkv');
+    fs.mkdirSync(path.dirname(media), { recursive: true });
+    fs.writeFileSync(media, 'old segment');
+    const sidecarTargetPath = path.join(root, 'out', 'S01E01.en.srt');
+    fs.writeFileSync(sidecarTargetPath, 'old subtitle');
+
+    const result = await executeSplitTask(
+      {
+        item: {
+          ...item(),
+          sidecars: [{ sourcePath: sidecarPath, targetPath: sidecarPath }],
+        },
+        plan: split({ overwrite: true, sidecarPolicy: 'copy' }),
+        segments: segments(),
+      },
+      paths,
+      { runFfmpeg: fakeRun },
+    );
+
+    expect(fs.readFileSync(sidecarTargetPath, 'utf8')).toBe('source subtitle');
+    const backup = result.sidecarBackups?.find(
+      (entry) => entry.sourcePath === sidecarTargetPath,
+    );
+    expect(backup).toBeTruthy();
+    expect(fs.readFileSync(backup?.backupPath as string, 'utf8')).toBe(
+      'old subtitle',
+    );
   });
 });
 

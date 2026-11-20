@@ -4,12 +4,16 @@ import { Alert, Form, Modal, ProgressBar, Spinner } from 'react-bootstrap';
 import {
   ASYNC_CHANNEL,
   PROMISE_CHANNEL,
+  activeSplitSegments,
   blackBatchEtaSeconds,
   blackDividerCuts,
   estimateSplitBoundaries,
   nearestBlackDivider,
   nearestSplitCandidates,
+  organizerComparisonKey,
   parseMediaFilename,
+  pathBasename,
+  reservedPathsForSplit,
   segmentsForEpisodes,
   seriesForPlanItem,
   validateSplitPlan,
@@ -26,6 +30,8 @@ import {
   type OrganizeSplitThumbnailFrame,
   type SplitBlackInterval,
   type SplitKeyframeCut,
+  type SplitSegment,
+  type SplitTargetReport,
   type TvdbEpisode,
 } from '../../common';
 import { useBackend, useBackendAsync } from '../helpers';
@@ -36,6 +42,12 @@ import { ControlTip } from '../ui/ControlTip';
 import { Icon } from '../ui/Icon';
 import { Filmstrip } from './Filmstrip';
 import { MatchFixModal } from './MatchFixModal';
+import {
+  clearSplitDrafts,
+  readSplitDrafts,
+  saveSplitDrafts,
+  type SplitDraft,
+} from './splitDrafts';
 import { WideDialog } from './WideDialog';
 
 interface SplitModalProps {
@@ -76,7 +88,7 @@ interface FileState {
   /** 0–99 while the black-frame scan runs. */
   blackProgress?: number;
   /** Which button started the scan, so only it shows the percentage. */
-  blackAction?: 'snap' | 'add';
+  blackAction?: 'snap' | 'add' | 'scan';
   /** Short status line after a black-frame or split-editing action. */
   toolNote?: string;
 }
@@ -153,13 +165,20 @@ const Cards = styled.div`
   padding-right: 2px;
 `;
 
-const Card = styled.div`
+const Card = styled.div<{ $assigned: boolean }>`
   display: grid;
   gap: var(--hb-space-xs);
   padding: var(--hb-space-sm);
-  border: 1px solid var(--hb-border);
+  border: 1px solid
+    ${(props) =>
+      props.$assigned
+        ? 'color-mix(in srgb, var(--hb-accent) 35%, var(--hb-border))'
+        : 'var(--hb-border)'};
   border-radius: var(--hb-radius-sm);
-  background: var(--hb-surface);
+  background: ${(props) =>
+    props.$assigned
+      ? 'color-mix(in srgb, var(--hb-accent) 7%, var(--hb-surface))'
+      : 'var(--hb-surface)'};
 
   header {
     display: flex;
@@ -177,12 +196,191 @@ const Card = styled.div`
   }
 `;
 
+const CardDetails = styled.details`
+  margin-top: 2px;
+
+  summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    color: var(--hb-textMuted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::before {
+    content: '▸';
+    font-size: 10px;
+    transition: transform 120ms ease;
+  }
+
+  &[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  summary:hover {
+    color: var(--hb-text);
+  }
+
+  > div {
+    display: grid;
+    gap: var(--hb-space-xs);
+    padding-top: var(--hb-space-xs);
+  }
+`;
+
+const MergePreview = styled.div`
+  display: flex;
+  height: 30px;
+  overflow: hidden;
+  border: 1px solid var(--hb-border);
+  border-radius: var(--hb-radius-sm);
+  background: var(--hb-surface);
+`;
+
+const MergePreviewBlock = styled.div<{ $merged: boolean }>`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 10px;
+  padding: 0 4px;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--hb-border) 70%, transparent);
+  background: ${({ $merged }) =>
+    $merged
+      ? 'color-mix(in srgb, var(--hb-accent) 45%, transparent)'
+      : 'color-mix(in srgb, var(--hb-textMuted) 10%, transparent)'};
+  color: ${({ $merged }) =>
+    $merged ? 'var(--hb-accentContrast, #fff)' : 'var(--hb-textMuted)'};
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+
+  &:last-child {
+    border-right: 0;
+  }
+`;
+
+const MergeLegend = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hb-space-sm);
+  color: var(--hb-textMuted);
+  font-size: var(--hb-font-xs);
+`;
+
+const MergeSwatch = styled.span<{ $merged: boolean }>`
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: ${({ $merged }) =>
+    $merged
+      ? 'color-mix(in srgb, var(--hb-accent) 45%, transparent)'
+      : 'color-mix(in srgb, var(--hb-textMuted) 10%, transparent)'};
+  vertical-align: -1px;
+`;
+
+const ConflictPanel = styled.section`
+  display: grid;
+  gap: var(--hb-space-xs);
+  padding: var(--hb-space-sm);
+  border: 1px solid var(--hb-danger);
+  border-radius: var(--hb-radius-sm);
+  background: color-mix(in srgb, var(--hb-danger) 10%, var(--hb-surface));
+  font-size: var(--hb-font-xs);
+
+  strong {
+    color: var(--hb-danger);
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 1.2rem;
+  }
+`;
+
+const SegmentWarning = styled.div<{ $muted?: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: var(--hb-space-xs);
+  flex-wrap: wrap;
+  padding: var(--hb-space-xs);
+  border-radius: var(--hb-radius-sm);
+  background: ${({ $muted }) =>
+    $muted
+      ? 'var(--hb-surfaceMuted)'
+      : 'color-mix(in srgb, var(--hb-danger) 10%, transparent)'};
+  color: ${({ $muted }) =>
+    $muted ? 'var(--hb-textMuted)' : 'var(--hb-danger)'};
+  font-size: var(--hb-font-xs);
+
+  .hb-segment-message {
+    flex: 1 1 160px;
+  }
+`;
+
 const Row = styled.div`
   display: flex;
   align-items: center;
   gap: var(--hb-space-xs);
   flex-wrap: wrap;
   font-size: var(--hb-font-xs);
+`;
+
+const CardActions = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--hb-space-xs);
+  padding-top: var(--hb-space-xs);
+  border-top: 1px solid var(--hb-border);
+`;
+
+const CutRow = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--hb-space-xs);
+  font-size: var(--hb-font-xs);
+
+  label {
+    color: var(--hb-textMuted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+`;
+
+const NudgeGroup = styled.div`
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--hb-border);
+  border-radius: var(--hb-radius-sm);
+
+  > button {
+    min-width: 38px;
+    padding: 0 4px;
+    border: 0;
+    border-right: 1px solid var(--hb-border);
+    border-radius: 0;
+  }
+
+  > button:last-child {
+    border-right: 0;
+  }
 `;
 
 const Control = styled.span`
@@ -260,7 +458,7 @@ interface BlackScanTarget {
 
 /** One black-frame tool run, over a single file or every ready file. */
 interface BlackScanRun {
-  action: 'snap' | 'add';
+  action: 'snap' | 'add' | 'scan';
   targets: BlackScanTarget[];
   /** Index of the target currently scanning. */
   index: number;
@@ -327,20 +525,99 @@ function parseTimecode(value: string): number | undefined {
   return parts.length === 1 ? parts[0] : undefined;
 }
 
-function reservedPathsFor(
+interface ConflictPreviewOptions {
+  settings: OrganizeSettings;
+  mediaType: MediaType;
+  caseInsensitive: boolean;
+}
+
+/** Rendered targets of a plan's active segments, with skipped ones removed. */
+function segmentDurationSeconds(segment: SplitSegment): number {
+  return Math.max(0, segment.endSeconds - segment.startSeconds);
+}
+
+/**
+ * Picks how many following segments to absorb so the combined length stays
+ * within the matched episode's metadata runtime. The first segment is always
+ * merged with at least one following segment, matching the button's action.
+ */
+export function suggestedMergeCount(
+  segments: readonly SplitSegment[],
+  index: number,
+  maxCount: number,
+  fallbackRuntimeSeconds = 0,
+): number {
+  if (maxCount < 1 || !segments[index] || !segments[index + 1]) return 0;
+  const runtimeSeconds =
+    (segments[index]?.episode?.runtimeMinutes ?? 0) * 60 ||
+    fallbackRuntimeSeconds;
+  if (!(runtimeSeconds > 0)) return 1;
+  let count = 1;
+  let total =
+    segmentDurationSeconds(segments[index]) +
+    segmentDurationSeconds(segments[index + 1]);
+  const tolerance = 1;
+  for (let next = 2; next <= maxCount; next += 1) {
+    const candidate = total + segmentDurationSeconds(segments[index + next]);
+    if (candidate > runtimeSeconds + tolerance) break;
+    total = candidate;
+    count = next;
+  }
+  return count;
+}
+
+function activeRenderedTargets(
+  item: OrganizePlanItem,
+  candidate: OrganizeSplitPlan,
+  options: ConflictPreviewOptions,
+): string[] {
+  const report = withSplitTargets(item, candidate.segments, {
+    settings: options.settings,
+    mediaType: options.mediaType,
+    caseInsensitive: options.caseInsensitive,
+    skippedSegments: candidate.skippedSegments,
+  });
+  const skipped = new Set(candidate.skippedSegments ?? []);
+  return report.targets.filter(
+    (target, index): target is string =>
+      Boolean(target) &&
+      !skipped.has(candidate.segments[index]?.index ?? index),
+  );
+}
+
+/**
+ * Renders one plan's targets and conflicts against every other row's paths and
+ * every other split's outputs, so collisions are visible while editing.
+ */
+function previewForItem(
   plan: OrganizePlan,
   item: OrganizePlanItem,
-): string[] {
-  return plan.items
-    .filter((candidate) => candidate.id !== item.id)
-    .flatMap((candidate) => [
-      candidate.sourcePath,
-      candidate.targetPath,
-      ...candidate.sidecars.flatMap((sidecar) => [
-        sidecar.sourcePath,
-        sidecar.targetPath,
-      ]),
-    ]);
+  candidate: OrganizeSplitPlan,
+  planById: ReadonlyMap<string, OrganizeSplitPlan | undefined>,
+  splitItemIds: ReadonlySet<string>,
+  existingPaths: string[],
+  options: ConflictPreviewOptions,
+): SplitTargetReport & { segments: SplitSegment[] } {
+  const reserved = [
+    ...reservedPathsForSplit(plan.items, item.id, splitItemIds),
+    ...[...planById.entries()]
+      .filter(([id]) => id !== item.id)
+      .flatMap(([id, otherPlan]) => {
+        if (!otherPlan) return [];
+        const otherItem = plan.items.find((row) => row.id === id);
+        return otherItem
+          ? activeRenderedTargets(otherItem, otherPlan, options)
+          : [];
+      }),
+  ];
+  return withSplitTargets(item, candidate.segments, {
+    settings: options.settings,
+    mediaType: options.mediaType,
+    caseInsensitive: options.caseInsensitive,
+    reservedPaths: reserved,
+    existingPaths: candidate.overwrite ? [] : existingPaths,
+    skippedSegments: candidate.skippedSegments,
+  });
 }
 
 /**
@@ -374,6 +651,14 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   const [blackRunNote, setBlackRunNote] = useState<string>();
   /** Ticks once a second so the batch ETA keeps moving between progress events. */
   const [blackRunNow, setBlackRunNow] = useState(0);
+  /** Open merge confirmation; the index is the first segment to keep. */
+  const [mergeRequest, setMergeRequest] = useState<{
+    itemId: string;
+    index: number;
+  }>();
+  const [mergeCount, setMergeCount] = useState(1);
+  /** Files already on disk at a rendered split target, checked by the backend. */
+  const [existingTargets, setExistingTargets] = useState<string[]>([]);
   const blackScanToken = useRef(0);
   const frameGeneration = useRef(0);
   const previewInFlight = useRef(false);
@@ -382,6 +667,8 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   >(undefined);
   const cutPreviewGeneration = useRef(0);
   const initializedKey = useRef<string | undefined>(undefined);
+  /** Drafts restored on open, checked against the probed file before keeping. */
+  const restoredDrafts = useRef(new Map<string, SplitDraft>());
 
   const probeSplit = useBackend({
     channel: PROMISE_CHANNEL.OrganizeProbeSplit,
@@ -395,10 +682,20 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     channel: PROMISE_CHANNEL.OrganizeSplitThumbnails,
     skip: true,
   });
+  const checkTargets = useBackend({
+    channel: PROMISE_CHANNEL.OrganizeCheckTargets,
+    skip: true,
+  });
+  const loadBlackFrames = useBackend({
+    channel: PROMISE_CHANNEL.OrganizeBlackFrames,
+    skip: true,
+  });
   const ffmpeg = useBackend({
     channel: PROMISE_CHANNEL.OrganizeFfmpegStatus,
     skip: false,
   });
+  const checkTargetsRef = useRef(checkTargets);
+  checkTargetsRef.current = checkTargets;
 
   const itemsKey = items
     .map((item) => `${item.id}:${item.episodes?.length ?? 0}`)
@@ -416,6 +713,8 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     updater: (plan: OrganizeSplitPlan, state: FileState) => OrganizeSplitPlan,
     patch?: Partial<FileState>,
   ) => {
+    // Any edit invalidates the problems from the last save attempt.
+    setProblems([]);
     setStates((current) => {
       const state = current[id];
       if (!state?.plan) return current;
@@ -428,6 +727,61 @@ export const SplitModal: React.FC<SplitModalProps> = ({
         },
       };
     });
+  };
+
+  /** Grants or revokes permission to replace existing target files. */
+  const setOverwrite = (id: string, overwrite: boolean) => {
+    updatePlan(id, (current) => ({
+      ...current,
+      overwrite,
+      updatedAt: Date.now(),
+    }));
+  };
+
+  /**
+   * Leaves a segment in the plan but writes no file for it, so the cut order,
+   * time ranges and episode range stay intact. The split's original-file
+   * policy still applies to the source afterward.
+   */
+  const skipSegments = (id: string, indexes: number[]) => {
+    if (indexes.length === 0) return;
+    updatePlan(
+      id,
+      (current) => {
+        const skipped = new Set(current.skippedSegments ?? []);
+        for (const index of indexes) skipped.add(index);
+        return {
+          ...current,
+          skippedSegments: [...skipped].sort((left, right) => left - right),
+          edited: true,
+          updatedAt: Date.now(),
+        };
+      },
+      { approved: false },
+    );
+  };
+
+  const restoreSegment = (id: string, index: number) => {
+    updatePlan(
+      id,
+      (current) => {
+        const skipped = (current.skippedSegments ?? []).filter(
+          (candidate) => candidate !== index,
+        );
+        return {
+          ...current,
+          skippedSegments: skipped.length > 0 ? skipped : undefined,
+          edited: true,
+          updatedAt: Date.now(),
+        };
+      },
+      { approved: false },
+    );
+  };
+
+  const skipSplit = (id: string) => {
+    setProblems([]);
+    setRemoved((current) => new Set(current).add(id));
   };
 
   /**
@@ -535,7 +889,8 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       }
     }
     const methods = new Set<'tvdb' | 'plex' | 'equal'>();
-    const durations = episodes.map((episode) => {
+    const runtimeMinutesByIndex: (number | undefined)[] = [];
+    const durations = episodes.map((episode, index) => {
       if (!episode) {
         methods.add('equal');
         return undefined;
@@ -543,6 +898,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       const minutes = episode.id ? runtimeById[episode.id] : undefined;
       if (minutes) {
         methods.add('tvdb');
+        runtimeMinutesByIndex[index] = minutes;
         return minutes * 60;
       }
       const association =
@@ -553,11 +909,20 @@ export const SplitModal: React.FC<SplitModalProps> = ({
         ) ?? item.plex;
       if (association?.durationMs) {
         methods.add('plex');
+        const plexMinutes = association.durationMs / 60000;
+        runtimeMinutesByIndex[index] = plexMinutes;
         return association.durationMs / 1000;
       }
       methods.add('equal');
       return undefined;
     });
+    // The merge confirmation reads the runtime from the matched episode, so
+    // carry the resolved TVDB/Plex runtime on the episode itself.
+    const matchedEpisodes = episodes.map((episode, index) =>
+      episode && runtimeMinutesByIndex[index]
+        ? { ...episode, runtimeMinutes: runtimeMinutesByIndex[index] }
+        : episode,
+    );
     const estimate = estimateSplitBoundaries({
       fileDurationSeconds: probe.durationSeconds,
       episodeDurationsSeconds: durations,
@@ -591,7 +956,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       cutMode: defaults?.cutMode ?? 'copy',
       originalPolicy: defaults?.originalPolicy ?? 'backup',
       sidecarPolicy: defaults?.sidecarPolicy ?? 'leave',
-      segments: segmentsForEpisodes(episodes, estimate.boundaries),
+      segments: segmentsForEpisodes(matchedEpisodes, estimate.boundaries),
       updatedAt: Date.now(),
     };
   };
@@ -601,9 +966,28 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     initializedKey.current = itemsKey;
     let cancelled = false;
     const existing = new Map(splits.map((split) => [split.itemId, split]));
+    const drafts = new Map(
+      readSplitDrafts()
+        .filter((draft) => draft.libraryId === library.id)
+        .map((draft) => [draft.itemId, draft]),
+    );
+    const restorable = new Map(
+      [...drafts].filter(([id, draft]) => {
+        const item = items.find((candidate) => candidate.id === id);
+        return Boolean(item) && item?.sourcePath === draft.sourcePath;
+      }),
+    );
+    restoredDrafts.current = restorable;
+    const draftRemoved = [...restorable.values()]
+      .filter((draft) => draft.removed)
+      .map((draft) => draft.itemId);
+    if (draftRemoved.length > 0) {
+      setRemoved((current) => new Set([...current, ...draftRemoved]));
+    }
     void Promise.all(
       items.map(async (item) => {
-        const state = existing.get(item.id);
+        const draft = restorable.get(item.id);
+        const state = draft?.plan ?? existing.get(item.id);
         const stateSpan = state ? Math.min(600, state.fileDurationSeconds) : 0;
         const stateCut = state?.segments[1]?.startSeconds ?? 0;
         const initial: FileState = {
@@ -611,7 +995,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           ...(state
             ? {
                 plan: state,
-                approved: true,
+                approved: draft ? draft.approved : true,
                 windowSeconds: stateSpan,
                 windowStart: centeredWindowStart(
                   stateCut,
@@ -619,10 +1003,48 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                   state.fileDurationSeconds,
                 ),
                 playhead: stateCut,
+                ...(draft
+                  ? {
+                      toolNote:
+                        'Restored the unsaved split edits from your last session.',
+                    }
+                  : {}),
               }
             : {}),
         };
         updateState(item.id, initial);
+        // Reuse a saved scan so reopening the editor does not decode the file
+        // again. A scan started meanwhile wins over the cached result.
+        void loadBlackFrames
+          .refetch({ path: item.sourcePath })
+          .then((result) => {
+            if (cancelled) return;
+            const intervals = result?.data?.intervals;
+            if (!intervals) return;
+            setStates((current) => {
+              const state = current[item.id];
+              if (!state || state.blackIntervals || state.blackLoading) {
+                return current;
+              }
+              return {
+                ...current,
+                [item.id]: {
+                  ...state,
+                  blackIntervals: intervals,
+                  ...(intervals.length > 0 && state.toolNote === undefined
+                    ? {
+                        toolNote: `Loaded the saved black-frame scan (${intervals.length} black run${
+                          intervals.length === 1 ? '' : 's'
+                        }). Use Restore black frame splits to apply it.`,
+                      }
+                    : {}),
+                },
+              };
+            });
+          })
+          .catch(() => {
+            // The cache is optional; the scan buttons still work.
+          });
         const knownEpisodes = item.episodes?.length
           ? item.episodes
           : item.episode
@@ -642,21 +1064,34 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           const probe = probed?.data;
           if (!probe) throw new Error('Could not probe the video file.');
           if (state) {
-            updateState(item.id, {
-              probe,
-              loading: false,
-              slug: series?.slug,
-              windowSeconds: Math.min(600, probe.durationSeconds),
-            });
-            if (state.cutMode === 'copy') {
-              void snapCutsFor(item.id, {
-                ...initial,
-                probe,
-                plan: state,
-                approved: true,
+            const draft = restoredDrafts.current.get(item.id);
+            if (draft && draft.fileSize !== probe.size) {
+              // The file changed, so the saved cuts no longer apply.
+              clearSplitDrafts(library.id, [item.id]);
+              restoredDrafts.current.delete(item.id);
+              updateState(item.id, {
+                plan: undefined,
+                approved: false,
+                toolNote:
+                  'The source file changed since the draft was saved; the cuts were estimated again.',
               });
+            } else {
+              updateState(item.id, {
+                probe,
+                loading: false,
+                slug: series?.slug,
+                windowSeconds: Math.min(600, probe.durationSeconds),
+              });
+              if (state.cutMode === 'copy') {
+                void snapCutsFor(item.id, {
+                  ...initial,
+                  probe,
+                  plan: state,
+                  approved: draft ? draft.approved : true,
+                });
+              }
+              return;
             }
-            return;
           }
           const estimated = await estimateFor(item, probe, series?.slug);
           if (!estimated) throw new Error('No episode is available.');
@@ -697,6 +1132,47 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     };
     // Data is loaded once per opened selection; edits must not re-trigger it.
   }, [itemsKey]);
+
+  /**
+   * Persists every manual decision so closing the dialog, an app restart or a
+   * failed save does not throw the work away. Only plans the user touched (or
+   * approved, or removed) are written, so simply opening an estimate does not
+   * leave a stale draft that could overwrite a later match fix.
+   */
+  const draftRevision = items
+    .map((item) => {
+      const state = states[item.id];
+      const isRemoved = removed.has(item.id);
+      if (!state?.plan) return `${item.id}|${isRemoved ? 'r' : '-'}`;
+      return `${item.id}|${isRemoved ? 'r' : '-'}|${
+        state.approved ? 'a' : 'u'
+      }|${JSON.stringify(state.plan)}`;
+    })
+    .join('\n');
+
+  useEffect(() => {
+    const drafts: (Omit<SplitDraft, 'updatedAt'> & { updatedAt?: number })[] =
+      [];
+    for (const item of items) {
+      const state = states[item.id];
+      const plan = state?.plan;
+      if (!state || !plan || plan.fileSize <= 0) continue;
+      const isRemoved = removed.has(item.id);
+      const touched = Boolean(plan.edited) || state.approved || isRemoved;
+      if (!touched) continue;
+      drafts.push({
+        libraryId: library.id,
+        itemId: item.id,
+        sourcePath: plan.sourcePath,
+        fileSize: plan.fileSize,
+        plan,
+        approved: state.approved,
+        removed: isRemoved,
+      });
+    }
+    if (drafts.length > 0) saveSplitDrafts(drafts);
+    // Re-run only when a plan, approval or removal changes, not on scrubbing.
+  }, [draftRevision]);
 
   const selectedItem = items.find((item) => item.id === selectedId) ?? items[0];
   const selectedState = selectedItem ? states[selectedItem.id] : undefined;
@@ -847,15 +1323,106 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
   }, [activeCutIndex, selectedPlan, selectedState]);
 
-  const targetPreview = useMemo(() => {
-    if (!selectedItem || !selectedPlan) return undefined;
-    return withSplitTargets(selectedItem, selectedPlan.segments, {
-      settings,
-      mediaType,
-      caseInsensitive: settings.caseInsensitive ?? false,
-      reservedPaths: reservedPathsFor(plan, selectedItem),
-    });
-  }, [selectedItem, selectedPlan, settings, mediaType, plan]);
+  const caseInsensitive = settings.caseInsensitive ?? false;
+  const previewOptions = useMemo<ConflictPreviewOptions>(
+    () => ({ settings, mediaType, caseInsensitive }),
+    [settings, mediaType, caseInsensitive],
+  );
+
+  const planById = useMemo(() => {
+    const map = new Map<string, OrganizeSplitPlan>();
+    for (const item of items) {
+      const candidate = states[item.id]?.plan;
+      if (candidate && !removed.has(item.id)) map.set(item.id, candidate);
+    }
+    return map;
+  }, [items, states, removed]);
+
+  const splitIds = useMemo(() => {
+    const ids = new Set<string>(planById.keys());
+    for (const split of splits) {
+      if (!removed.has(split.itemId)) ids.add(split.itemId);
+    }
+    return ids;
+  }, [planById, splits, removed]);
+
+  const conflictReports = useMemo(() => {
+    const reports = new Map<
+      string,
+      SplitTargetReport & { segments: SplitSegment[] }
+    >();
+    for (const item of items) {
+      const candidate = planById.get(item.id);
+      if (!candidate) continue;
+      reports.set(
+        item.id,
+        previewForItem(
+          plan,
+          item,
+          candidate,
+          planById,
+          splitIds,
+          existingTargets,
+          previewOptions,
+        ),
+      );
+    }
+    return reports;
+  }, [items, planById, splitIds, plan, existingTargets, previewOptions]);
+
+  const selectedReport = selectedItem
+    ? conflictReports.get(selectedItem.id)
+    : undefined;
+  const selectedConflicts = selectedReport?.targetConflicts ?? [];
+  const selectedSkipped = new Set(selectedPlan?.skippedSegments ?? []);
+  const existingTargetKeys = useMemo(
+    () =>
+      new Set(
+        existingTargets.map((path) =>
+          organizerComparisonKey(path, { caseInsensitive }),
+        ),
+      ),
+    [existingTargets, caseInsensitive],
+  );
+
+  // Only active targets are worth checking; a skipped segment never writes.
+  const targetCheckKey = useMemo(() => {
+    const paths = new Set<string>();
+    for (const item of items) {
+      const candidate = planById.get(item.id);
+      if (!candidate) continue;
+      for (const target of activeRenderedTargets(
+        item,
+        candidate,
+        previewOptions,
+      )) {
+        paths.add(target);
+      }
+    }
+    return [...paths].sort().join('\n');
+  }, [items, planById, previewOptions]);
+
+  useEffect(() => {
+    const paths = targetCheckKey ? targetCheckKey.split('\n') : [];
+    if (paths.length === 0) {
+      setExistingTargets([]);
+      return;
+    }
+    let cancelled = false;
+    void checkTargetsRef.current
+      .refetch({ paths })
+      .then((result) => {
+        if (cancelled) return;
+        const existing = result?.data?.existing;
+        if (Array.isArray(existing)) setExistingTargets(existing);
+      })
+      .catch(() => {
+        // The inline conflict list simply stays without disk conflicts.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetCheckKey]);
 
   const setWindow = (id: string, start: number) => {
     setStates((current) => {
@@ -896,6 +1463,44 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     setWindow(id, target - state.windowSeconds / 2);
   };
 
+  /** Centers the filmstrip on a segment's first frame. */
+  const jumpToSegmentStart = (id: string, seconds: number) => {
+    setStates((current) => {
+      const state = current[id];
+      if (!state?.plan) return current;
+      const duration =
+        state.probe?.durationSeconds ?? state.plan.fileDurationSeconds;
+      const span = Math.max(1, Math.min(duration, state.windowSeconds));
+      return {
+        ...current,
+        [id]: {
+          ...state,
+          playhead: seconds,
+          windowStart: centeredWindowStart(seconds, span, duration),
+        },
+      };
+    });
+  };
+
+  /** Centers the filmstrip on a segment's last frame. */
+  const jumpToSegmentEnd = (id: string, seconds: number) => {
+    setStates((current) => {
+      const state = current[id];
+      if (!state?.plan) return current;
+      const duration =
+        state.probe?.durationSeconds ?? state.plan.fileDurationSeconds;
+      const span = Math.max(1, Math.min(duration, state.windowSeconds));
+      return {
+        ...current,
+        [id]: {
+          ...state,
+          playhead: seconds,
+          windowStart: centeredWindowStart(seconds, span, duration),
+        },
+      };
+    });
+  };
+
   const setZoom = (id: string, value: string) => {
     const option = ZOOM_OPTIONS.find((entry) => entry.value === value);
     setStates((current) => {
@@ -926,7 +1531,9 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           index < segments.length - 1
             ? segments[index + 1].startSeconds
             : duration;
-        const clamped = Math.max(previous + 1, Math.min(next - 1, seconds));
+        const clamped =
+          Math.round(Math.max(previous + 1, Math.min(next - 1, seconds)) * 10) /
+          10;
         segments[index - 1].endSeconds = clamped;
         segments[index].startSeconds = clamped;
         segments[index].cutSeconds = undefined;
@@ -990,14 +1597,101 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
   };
 
+  /**
+   * Fetches the runtime of a newly selected episode so the merge suggestion
+   * still has a metadata length to work with. Enriches only the chosen segment,
+   * and never marks the split as edited.
+   */
+  const attachEpisodeRuntime = (
+    id: string,
+    index: number,
+    episode: TvdbEpisode,
+  ) => {
+    const episodeId = episode.id;
+    const slug = states[id]?.slug;
+    if (!episodeId || !slug) return;
+    void loadRuntimes
+      .refetch({ slug, episodeIds: [episodeId] })
+      .then((result) => {
+        const minutes = result?.data?.[episodeId];
+        if (!minutes) return;
+        setStates((current) => {
+          const state = current[id];
+          if (!state?.plan) return current;
+          const target = state.plan.segments[index];
+          if (target?.episode?.id !== episodeId) return current;
+          const segments = state.plan.segments.map((segment, segmentIndex) =>
+            segmentIndex === index
+              ? {
+                  ...segment,
+                  episode: { ...segment.episode, runtimeMinutes: minutes },
+                }
+              : segment,
+          );
+          const episodeDurationsSeconds = [
+            ...(state.plan.episodeDurationsSeconds ?? []),
+          ];
+          episodeDurationsSeconds[index] = minutes * 60;
+          return {
+            ...current,
+            [id]: {
+              ...state,
+              plan: {
+                ...state.plan,
+                segments,
+                episodeDurationsSeconds,
+              },
+            },
+          };
+        });
+      })
+      .catch(() => {
+        // The runtime is a convenience; merging still works without it.
+      });
+  };
+
   const changeEpisode = (id: string, index: number, episode: TvdbEpisode) => {
     updatePlan(
       id,
       (current) => ({
         ...current,
+        overwrite: false,
         segments: current.segments.map((segment, segmentIndex) =>
           segmentIndex === index ? { ...segment, episode } : segment,
         ),
+        edited: true,
+        updatedAt: Date.now(),
+      }),
+      { approved: false },
+    );
+    attachEpisodeRuntime(id, index, episode);
+  };
+
+  /**
+   * Stores a manual output filename for one segment. Clearing it (or typing
+   * the default name back) removes the override and restores the naming rule.
+   */
+  const setOutputName = (
+    id: string,
+    index: number,
+    value: string,
+    defaultValue: string | undefined,
+  ) => {
+    const typed = value.trim();
+    const override =
+      typed && typed !== (defaultValue ? pathBasename(defaultValue) : '')
+        ? typed
+        : undefined;
+    updatePlan(
+      id,
+      (current) => ({
+        ...current,
+        segments: current.segments.map((segment, segmentIndex) => {
+          if (segmentIndex !== index) return segment;
+          if (override) return { ...segment, outputName: override };
+          const { outputName: _removed, ...rest } = segment;
+          return rest;
+        }),
         edited: true,
         updatedAt: Date.now(),
       }),
@@ -1043,6 +1737,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   const applyOtherEpisode = (override: OrganizeMatchOverride | undefined) => {
     const target = otherEpisode;
     setOtherEpisode(undefined);
+    setProblems([]);
     const episode = override?.episodes?.[0] ?? override?.episode;
     if (!target || !episode) return;
     setStates((current) => {
@@ -1055,6 +1750,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           approved: false,
           plan: {
             ...state.plan,
+            overwrite: false,
             segments: state.plan.segments.map((segment, segmentIndex) =>
               segmentIndex === target.index ? { ...segment, episode } : segment,
             ),
@@ -1064,12 +1760,17 @@ export const SplitModal: React.FC<SplitModalProps> = ({
         },
       };
     });
+    attachEpisodeRuntime(target.itemId, target.index, episode);
   };
 
   const reestimate = (id: string) => {
+    setProblems([]);
     const state = states[id];
     if (!state?.plan) return;
     const episodes = state.plan.segments.map((segment) => segment.episode);
+    const outputNames = state.plan.segments.map(
+      (segment) => segment.outputName,
+    );
     const estimate = estimateSplitBoundaries({
       fileDurationSeconds:
         state.probe?.durationSeconds ?? state.plan.fileDurationSeconds,
@@ -1077,7 +1778,12 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
     const plan: OrganizeSplitPlan = {
       ...state.plan,
-      segments: segmentsForEpisodes(episodes, estimate.boundaries),
+      segments: segmentsForEpisodes(episodes, estimate.boundaries).map(
+        (segment, index) => ({
+          ...segment,
+          ...(outputNames[index] ? { outputName: outputNames[index] } : {}),
+        }),
+      ),
       estimate: {
         ...state.plan.estimate,
         ...(estimate.slackSeconds
@@ -1114,11 +1820,15 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       }
     }
     const episodes = state.plan.segments.map((segment) => segment.episode);
+    const outputNames = state.plan.segments.map(
+      (segment) => segment.outputName,
+    );
     const segments = Array.from({ length: unique.length + 1 }, (_, index) => ({
       index,
       startSeconds: index === 0 ? 0 : unique[index - 1],
       endSeconds: index === unique.length ? duration : unique[index],
       ...(episodes[index] ? { episode: episodes[index] } : {}),
+      ...(outputNames[index] ? { outputName: outputNames[index] } : {}),
     }));
     return {
       ...state,
@@ -1133,11 +1843,11 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     };
   };
 
-  const addSplitAtPlayhead = (id: string) => {
+  const addSplitAt = (id: string, at: number) => {
+    setProblems([]);
     setStates((current) => {
       const state = current[id];
       if (!state?.plan) return current;
-      const at = state.playhead;
       const index = state.plan.segments.findIndex(
         (segment) =>
           at > segment.startSeconds + 1 && at < segment.endSeconds - 1,
@@ -1152,7 +1862,11 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           },
         };
       }
+      const skippedBefore = new Set(state.plan.skippedSegments ?? []);
       const segments = state.plan.segments.map((segment) => ({ ...segment }));
+      const skippedObjects = new Set(
+        segments.filter((_, segmentIndex) => skippedBefore.has(segmentIndex)),
+      );
       const segment = segments[index];
       const newSegment = {
         index: index + 1,
@@ -1164,6 +1878,11 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       segments.forEach((entry, entryIndex) => {
         entry.index = entryIndex;
       });
+      const skippedSegments = segments
+        .map((entry, entryIndex) =>
+          skippedObjects.has(entry) ? entryIndex : -1,
+        )
+        .filter((entryIndex) => entryIndex >= 0);
       return {
         ...current,
         [id]: {
@@ -1174,6 +1893,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           plan: {
             ...state.plan,
             segments,
+            ...(skippedSegments.length > 0 ? { skippedSegments } : {}),
             edited: true,
             updatedAt: Date.now(),
           },
@@ -1182,13 +1902,34 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
   };
 
+  const addSplitAtPlayhead = (id: string) => {
+    const state = states[id];
+    if (!state?.plan) return;
+    addSplitAt(id, state.playhead);
+  };
+
+  /** Inserts a cut halfway through one segment. */
+  const addSplitBetween = (id: string, index: number) => {
+    const segment = states[id]?.plan?.segments[index];
+    if (!segment) return;
+    addSplitAt(
+      id,
+      segment.startSeconds + (segment.endSeconds - segment.startSeconds) / 2,
+    );
+  };
+
   const removeSplitAt = (id: string, index: number) => {
+    setProblems([]);
     setStates((current) => {
       const state = current[id];
       if (!state?.plan || index < 1 || index >= state.plan.segments.length) {
         return current;
       }
+      const skippedBefore = new Set(state.plan.skippedSegments ?? []);
       const segments = state.plan.segments.map((segment) => ({ ...segment }));
+      const skippedObjects = new Set(
+        segments.filter((_, segmentIndex) => skippedBefore.has(segmentIndex)),
+      );
       const [removed] = segments.splice(index, 1);
       if (segments[index - 1]) {
         segments[index - 1].endSeconds = removed.endSeconds;
@@ -1196,6 +1937,13 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       segments.forEach((entry, entryIndex) => {
         entry.index = entryIndex;
       });
+      // The removed segment is gone, so its skipped marker goes with it; the
+      // remaining dropped segments shift down with their own objects.
+      const skippedSegments = segments
+        .map((entry, entryIndex) =>
+          skippedObjects.has(entry) ? entryIndex : -1,
+        )
+        .filter((entryIndex) => entryIndex >= 0);
       return {
         ...current,
         [id]: {
@@ -1207,6 +1955,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           plan: {
             ...state.plan,
             segments,
+            ...(skippedSegments.length > 0 ? { skippedSegments } : {}),
             edited: true,
             updatedAt: Date.now(),
           },
@@ -1215,12 +1964,85 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
   };
 
+  /**
+   * Absorbs one or more following segments into the segment at `index`, which
+   * removes their cuts and keeps the first segment's episode and filename. The
+   * result is active unless every merged segment was already dropped.
+   */
+  const mergeSegments = (id: string, index: number, count: number) => {
+    setProblems([]);
+    setStates((current) => {
+      const state = current[id];
+      if (!state?.plan) return current;
+      const segments = state.plan.segments.map((segment) => ({ ...segment }));
+      const absorbed = Math.max(
+        1,
+        Math.min(count, segments.length - index - 1),
+      );
+      if (
+        index < 0 ||
+        index >= segments.length - 1 ||
+        segments.length - absorbed < 2
+      ) {
+        return current;
+      }
+      const skippedBefore = new Set(state.plan.skippedSegments ?? []);
+      const skippedObjects = new Set(
+        segments.filter((_, segmentIndex) => skippedBefore.has(segmentIndex)),
+      );
+      const merged = segments.slice(index, index + absorbed + 1);
+      const survivor = segments[index];
+      const last = segments[index + absorbed];
+      survivor.endSeconds = last.endSeconds;
+      if (!survivor.episode) {
+        const inherited = merged.find((segment) => segment.episode)?.episode;
+        if (inherited) survivor.episode = inherited;
+      }
+      const mergedSkipped = merged.every((segment) =>
+        skippedObjects.has(segment),
+      );
+      segments.splice(index + 1, absorbed);
+      segments.forEach((entry, entryIndex) => {
+        entry.index = entryIndex;
+      });
+      const skippedSegments = segments
+        .map((entry, entryIndex) =>
+          entry === survivor
+            ? mergedSkipped
+              ? entryIndex
+              : -1
+            : skippedObjects.has(entry)
+              ? entryIndex
+              : -1,
+        )
+        .filter((entryIndex) => entryIndex >= 0);
+      return {
+        ...current,
+        [id]: {
+          ...state,
+          approved: false,
+          keyframes: undefined,
+          toolNote: `Merged ${absorbed + 1} segments into one. Check the episode and output filename, then snap to keyframes for copy mode.`,
+          plan: {
+            ...state.plan,
+            segments,
+            ...(skippedSegments.length > 0 ? { skippedSegments } : {}),
+            edited: true,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+    setMergeRequest(undefined);
+  };
+
   /** Applies a black-frame tool to the intervals from the shared scan. */
   const applyBlackAction = (
     id: string,
     action: 'snap' | 'add',
     intervals: SplitBlackInterval[],
   ) => {
+    setProblems([]);
     setStates((current) => {
       const state = current[id];
       if (!state?.plan) return current;
@@ -1285,7 +2107,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     });
   };
 
-  const markBlackLoading = (id: string, action: 'snap' | 'add') => {
+  const markBlackLoading = (id: string, action: 'snap' | 'add' | 'scan') => {
     updateState(id, {
       blackLoading: true,
       blackProgress: 0,
@@ -1295,7 +2117,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   };
 
   const blackResultNote = (
-    action: 'snap' | 'add',
+    action: 'snap' | 'add' | 'scan',
     applied: number,
     failures: number,
   ) => {
@@ -1303,7 +2125,9 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     const prefix =
       action === 'snap'
         ? `Snapped cuts to black in ${applied} ${files}.`
-        : `Added black-gap splits in ${applied} ${files}.`;
+        : action === 'add'
+          ? `Added black-gap splits in ${applied} ${files}.`
+          : `Scanned ${applied} ${files} for black frames; the saved result is ready to restore.`;
     if (failures <= 0) return prefix;
     return `${prefix} ${failures} scan${failures === 1 ? '' : 's'} failed.`;
   };
@@ -1313,14 +2137,14 @@ export const SplitModal: React.FC<SplitModalProps> = ({
    * applied immediately; the rest are scanned one at a time so a batch does
    * not decode several files at once.
    */
-  const startBlackRun = (action: 'snap' | 'add', ids: string[]) => {
+  const startBlackRun = (action: 'snap' | 'add' | 'scan', ids: string[]) => {
     if (blackRun) return;
     const targets: BlackScanTarget[] = [];
     let applied = 0;
     for (const id of ids) {
       const state = states[id];
       if (!state?.plan || state.loading || state.error) continue;
-      if (state.blackIntervals) {
+      if (action !== 'scan' && state.blackIntervals) {
         applyBlackAction(id, action, state.blackIntervals);
         applied += 1;
         continue;
@@ -1360,6 +2184,14 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       startedAt: Date.now(),
       token: blackScanToken.current,
     });
+  };
+
+  /** Applies saved black runs immediately, without another ffmpeg scan. */
+  const restoreBlackSplits = (id: string) => {
+    const state = states[id];
+    if (!state?.plan || state.blackLoading) return;
+    if (!state.blackIntervals || state.blackIntervals.length === 0) return;
+    applyBlackAction(id, 'add', state.blackIntervals);
   };
 
   const updateBlackProgress = (id: string, percent: number) => {
@@ -1408,7 +2240,19 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     run: BlackScanRun,
     intervals: SplitBlackInterval[],
   ) => {
-    applyBlackAction(run.targets[run.index].id, run.action, intervals);
+    const id = run.targets[run.index].id;
+    if (run.action === 'scan') {
+      updateState(id, {
+        blackIntervals: intervals,
+        blackLoading: false,
+        blackProgress: undefined,
+        blackAction: undefined,
+        toolNote: `Scanned ${intervals.length} black run${intervals.length === 1 ? '' : 's'}. Use Restore black frame splits to apply them.`,
+      });
+      advanceBlackRun(run, 1, 0);
+      return;
+    }
+    applyBlackAction(id, run.action, intervals);
     advanceBlackRun(run, 1, 0);
   };
 
@@ -1423,6 +2267,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
   };
 
   const setAllApproved = (approved: boolean) => {
+    setProblems([]);
     setStates((current) => {
       const next = { ...current };
       for (const item of items) {
@@ -1445,15 +2290,65 @@ export const SplitModal: React.FC<SplitModalProps> = ({
     splits.some((split) => split.itemId === id),
   );
   const hasWork = approvedCount > 0 || removedQueuedIds.length > 0;
+  const approvedConflictCount = items.filter(
+    (item) =>
+      !removed.has(item.id) &&
+      states[item.id]?.approved &&
+      (conflictReports.get(item.id)?.targetConflicts.length ?? 0) > 0,
+  ).length;
 
-  const save = () => {
+  /**
+   * Checks targets and saves the approved splits. With `skipConflicts`, every
+   * path that would be written over, is claimed by another row or duplicated
+   * is dropped instead of blocking the save, and splits with nothing left are
+   * skipped entirely.
+   */
+  const save = async (skipConflicts = false) => {
+    const planNow = new Map<string, OrganizeSplitPlan>();
+    for (const item of items) {
+      const candidate = states[item.id]?.plan;
+      if (candidate && !removed.has(item.id)) planNow.set(item.id, candidate);
+    }
+    const pathsToCheck = new Set<string>();
+    for (const item of items) {
+      const candidate = planNow.get(item.id);
+      if (!candidate || !states[item.id]?.approved) continue;
+      for (const target of activeRenderedTargets(
+        item,
+        candidate,
+        previewOptions,
+      )) {
+        pathsToCheck.add(target);
+      }
+    }
+    let existingPaths = existingTargets;
+    if (pathsToCheck.size > 0) {
+      try {
+        const result = await checkTargets.refetch({
+          paths: [...pathsToCheck],
+        });
+        const existing = result?.data?.existing;
+        if (Array.isArray(existing)) {
+          existingPaths = existing;
+          setExistingTargets(existing);
+        }
+      } catch {
+        // Keep the result of the last background check.
+      }
+    }
+
     const upserts: OrganizeSplitPlan[] = [];
     const nextProblems: string[] = [];
+    const skippedIds = new Set<string>();
     for (const item of items) {
       if (removed.has(item.id)) continue;
       const state = states[item.id];
       if (!state?.plan) {
         if (state?.approved && !state.error) {
+          if (skipConflicts) {
+            skippedIds.add(item.id);
+            continue;
+          }
           nextProblems.push(
             `${item.sourceRelativePath}: no split was prepared.`,
           );
@@ -1462,21 +2357,58 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       }
       // Unapproved edits are discarded; a queued split stays queued unchanged.
       if (!state.approved) continue;
-      const planToSave: OrganizeSplitPlan = {
+      let planToSave: OrganizeSplitPlan = {
         ...state.plan,
         updatedAt: Date.now(),
       };
-      const found = validateSplitPlan(planToSave);
-      const targets = withSplitTargets(item, planToSave.segments, {
-        settings,
-        mediaType,
-        caseInsensitive: settings.caseInsensitive ?? false,
-        reservedPaths: reservedPathsFor(plan, item),
-      });
-      const all = [...found, ...targets.conflicts];
-      if (all.length > 0) {
+      const preview = () =>
+        previewForItem(
+          plan,
+          item,
+          planToSave,
+          planNow,
+          splitIds,
+          existingPaths,
+          previewOptions,
+        );
+      let report = preview();
+      let found = [...validateSplitPlan(planToSave), ...report.conflicts];
+      if (found.length > 0 && skipConflicts) {
+        const conflictIndexes = new Set(
+          report.targetConflicts.map((conflict) => conflict.segmentIndex),
+        );
+        if (conflictIndexes.size === 0) {
+          // These are plan problems, not target conflicts; dropping segments
+          // would hide them, so keep reporting and let the user fix the split.
+          nextProblems.push(
+            ...found.map((problem) => `${item.sourceRelativePath}: ${problem}`),
+          );
+          continue;
+        }
+        const skipped = new Set([
+          ...(planToSave.skippedSegments ?? []),
+          ...conflictIndexes,
+        ]);
+        if (
+          planToSave.segments.every((segment) => skipped.has(segment.index))
+        ) {
+          skippedIds.add(item.id);
+          continue;
+        }
+        planToSave = {
+          ...planToSave,
+          skippedSegments: [...skipped].sort((left, right) => left - right),
+        };
+        report = preview();
+        found = [...validateSplitPlan(planToSave), ...report.conflicts];
+      }
+      if (found.length > 0) {
+        if (skipConflicts) {
+          skippedIds.add(item.id);
+          continue;
+        }
         nextProblems.push(
-          ...all.map((problem) => `${item.sourceRelativePath}: ${problem}`),
+          ...found.map((problem) => `${item.sourceRelativePath}: ${problem}`),
         );
         continue;
       }
@@ -1486,7 +2418,18 @@ export const SplitModal: React.FC<SplitModalProps> = ({
       setProblems([...new Set(nextProblems)]);
       return;
     }
-    onSave(upserts, removedQueuedIds);
+    const queued = new Set(splits.map((split) => split.itemId));
+    const removedIds = new Set(removedQueuedIds);
+    for (const id of skippedIds) {
+      if (queued.has(id)) removedIds.add(id);
+    }
+    // Saving makes these drafts canonical (or drops them); unsaved items keep
+    // their draft so the next open still restores the work in progress.
+    clearSplitDrafts(library.id, [
+      ...upserts.map((upsert) => upsert.itemId),
+      ...removedIds,
+    ]);
+    onSave(upserts, [...removedIds]);
   };
 
   const methodLabel = (method?: OrganizeSplitPlan['estimate']['method']) => {
@@ -1666,6 +2609,11 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                 const tag = item.episodes
                   ?.map((episode) => episode.tag)
                   .join(' + ');
+                const conflicts =
+                  conflictReports.get(item.id)?.targetConflicts.length ?? 0;
+                const activeSegments = state?.plan
+                  ? activeSplitSegments(state.plan).length
+                  : 0;
                 return (
                   <RailFile
                     key={item.id}
@@ -1679,7 +2627,14 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                     <strong
                       style={{ display: 'flex', alignItems: 'center', gap: 4 }}
                     >
-                      {state?.approved && !removed.has(item.id) ? (
+                      {conflicts > 0 && !removed.has(item.id) ? (
+                        <Icon
+                          name="failures"
+                          size="xs"
+                          tone="danger"
+                          label="Target conflicts"
+                        />
+                      ) : state?.approved && !removed.has(item.id) ? (
                         <Icon
                           name="passed"
                           size="xs"
@@ -1705,15 +2660,23 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                           : removed.has(item.id)
                             ? 'Split removed'
                             : state?.plan
-                              ? `${state.plan.segments.length} segments · ${methodLabel(
-                                  state.plan.estimate.method,
-                                )} · ${
-                                  state.approved
-                                    ? 'approved'
-                                    : state.plan.edited
-                                      ? 'ready for review'
-                                      : 'needs approval'
-                                }`
+                              ? conflicts > 0
+                                ? `${conflicts} target conflict${
+                                    conflicts === 1 ? '' : 's'
+                                  } · needs a decision`
+                                : `${activeSegments} of ${
+                                    state.plan.segments.length
+                                  } segment${
+                                    state.plan.segments.length === 1 ? '' : 's'
+                                  } · ${methodLabel(
+                                    state.plan.estimate.method,
+                                  )} · ${
+                                    state.approved
+                                      ? 'approved'
+                                      : state.plan.edited
+                                        ? 'ready for review'
+                                        : 'needs approval'
+                                  }`
                               : 'Not ready'}
                     </span>
                   </RailFile>
@@ -1965,6 +2928,17 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                           cut at every black run, then keeps the known episodes
                           in order. The scan decodes the whole file, so its
                           progress is shown on the button and a bar below.
+                          Results are saved under the app cache and reloaded
+                          when the editor opens again.{' '}
+                          {selectedState.blackIntervals === undefined
+                            ? 'No saved scan is available for this file yet.'
+                            : selectedState.blackIntervals.length === 0
+                              ? 'The saved scan found no black runs.'
+                              : `${selectedState.blackIntervals.length} saved black run${
+                                  selectedState.blackIntervals.length === 1
+                                    ? ''
+                                    : 's'
+                                } can be restored without scanning.`}
                         </>
                       }
                     >
@@ -2010,6 +2984,47 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                           selectedState.blackAction === 'add'
                             ? `Scanning for black… ${selectedState.blackProgress ?? 0}%`
                             : 'Add all black gaps'}
+                        </Button>
+                        <Button
+                          compact
+                          variant="secondary"
+                          icon="reset"
+                          disabled={
+                            selectedState.blackLoading ||
+                            Boolean(blackRun) ||
+                            !selectedState.blackIntervals?.length
+                          }
+                          title={
+                            selectedState.blackIntervals === undefined
+                              ? 'No saved black-frame scan yet; rescan the file first.'
+                              : selectedState.blackIntervals.length === 0
+                                ? 'The saved scan found no black runs to restore.'
+                                : undefined
+                          }
+                          onClick={() => restoreBlackSplits(selectedItem.id)}
+                        >
+                          Restore black frame splits
+                        </Button>
+                        <Button
+                          compact
+                          variant="ghost"
+                          icon="scan"
+                          disabled={
+                            selectedState.blackLoading || Boolean(blackRun)
+                          }
+                          title={
+                            blackRun && !selectedState.blackLoading
+                              ? 'A black-frame scan is already running.'
+                              : 'Decodes the whole file again and replaces the saved result.'
+                          }
+                          onClick={() =>
+                            startBlackRun('scan', [selectedItem.id])
+                          }
+                        >
+                          {selectedState.blackLoading &&
+                          selectedState.blackAction === 'scan'
+                            ? `Scanning for black… ${selectedState.blackProgress ?? 0}%`
+                            : 'Rescan black frames'}
                         </Button>
                       </Control>
                     </ControlTip>
@@ -2238,8 +3253,134 @@ export const SplitModal: React.FC<SplitModalProps> = ({
             <Cards>
               {selectedPlan && selectedItem ? (
                 <>
+                  {(() => {
+                    const conflictIndexes = new Set(
+                      selectedConflicts.map(
+                        (conflict) => conflict.segmentIndex,
+                      ),
+                    );
+                    const remaining = selectedPlan.segments.filter(
+                      (segment) =>
+                        !selectedSkipped.has(segment.index) &&
+                        !conflictIndexes.has(segment.index),
+                    );
+                    const overwriteable = selectedConflicts.some(
+                      (conflict) => conflict.overwriteable,
+                    );
+                    if (
+                      selectedConflicts.length === 0 &&
+                      selectedSkipped.size === 0 &&
+                      !selectedPlan.overwrite
+                    ) {
+                      return null;
+                    }
+                    return (
+                      <ConflictPanel aria-label="Target conflicts">
+                        {selectedConflicts.length > 0 && (
+                          <>
+                            <strong>Target conflicts</strong>
+                            <ul>
+                              {selectedConflicts.map((conflict) => (
+                                <li
+                                  key={`${conflict.segmentIndex}-${conflict.kind}`}
+                                >
+                                  Segment {conflict.segmentIndex + 1}:{' '}
+                                  {conflict.message}
+                                </li>
+                              ))}
+                            </ul>
+                            <Row>
+                              {overwriteable && (
+                                <Button
+                                  compact
+                                  variant="secondary"
+                                  icon="edit"
+                                  onClick={() =>
+                                    setOverwrite(selectedItem.id, true)
+                                  }
+                                >
+                                  Overwrite existing files
+                                </Button>
+                              )}
+                              <Button
+                                compact
+                                variant="secondary"
+                                icon="delete"
+                                disabled={
+                                  conflictIndexes.size === 0 ||
+                                  remaining.length === 0
+                                }
+                                title={
+                                  remaining.length === 0
+                                    ? 'Dropping every conflicting segment would skip this split; use Skip this split.'
+                                    : undefined
+                                }
+                                onClick={() =>
+                                  skipSegments(selectedItem.id, [
+                                    ...conflictIndexes,
+                                  ])
+                                }
+                              >
+                                Drop conflicting segment
+                                {conflictIndexes.size === 1 ? '' : 's'} (
+                                {conflictIndexes.size})
+                              </Button>
+                              <Button
+                                compact
+                                variant="ghost"
+                                icon="close"
+                                onClick={() => skipSplit(selectedItem.id)}
+                              >
+                                Skip this split
+                              </Button>
+                            </Row>
+                          </>
+                        )}
+                        {selectedPlan.overwrite && (
+                          <Row>
+                            <Muted>
+                              Existing files at these targets will be replaced
+                              when you Apply.
+                            </Muted>
+                            <Button
+                              compact
+                              variant="ghost"
+                              onClick={() =>
+                                setOverwrite(selectedItem.id, false)
+                              }
+                            >
+                              Undo overwrite
+                            </Button>
+                          </Row>
+                        )}
+                        {selectedSkipped.size > 0 && (
+                          <Muted>
+                            {selectedSkipped.size} segment
+                            {selectedSkipped.size === 1 ? '' : 's'} will not be
+                            written. The split's original-file setting still
+                            applies to the source afterward.
+                          </Muted>
+                        )}
+                      </ConflictPanel>
+                    );
+                  })()}
                   {selectedPlan.segments.map((segment, index) => {
-                    const target = targetPreview?.segments[index]?.targetPath;
+                    const target = selectedReport?.segments[index]?.targetPath;
+                    const defaultTarget =
+                      selectedReport?.defaultTargets?.[index];
+                    const defaultOutputName = defaultTarget
+                      ? pathBasename(defaultTarget)
+                      : '';
+                    const skippedSegment = selectedSkipped.has(segment.index);
+                    const segmentConflicts = selectedConflicts.filter(
+                      (conflict) => conflict.segmentIndex === segment.index,
+                    );
+                    const targetExists = Boolean(
+                      target &&
+                        existingTargetKeys.has(
+                          organizerComparisonKey(target, { caseInsensitive }),
+                        ),
+                    );
                     const keyframe =
                       segment.cutSeconds !== undefined
                         ? selectedState?.keyframes?.[index - 1]
@@ -2265,14 +3406,78 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                         ? [...rangeEpisodes, segment.episode]
                         : rangeEpisodes;
                     return (
-                      <Card key={`${selectedItem.id}-${index}`}>
+                      <Card
+                        key={`${selectedItem.id}-${index}`}
+                        $assigned={Boolean(segment.episode) && !skippedSegment}
+                      >
                         <header>
                           <span>Segment {index + 1}</span>
                           <Muted>
-                            {formatSplitTimecode(segment.startSeconds, true)} –{' '}
-                            {formatSplitTimecode(segment.endSeconds, true)}
+                            {formatDuration(
+                              segment.endSeconds - segment.startSeconds,
+                            )}{' '}
+                            · {formatSplitTimecode(segment.startSeconds, true)}{' '}
+                            – {formatSplitTimecode(segment.endSeconds, true)}
                           </Muted>
                         </header>
+                        {skippedSegment ? (
+                          <SegmentWarning $muted>
+                            <Icon name="pending" size="xs" tone="warning" />
+                            <span className="hb-segment-message">
+                              Skipped — no file is written for this segment. The
+                              split's original-file setting still applies
+                              afterward.
+                            </span>
+                            <Button
+                              compact
+                              variant="ghost"
+                              onClick={() =>
+                                restoreSegment(selectedItem.id, segment.index)
+                              }
+                            >
+                              Restore segment
+                            </Button>
+                          </SegmentWarning>
+                        ) : segmentConflicts.length > 0 ? (
+                          <SegmentWarning role="alert">
+                            <Icon name="failures" size="xs" tone="danger" />
+                            <span className="hb-segment-message">
+                              {segmentConflicts
+                                .map((conflict) => conflict.message)
+                                .join(' ')}
+                            </span>
+                            {segmentConflicts.some(
+                              (conflict) => conflict.overwriteable,
+                            ) &&
+                              !selectedPlan.overwrite && (
+                                <Button
+                                  compact
+                                  variant="ghost"
+                                  onClick={() =>
+                                    setOverwrite(selectedItem.id, true)
+                                  }
+                                >
+                                  Overwrite file
+                                </Button>
+                              )}
+                            <Button
+                              compact
+                              variant="ghost"
+                              onClick={() =>
+                                skipSegments(selectedItem.id, [segment.index])
+                              }
+                            >
+                              Drop segment
+                            </Button>
+                          </SegmentWarning>
+                        ) : null}
+                        {!skippedSegment &&
+                          selectedPlan.overwrite &&
+                          targetExists && (
+                            <Muted>
+                              This existing file will be replaced on Apply.
+                            </Muted>
+                          )}
                         <Row>
                           <Form.Select
                             size="sm"
@@ -2321,6 +3526,7 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                               compact
                               variant="ghost"
                               icon="edit"
+                              title="Choose an episode outside this file's detected range"
                               aria-label={`Select other episode for segment ${index + 1}`}
                               onClick={() =>
                                 openOtherEpisode(
@@ -2330,128 +3536,363 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                                 )
                               }
                             >
-                              Select other episode
+                              Other episode
                             </Button>
                           </ControlTip>
                         </Row>
-                        {index > 0 && (
-                          <Row>
-                            <input
-                              className="form-control form-control-sm"
-                              style={{ width: 92 }}
-                              aria-label={`Start time for segment ${index + 1}`}
-                              defaultValue={formatSplitTimecode(
-                                segment.startSeconds,
-                                true,
+                        <CardActions>
+                          {index < selectedPlan.segments.length - 1 && (
+                            <ControlTip
+                              label="Merge with next"
+                              content={
+                                <>
+                                  Removes the cut after this segment, joining it
+                                  with the next one. The confirmation dialog can
+                                  merge several following segments at once.
+                                  Merging keeps this segment's episode and
+                                  filename.
+                                </>
+                              }
+                            >
+                              <Button
+                                compact
+                                variant="secondary"
+                                icon="moveDown"
+                                disabled={selectedPlan.segments.length <= 2}
+                                title={
+                                  selectedPlan.segments.length <= 2
+                                    ? 'Merging the last two segments leaves no split; use Remove this split.'
+                                    : undefined
+                                }
+                                onClick={() => {
+                                  const remaining =
+                                    selectedPlan.segments.length - index - 1;
+                                  const mergeMax = Math.min(
+                                    remaining,
+                                    selectedPlan.segments.length - 2,
+                                  );
+                                  setMergeCount(
+                                    suggestedMergeCount(
+                                      selectedPlan.segments,
+                                      index,
+                                      mergeMax,
+                                      selectedPlan.episodeDurationsSeconds?.[
+                                        index
+                                      ] ?? 0,
+                                    ) || 1,
+                                  );
+                                  setMergeRequest({
+                                    itemId: selectedItem.id,
+                                    index,
+                                  });
+                                }}
+                              >
+                                Merge with next (
+                                {formatDuration(
+                                  selectedPlan.segments[index + 1].endSeconds -
+                                    selectedPlan.segments[index + 1]
+                                      .startSeconds,
+                                )}
+                                )
+                              </Button>
+                            </ControlTip>
+                          )}
+                          <ControlTip
+                            label="Jump to segment start"
+                            content={
+                              <>
+                                Pans the filmstrip so this segment's first frame
+                                is centered and moves the playhead there, ready
+                                to inspect.
+                              </>
+                            }
+                          >
+                            <Button
+                              compact
+                              variant="ghost"
+                              icon="jumpStart"
+                              aria-label={`Jump to start of segment ${index + 1}`}
+                              onClick={() =>
+                                jumpToSegmentStart(
+                                  selectedItem.id,
+                                  segment.startSeconds,
+                                )
+                              }
+                            >
+                              Jump start
+                            </Button>
+                          </ControlTip>
+                          <ControlTip
+                            label="Jump to segment end"
+                            content={
+                              <>
+                                Pans the filmstrip so this segment's last frame
+                                is centered and moves the playhead there, ready
+                                to inspect the cut that ends it.
+                              </>
+                            }
+                          >
+                            <Button
+                              compact
+                              variant="ghost"
+                              icon="jumpEnd"
+                              aria-label={`Jump to end of segment ${index + 1}`}
+                              onClick={() =>
+                                jumpToSegmentEnd(
+                                  selectedItem.id,
+                                  segment.endSeconds,
+                                )
+                              }
+                            >
+                              Jump end
+                            </Button>
+                          </ControlTip>
+                        </CardActions>
+                        <CardDetails>
+                          <summary
+                            aria-label={`Segment ${index + 1} cut, filename and more`}
+                          >
+                            Cut, filename &amp; more
+                          </summary>
+                          <div>
+                            <Row>
+                              <ControlTip
+                                label="Output filename"
+                                style={{ flex: '1 1 220px' }}
+                                content={
+                                  <>
+                                    Overrides the filename the naming rule
+                                    produced for this segment. The folder still
+                                    comes from the rule. Leave it empty, or use
+                                    the default name, to go back. A name without
+                                    an extension keeps the source extension.
+                                  </>
+                                }
+                              >
+                                <Form.Control
+                                  size="sm"
+                                  aria-label={`Output filename for segment ${index + 1}`}
+                                  defaultValue={
+                                    segment.outputName ?? defaultOutputName
+                                  }
+                                  key={`${selectedItem.id}-${index}-${segment.outputName ?? ''}-${defaultOutputName}`}
+                                  placeholder={
+                                    defaultOutputName || 'Output filename'
+                                  }
+                                  style={{ minWidth: 0 }}
+                                  onBlur={(event) =>
+                                    setOutputName(
+                                      selectedItem.id,
+                                      index,
+                                      event.target.value,
+                                      defaultTarget,
+                                    )
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key !== 'Enter') return;
+                                    setOutputName(
+                                      selectedItem.id,
+                                      index,
+                                      (event.target as HTMLInputElement).value,
+                                      defaultTarget,
+                                    );
+                                  }}
+                                />
+                              </ControlTip>
+                              {segment.outputName && (
+                                <Button
+                                  compact
+                                  variant="ghost"
+                                  icon="reset"
+                                  iconOnly
+                                  title="Use the default filename"
+                                  aria-label={`Use the default filename for segment ${index + 1}`}
+                                  onClick={() =>
+                                    setOutputName(
+                                      selectedItem.id,
+                                      index,
+                                      '',
+                                      defaultTarget,
+                                    )
+                                  }
+                                />
                               )}
-                              key={`${index}-${segment.startSeconds}`}
-                              onBlur={(event) => {
-                                const parsed = parseTimecode(
-                                  event.target.value,
-                                );
-                                if (parsed !== undefined) {
-                                  moveMarker(selectedItem.id, index, parsed);
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key !== 'Enter') return;
-                                const parsed = parseTimecode(
-                                  (event.target as HTMLInputElement).value,
-                                );
-                                if (parsed !== undefined) {
-                                  moveMarker(selectedItem.id, index, parsed);
-                                }
-                              }}
-                            />
-                            <Button
-                              compact
-                              variant="ghost"
-                              onClick={() =>
-                                moveMarker(
-                                  selectedItem.id,
-                                  index,
-                                  segment.startSeconds - 1,
-                                )
-                              }
-                            >
-                              −1s
-                            </Button>
-                            <Button
-                              compact
-                              variant="ghost"
-                              onClick={() =>
-                                moveMarker(
-                                  selectedItem.id,
-                                  index,
-                                  segment.startSeconds - 0.1,
-                                )
-                              }
-                            >
-                              −0.1s
-                            </Button>
-                            <Button
-                              compact
-                              variant="ghost"
-                              onClick={() =>
-                                moveMarker(
-                                  selectedItem.id,
-                                  index,
-                                  segment.startSeconds + 0.1,
-                                )
-                              }
-                            >
-                              +0.1s
-                            </Button>
-                            <Button
-                              compact
-                              variant="ghost"
-                              onClick={() =>
-                                moveMarker(
-                                  selectedItem.id,
-                                  index,
-                                  segment.startSeconds + 1,
-                                )
-                              }
-                            >
-                              +1s
-                            </Button>
-                            <Button
-                              compact
-                              variant="secondary"
-                              onClick={() =>
-                                moveMarker(
-                                  selectedItem.id,
-                                  index,
-                                  selectedState?.playhead ??
+                            </Row>
+                            {index > 0 && (
+                              <CutRow>
+                                <label htmlFor={`cut-time-${index}`}>Cut</label>
+                                <input
+                                  id={`cut-time-${index}`}
+                                  className="form-control form-control-sm"
+                                  style={{ width: 92 }}
+                                  aria-label={`Start time for segment ${index + 1}`}
+                                  defaultValue={formatSplitTimecode(
                                     segment.startSeconds,
-                                )
-                              }
-                            >
-                              Use playhead
-                            </Button>
-                            <Button
-                              compact
-                              variant="ghost"
-                              icon="delete"
-                              onClick={() =>
-                                removeSplitAt(selectedItem.id, index)
-                              }
-                            >
-                              Remove split
-                            </Button>
-                          </Row>
-                        )}
-                        {selectedPlan.cutMode === 'copy' && index > 0 && (
-                          <Muted>
-                            {segment.cutSeconds !== undefined
-                              ? `Copy cut lands at ${formatSplitTimecode(segment.cutSeconds, true)}${
-                                  keyframe?.deltaSeconds
-                                    ? ` (${keyframe.deltaSeconds > 0 ? '+' : ''}${keyframe.deltaSeconds.toFixed(2)}s)`
-                                    : ''
-                                }. Use a tick on the strip to choose another keyframe.`
-                              : 'Drag the cut, then press Snap to keyframes to see where it lands and view the alternatives.'}
-                          </Muted>
-                        )}
+                                    true,
+                                  )}
+                                  key={`${index}-${segment.startSeconds}`}
+                                  onBlur={(event) => {
+                                    const parsed = parseTimecode(
+                                      event.target.value,
+                                    );
+                                    if (parsed !== undefined) {
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        parsed,
+                                      );
+                                    }
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== 'Enter') return;
+                                    const parsed = parseTimecode(
+                                      (event.target as HTMLInputElement).value,
+                                    );
+                                    if (parsed !== undefined) {
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        parsed,
+                                      );
+                                    }
+                                  }}
+                                />
+                                <NudgeGroup
+                                  role="group"
+                                  aria-label={`Nudge the cut before segment ${index + 1}`}
+                                >
+                                  <Button
+                                    compact
+                                    variant="ghost"
+                                    onClick={() =>
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        segment.startSeconds - 1,
+                                      )
+                                    }
+                                  >
+                                    −1s
+                                  </Button>
+                                  <Button
+                                    compact
+                                    variant="ghost"
+                                    onClick={() =>
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        segment.startSeconds - 0.1,
+                                      )
+                                    }
+                                  >
+                                    −0.1s
+                                  </Button>
+                                  <Button
+                                    compact
+                                    variant="ghost"
+                                    onClick={() =>
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        segment.startSeconds + 0.1,
+                                      )
+                                    }
+                                  >
+                                    +0.1s
+                                  </Button>
+                                  <Button
+                                    compact
+                                    variant="ghost"
+                                    onClick={() =>
+                                      moveMarker(
+                                        selectedItem.id,
+                                        index,
+                                        segment.startSeconds + 1,
+                                      )
+                                    }
+                                  >
+                                    +1s
+                                  </Button>
+                                </NudgeGroup>
+                                <Button
+                                  compact
+                                  variant="secondary"
+                                  onClick={() =>
+                                    moveMarker(
+                                      selectedItem.id,
+                                      index,
+                                      selectedState?.playhead ??
+                                        segment.startSeconds,
+                                    )
+                                  }
+                                >
+                                  Use playhead
+                                </Button>
+                              </CutRow>
+                            )}
+                            {selectedPlan.cutMode === 'copy' && index > 0 && (
+                              <Muted>
+                                {segment.cutSeconds !== undefined
+                                  ? `Copy cut lands at ${formatSplitTimecode(segment.cutSeconds, true)}${
+                                      keyframe?.deltaSeconds
+                                        ? ` (${keyframe.deltaSeconds > 0 ? '+' : ''}${keyframe.deltaSeconds.toFixed(2)}s)`
+                                        : ''
+                                    }. Use a tick on the strip to choose another keyframe.`
+                                  : 'Drag the cut, then press Snap to keyframes to see where it lands and view the alternatives.'}
+                              </Muted>
+                            )}
+                            <CardActions>
+                              <ControlTip
+                                label="Split segment"
+                                content={
+                                  <>
+                                    Inserts a cut halfway through this segment,
+                                    creating a new segment between its start and
+                                    end. Assign an episode to the new segment
+                                    before saving.
+                                  </>
+                                }
+                              >
+                                <Button
+                                  compact
+                                  variant="ghost"
+                                  icon="split"
+                                  aria-label={`Split segment ${index + 1}`}
+                                  onClick={() =>
+                                    addSplitBetween(selectedItem.id, index)
+                                  }
+                                >
+                                  Split Segment
+                                </Button>
+                              </ControlTip>
+                              {index > 0 && (
+                                <ControlTip
+                                  label="Remove split"
+                                  content={
+                                    <>
+                                      Removes the cut before this segment and
+                                      joins it back onto the previous one. The
+                                      previous segment keeps its episode and
+                                      filename.
+                                    </>
+                                  }
+                                >
+                                  <Button
+                                    compact
+                                    variant="ghost"
+                                    icon="delete"
+                                    aria-label={`Remove split before segment ${index + 1}`}
+                                    onClick={() =>
+                                      removeSplitAt(selectedItem.id, index)
+                                    }
+                                  >
+                                    Remove split
+                                  </Button>
+                                </ControlTip>
+                              )}
+                            </CardActions>
+                          </div>
+                        </CardDetails>
                         <small title={target}>
                           {target
                             ? target
@@ -2485,13 +3926,25 @@ export const SplitModal: React.FC<SplitModalProps> = ({
                   <li key={problem}>{problem}</li>
                 ))}
               </ul>
+              {approvedConflictCount > 0 && (
+                <Button
+                  compact
+                  variant="danger"
+                  icon="delete"
+                  style={{ marginTop: 'var(--hb-space-xs)' }}
+                  onClick={() => void save(true)}
+                >
+                  Skip conflicts and save approved
+                </Button>
+              )}
             </Alert>
           )}
         </Modal.Body>
         <Modal.Footer>
           <Muted style={{ marginRight: 'auto' }}>
-            Only approved splits are saved. Unapproved edits are discarded and a
-            queued split stays queued; nothing changes on disk until Apply.
+            Only approved splits are queued. Unapproved edits stay here as a
+            draft and a queued split stays queued; nothing changes on disk until
+            Apply.
           </Muted>
           <Button
             compact
@@ -2515,13 +3968,206 @@ export const SplitModal: React.FC<SplitModalProps> = ({
           <Button
             variant="success"
             icon="split"
-            onClick={save}
+            onClick={() => void save()}
             disabled={!hasWork}
           >
             Save approved ({approvedCount})
           </Button>
         </Modal.Footer>
       </Modal>
+      {mergeRequest &&
+        (() => {
+          const mergePlan = states[mergeRequest.itemId]?.plan;
+          if (!mergePlan) return null;
+          const { itemId, index } = mergeRequest;
+          const segments = mergePlan.segments;
+          const remaining = segments.length - index - 1;
+          const maxCount = Math.min(remaining, segments.length - 2);
+          if (maxCount < 1) return null;
+          const count = Math.min(Math.max(1, mergeCount), maxCount);
+          const survivor = segments[index];
+          const last = segments[index + count];
+          const suggested = suggestedMergeCount(
+            segments,
+            index,
+            maxCount,
+            mergePlan.episodeDurationsSeconds?.[index] ?? 0,
+          );
+          const runtimeMinutes =
+            survivor.episode?.runtimeMinutes ??
+            (mergePlan.episodeDurationsSeconds?.[index]
+              ? mergePlan.episodeDurationsSeconds[index]! / 60
+              : undefined);
+          const mergedRange = segments.slice(index, index + count + 1);
+          const followingRange = segments.slice(
+            index + count + 1,
+            index + count + 5,
+          );
+          const mergedSeconds = mergedRange.reduce(
+            (total, segment) => total + segmentDurationSeconds(segment),
+            0,
+          );
+          const followingSeconds = followingRange.reduce(
+            (total, segment) => total + segmentDurationSeconds(segment),
+            0,
+          );
+          const previewScale =
+            mergedSeconds + followingSeconds > 0
+              ? 100 / (mergedSeconds + followingSeconds)
+              : 0;
+          const mergedEpisodes = segments
+            .slice(index, index + count + 1)
+            .map((segment) => segment.episode?.tag)
+            .filter((tag): tag is string => Boolean(tag));
+          const skippedIndexes = new Set(mergePlan.skippedSegments ?? []);
+          const survivorSkipped = skippedIndexes.has(survivor.index);
+          const anyActive = segments
+            .slice(index, index + count + 1)
+            .some((segment) => !skippedIndexes.has(segment.index));
+          return (
+            <Modal
+              show
+              onHide={() => setMergeRequest(undefined)}
+              centered
+              size="sm"
+            >
+              <Modal.Header closeButton>
+                <Modal.Title style={{ fontSize: 'var(--hb-font-md)' }}>
+                  Merge segments
+                </Modal.Title>
+              </Modal.Header>
+              <Modal.Body
+                style={{ display: 'grid', gap: 'var(--hb-space-sm)' }}
+              >
+                <strong>
+                  Merge segment {index + 1} with the next {count} segment
+                  {count === 1 ? '' : 's'}?
+                </strong>
+                <Muted style={{ whiteSpace: 'normal' }}>
+                  This removes {count} cut{count === 1 ? '' : 's'} after{' '}
+                  {formatSplitTimecode(survivor.startSeconds, true)}. The
+                  combined segment runs{' '}
+                  {formatSplitTimecode(survivor.startSeconds, true)} –{' '}
+                  {formatSplitTimecode(last.endSeconds, true)} (
+                  {formatDuration(last.endSeconds - survivor.startSeconds)}).
+                </Muted>
+                <MergePreview role="img" aria-label="Merge preview">
+                  {mergedRange.map((segment, offset) => (
+                    <MergePreviewBlock
+                      key={`merged-${segment.index}`}
+                      $merged
+                      style={{
+                        flexGrow: Math.max(
+                          1,
+                          segmentDurationSeconds(segment) * previewScale,
+                        ),
+                      }}
+                      title={`Segment ${index + offset + 1} merges in (${formatDuration(
+                        segmentDurationSeconds(segment),
+                      )})`}
+                    >
+                      {index + offset + 1}
+                    </MergePreviewBlock>
+                  ))}
+                  {followingRange.map((segment, offset) => (
+                    <MergePreviewBlock
+                      key={`following-${segment.index}`}
+                      $merged={false}
+                      style={{
+                        flexGrow: Math.max(
+                          1,
+                          segmentDurationSeconds(segment) * previewScale,
+                        ),
+                      }}
+                      title={`Segment ${index + count + offset + 2} stays separate (${formatDuration(
+                        segmentDurationSeconds(segment),
+                      )})`}
+                    >
+                      {index + count + offset + 2}
+                    </MergePreviewBlock>
+                  ))}
+                </MergePreview>
+                <MergeLegend>
+                  <span>
+                    <MergeSwatch $merged /> Merged into one output (
+                    {formatDuration(mergedSeconds)})
+                  </span>
+                  <span>
+                    <MergeSwatch $merged={false} /> Stays separate
+                    {followingRange.length > 0
+                      ? ` (${formatDuration(followingSeconds)})`
+                      : ''}
+                  </span>
+                </MergeLegend>
+                {runtimeMinutes ? (
+                  <Muted style={{ whiteSpace: 'normal' }}>
+                    {survivor.episode?.tag} is listed at{' '}
+                    {formatDuration(runtimeMinutes * 60)}. Merging{' '}
+                    {suggested + 1} segments fits that runtime
+                    {suggested === count ? ' and is selected' : ''}.
+                  </Muted>
+                ) : (
+                  <Muted style={{ whiteSpace: 'normal' }}>
+                    No runtime is listed for this episode, so the merge length
+                    is not suggested.
+                  </Muted>
+                )}
+                <Form.Label
+                  htmlFor={`merge-count-${itemId}`}
+                  style={{ margin: 0, fontSize: 'var(--hb-font-sm)' }}
+                >
+                  Segments to merge
+                </Form.Label>
+                <Form.Control
+                  id={`merge-count-${itemId}`}
+                  type="number"
+                  min={1}
+                  max={maxCount}
+                  value={count}
+                  onChange={(event) =>
+                    setMergeCount(
+                      Math.min(
+                        maxCount,
+                        Math.max(1, Number(event.target.value) || 1),
+                      ),
+                    )
+                  }
+                  style={{ width: 110 }}
+                />
+                <Muted style={{ whiteSpace: 'normal' }}>
+                  Segment {index + 1} keeps{' '}
+                  {survivor.episode ? survivor.episode.tag : 'no episode'}.
+                  {mergedEpisodes.length > 1
+                    ? ` The merged episodes (${mergedEpisodes.join(', ')}) become one output.`
+                    : ''}{' '}
+                  You can merge up to {maxCount} following segment
+                  {maxCount === 1 ? '' : 's'}.
+                </Muted>
+                {survivorSkipped && anyActive && (
+                  <Muted style={{ whiteSpace: 'normal' }}>
+                    Segment {index + 1} is currently dropped. Merging it with an
+                    active segment makes the combined segment active again.
+                  </Muted>
+                )}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button
+                  variant="ghost"
+                  onClick={() => setMergeRequest(undefined)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="success"
+                  icon="moveDown"
+                  onClick={() => mergeSegments(itemId, index, count)}
+                >
+                  Merge {count + 1} segments
+                </Button>
+              </Modal.Footer>
+            </Modal>
+          );
+        })()}
       {blackRun && (
         <BlackScanRunner
           key={`${blackRun.token}:${blackRun.index}`}

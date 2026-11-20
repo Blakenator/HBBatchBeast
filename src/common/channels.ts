@@ -70,6 +70,8 @@ export enum PROMISE_CHANNEL {
   OrganizeCancelApply = 'ORGANIZE_CANCEL_APPLY',
   OrganizeProbeSplit = 'ORGANIZE_PROBE_SPLIT',
   OrganizeSplitThumbnails = 'ORGANIZE_SPLIT_THUMBNAILS',
+  OrganizeBlackFrames = 'ORGANIZE_BLACK_FRAMES',
+  OrganizeCheckTargets = 'ORGANIZE_CHECK_TARGETS',
   OrganizeEpisodeRuntimes = 'ORGANIZE_EPISODE_RUNTIMES',
   OrganizeFfmpegStatus = 'ORGANIZE_FFMPEG_STATUS',
   OrganizeUndo = 'ORGANIZE_UNDO',
@@ -204,6 +206,16 @@ export interface BackendPromiseApi extends BackendSyncApiType<PROMISE_CHANNEL> {
       exact?: boolean;
     };
     result: { frames: OrganizeSplitThumbnailFrame[] };
+  };
+  [PROMISE_CHANNEL.OrganizeBlackFrames]: {
+    props: { path: string };
+    /** Saved black runs for an unchanged file, or `null` when uncached. */
+    result: { intervals: SplitBlackInterval[] } | null;
+  };
+  [PROMISE_CHANNEL.OrganizeCheckTargets]: {
+    props: { paths: string[] };
+    /** The subset of `paths` that already exists on disk. */
+    result: { existing: string[] };
   };
   [PROMISE_CHANNEL.OrganizeDetectShows]: {
     props: { library: Library };

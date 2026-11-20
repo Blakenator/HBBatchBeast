@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeSplitSegments,
+  applySplitOutputName,
   blackBatchEtaSeconds,
   blackDividerCuts,
   blackDividerSeconds,
@@ -8,7 +10,9 @@ import {
   nearestBlackDivider,
   nearestSplitCandidates,
   pruneSplitPlans,
+  reservedPathsForSplit,
   segmentsForEpisodes,
+  splitOutputCount,
   splitTargetsForItem,
   validateSplitPlan,
   type OrganizeSplitPlan,
@@ -236,6 +240,180 @@ describe('splitTargetsForItem', () => {
     });
     expect(conflicts.join('\n')).toMatch(/already exists/i);
   });
+
+  it('classifies existing, planned and duplicate targets', () => {
+    const item = tvItem();
+    const settings = createOrganizeSettings('tv');
+    const base = splitTargetsForItem(item, splitPlan().segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    });
+    const existing = splitTargetsForItem(item, splitPlan().segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+      existingPaths: [base.targets[0] as string],
+    });
+    expect(existing.targetConflicts).toEqual([
+      expect.objectContaining({
+        segmentIndex: 0,
+        kind: 'exists',
+        overwriteable: true,
+      }),
+    ]);
+
+    const planned = splitTargetsForItem(item, splitPlan().segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+      reservedPaths: [base.targets[1] as string],
+    });
+    expect(planned.targetConflicts).toEqual([
+      expect.objectContaining({
+        segmentIndex: 1,
+        kind: 'planned',
+        overwriteable: false,
+      }),
+    ]);
+
+    const duplicates = segmentsForEpisodes(
+      [episode(1), episode(1)],
+      [0, 1800, 3600],
+    );
+    const duplicate = splitTargetsForItem(item, duplicates, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    });
+    expect(duplicate.targetConflicts).toEqual([
+      expect.objectContaining({
+        segmentIndex: 1,
+        kind: 'duplicate',
+        overwriteable: false,
+      }),
+    ]);
+  });
+
+  it('ignores skipped segments when rendering targets', () => {
+    const item = tvItem();
+    const settings = createOrganizeSettings('tv');
+    const base = splitTargetsForItem(item, splitPlan().segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    });
+    const result = splitTargetsForItem(item, splitPlan().segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+      existingPaths: [base.targets[0] as string],
+      skippedSegments: [0],
+    });
+    expect(result.conflicts).toEqual([]);
+    expect(result.targetConflicts).toEqual([]);
+  });
+
+  it('applies a per-segment filename override and keeps the folder', () => {
+    const item = tvItem();
+    const settings = createOrganizeSettings('tv');
+    const segments = splitPlan().segments;
+    const base = splitTargetsForItem(item, segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    });
+    const result = splitTargetsForItem(
+      item,
+      [{ ...segments[0], outputName: 'Pilot Episode' }, segments[1]],
+      { settings, mediaType: 'tv', caseInsensitive: false },
+    );
+    expect(result.targets[0]?.replace(/\\/g, '/')).toMatch(
+      /Blue Planet II\/Season 01\/Pilot Episode\.mkv$/,
+    );
+    expect(result.defaultTargets?.[0]).toBe(base.targets[0]);
+    expect(result.targetConflicts).toEqual([]);
+  });
+});
+
+describe('applySplitOutputName', () => {
+  it('replaces only the filename and keeps the source extension', () => {
+    expect(
+      applySplitOutputName('/media/tv/Show/S01E01 - One.mkv', 'Pilot'),
+    ).toBe('/media/tv/Show/Pilot.mkv');
+    expect(
+      applySplitOutputName(
+        'C:\\Media\\Show\\S01E01 - One.mkv',
+        'Pilot.custom.mkv',
+      ),
+    ).toBe('C:\\Media\\Show\\Pilot.custom.mkv');
+  });
+
+  it('sanitizes invalid characters and falls back to the default', () => {
+    expect(
+      applySplitOutputName('/media/tv/Show/S01E01.mkv', 'Pilot: Part 1?'),
+    ).toBe('/media/tv/Show/Pilot - Part 1.mkv');
+    expect(applySplitOutputName('/media/tv/Show/S01E01.mkv', '   ')).toBe(
+      '/media/tv/Show/S01E01.mkv',
+    );
+    expect(applySplitOutputName('/media/tv/Show/S01E01.mkv', '..')).toBe(
+      '/media/tv/Show/S01E01.mkv',
+    );
+  });
+});
+
+describe('split skip state', () => {
+  it('counts only active outputs and skips dropped segment checks', () => {
+    const plan = splitPlan({ skippedSegments: [1] });
+    expect(activeSplitSegments(plan)).toHaveLength(1);
+    expect(splitOutputCount([plan])).toBe(1);
+    expect(validateSplitPlan(plan)).toEqual([]);
+  });
+
+  it('rejects a split whose every segment is skipped', () => {
+    const plan = splitPlan({ skippedSegments: [0, 1] });
+    expect(validateSplitPlan(plan).join('\n')).toMatch(
+      /every segment.*skipped/i,
+    );
+  });
+});
+
+describe('reservedPathsForSplit', () => {
+  const first = tvItem();
+  const second = tvItem({
+    id: '/media/tv/Blue Planet II/Blue.Planet.II.S01E03-E04.mkv',
+    sourcePath: '/media/tv/Blue Planet II/Blue.Planet.II.S01E03-E04.mkv',
+    targetPath: '/media/tv/Blue Planet II/Season 01/S01E03-E04.mkv',
+    relativeTarget: 'Blue Planet II/Season 01/S01E03-E04.mkv',
+    sidecars: [
+      {
+        sourcePath: '/media/tv/Blue Planet II/Blue.Planet.II.S01E03-E04.en.srt',
+        targetPath: '/media/tv/Blue Planet II/Season 01/S01E03-E04.en.srt',
+      },
+    ],
+  });
+
+  it('keeps a split row source but releases its superseded rename target', () => {
+    const reserved = reservedPathsForSplit(
+      [first, second],
+      first.id,
+      new Set([second.id]),
+    );
+    expect(reserved).toContain(second.sourcePath);
+    expect(reserved).not.toContain(second.targetPath);
+    expect(reserved).not.toContain(second.sidecars[0]?.targetPath);
+    expect(reserved).toContain(second.sidecars[0]?.sourcePath);
+  });
+
+  it('keeps the rename target of a row that is not split', () => {
+    const reserved = reservedPathsForSplit(
+      [first, second],
+      first.id,
+      new Set(),
+    );
+    expect(reserved).toContain(second.targetPath);
+    expect(reserved).toContain(second.sidecars[0]?.targetPath);
+  });
 });
 
 describe('pruneSplitPlans', () => {
@@ -269,6 +447,12 @@ describe('formatSplitTimecode', () => {
     expect(formatSplitTimecode(65)).toBe('1:05');
     expect(formatSplitTimecode(3725)).toBe('1:02:05');
     expect(formatSplitTimecode(3725.4, true)).toBe('1:02:05.4');
+  });
+
+  it('rounds tenths so fractional nudges stay visible', () => {
+    expect(formatSplitTimecode(1800 + 0.1, true)).toBe('30:00.1');
+    expect(formatSplitTimecode(1800.1 + 0.1, true)).toBe('30:00.2');
+    expect(formatSplitTimecode(1800 - 0.1, true)).toBe('29:59.9');
   });
 });
 
@@ -326,5 +510,22 @@ describe('segmentsForEpisodes', () => {
     expect(segments).toHaveLength(2);
     expect(segments[0].episode?.tag).toBe('S01E01');
     expect(segments[1].episode).toBeUndefined();
+  });
+
+  it('keeps manual output filenames when segment boundaries change', () => {
+    const previous = segmentsForEpisodes(
+      [episode(1), episode(2)],
+      [0, 1800, 3600],
+    ).map((segment, index) => ({
+      ...segment,
+      ...(index === 0 ? { outputName: 'Pilot Episode' } : {}),
+    }));
+    const segments = segmentsForEpisodes(
+      [episode(1), episode(2)],
+      [0, 1500, 3600],
+      previous,
+    );
+    expect(segments[0].outputName).toBe('Pilot Episode');
+    expect(segments[1].outputName).toBeUndefined();
   });
 });

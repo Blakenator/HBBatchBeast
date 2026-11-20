@@ -200,6 +200,46 @@ describe('episode resolution across tag and title states', () => {
   });
 });
 
+describe('year-based seasons', () => {
+  const looneyTunes: TvdbEpisode[] = [
+    {
+      tag: 'S1940E06',
+      name: "The Bear's Tale",
+      seasonNumber: 1940,
+      episodeNumber: 6,
+    },
+    {
+      tag: 'S1940E07',
+      name: "Elmer's Candid Camera",
+      seasonNumber: 1940,
+      episodeNumber: 7,
+    },
+  ];
+
+  it('resolves a year-based tag and title', () => {
+    const result = resolveEpisode(
+      parseMediaFilename(
+        'Looney.Tunes.S1940E07.Elmers.Candid.Camera.mkv',
+      ),
+      looneyTunes,
+      { seriesName: 'Looney Tunes' },
+    );
+    expect(result.episode?.tag).toBe('S1940E07');
+    expect(result.conflict).toBe(false);
+    expect(result.summary).toMatchObject({ tag: 'correct', name: 'correct' });
+  });
+
+  it('resolves a year-based episode by title alone', () => {
+    const result = resolveEpisode(
+      parseMediaFilename("Looney Tunes - Elmer's Candid Camera.mkv"),
+      looneyTunes,
+      { seriesName: 'Looney Tunes' },
+    );
+    expect(result.episode?.tag).toBe('S1940E07');
+    expect(result.summary).toMatchObject({ name: 'correct' });
+  });
+});
+
 describe('episode tiebreakers', () => {
   it('uses the tag to disambiguate identical episode names', () => {
     const result = resolve('Blue.Planet.II.S02E01.One.Ocean.mkv');

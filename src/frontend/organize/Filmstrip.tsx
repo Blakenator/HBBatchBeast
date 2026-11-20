@@ -152,28 +152,39 @@ const LandingLine = styled.div<{ $left: number; $active: boolean }>`
 
 const CandidateTick = styled.button<{ $left: number; $active: boolean }>`
   position: absolute;
+  top: 0;
   bottom: 0;
   left: ${(props) => props.$left}%;
-  width: 5px;
-  height: 16px;
+  width: 14px;
   padding: 0;
   border: 0;
-  border-radius: 2px 2px 0 0;
   transform: translateX(-50%);
-  background: ${(props) =>
-    props.$active ? 'var(--hb-warning)' : 'rgba(255, 255, 255, 0.62)'};
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  background: transparent;
   cursor: pointer;
   z-index: 2;
 
-  &:hover {
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 5px;
+    height: 16px;
+    border-radius: 2px 2px 0 0;
+    transform: translateX(-50%);
+    background: ${(props) =>
+      props.$active ? 'var(--hb-warning)' : 'rgba(255, 255, 255, 0.62)'};
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  }
+
+  &:hover::after {
     height: 24px;
     background: var(--hb-warning);
   }
 
   &:focus-visible {
     outline: 2px solid var(--hb-focus);
-    outline-offset: 1px;
+    outline-offset: -2px;
   }
 `;
 

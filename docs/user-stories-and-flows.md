@@ -278,22 +278,43 @@ movie each file is, so that names are correct without manual research._
   same editor opens for a whole selection with **Split files**, including single-episode rows. The
   split editor estimates cuts from the TVDB runtimes when it can, shows a zoomable frame filmstrip for
   finding title cards, displays the exact frame at the playhead above the strip while scrubbing or
-  moving a cut, and can recenter the pan on the nearest split. Cuts can be added at the playhead,
+  moving a cut, can recenter the pan on the nearest split, and gives every segment card a primary
+  row with **Merge with next**, **Jump to start** and **Jump to end** (both center the pan on that
+  segment's edges); the cut time, filename override, **Split Segment** and **Remove split** controls
+  sit under **Cut, filename & more**, and a segment with an episode already assigned is tinted. Cuts
+  can be added at
+  the playhead,
   snapped to the nearest black run, or generated for every black gap the file contains. The
   black-frame scan reports its percentage on the button and in a progress bar while it decodes the
   file, and both black-frame tools can run across every file at once with a combined progress bar and
-  an ETA. Hovering or focusing a control explains it. Copy mode previews the keyframe the cut will
+  an ETA. Scan results are saved in the app cache, so reopening the editor or the app keeps them:
+  **Restore black frame splits** applies the saved result instantly and **Rescan black frames**
+  replaces it with a fresh scan. Every manual split decision is drafted too, so closing the editor,
+  restarting the app or hit an error restores the cuts, episode assignments, filename overrides,
+  skipped segments, policies and approvals; saving clears that draft. Hovering or focusing a control
+  explains it. Copy mode previews the
+  keyframe the cut will
   actually land on and marks
   the five nearest alternative keyframes as pickable ticks, so a better split point is one click
   away. Each segment's quick episode list is limited to the file's detected range, and
-  **Select other episode** opens the shared **Fix match** dialog for a show or episode outside it. A
-  split must be approved (individually or with **Approve all**) before Save writes it; unapproved
-  edits are discarded and a previously queued split stays queued. An adjusted split shows a pending
-  marker and says **ready for review**, while an approved split is outlined in green. A split can back
+  **Other episode** opens the shared **Fix match** dialog for a show or episode outside it. A
+  segment's output filename can be overridden while its folder still comes from the naming rule, and
+  **Merge with next** removes the following cut (or several cuts, chosen in a confirmation dialog) to
+  join segments again. The dialog pre-selects the merge size that fits the matched episode's runtime
+  and shows a segmented bar of the merged sections next to the following ones. A
+  split must be approved (individually or with **Approve all**) before Save queues it; unapproved
+  edits stay as a draft and a previously queued split stays queued. An adjusted split shows a pending
+  marker and says **ready for review**, while an approved split is outlined in green. Target conflicts
+  are shown inline as episodes change: an existing file can be overwritten, a conflicting segment can
+  be dropped while the rest are written, or the whole split can be skipped. Dropping a segment leaves
+  that episode in the source, then the split's original-file setting (back up, delete or keep) applies
+  as usual. If approved splits still conflict when saving, the error
+  alert keeps the list and offers **Skip conflicts and save approved**, which drops the conflicting
+  segments and saves the remaining approved splits. A split can back
   up, delete or keep
   the original, text subtitle sidecars can be cut per segment, and a queued split runs with the normal
-  renames in one background job with a progress bar and cancellation. Merging episodes is not
-  supported; files are only ever divided.
+  renames in one background job with a progress bar that counts result files (such as 2 of 14) and
+  cancellation. Splits only divide one source file; separate files are never joined.
 - Specials always use `S00`/`Season 00`; generated names strip filesystem-invalid characters.
 - Each review row has a `…` menu with **Fix match** and **Open folder**.
 - Rows whose rendered file and folder names are already identical are skipped automatically.

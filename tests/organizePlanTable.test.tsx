@@ -992,6 +992,21 @@ describe('OrganizePlanTable multi-episode helper', () => {
     expect(screen.queryByText('S01E01.mkv')).toBeNull();
   });
 
+  it('includes queued splits in the Will rename filter', () => {
+    renderHelperTable(
+      new Set(),
+      vi.fn(),
+      [baseItem, multiItem, splitOnlyItem],
+      [splitOnly],
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Will rename' }));
+    expect(screen.getByText('2 of 3 file(s)')).toBeTruthy();
+    expect(screen.getAllByText('S01E01.mkv').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('S01E03-E04.mkv').length).toBeGreaterThan(0);
+    expect(screen.queryByText('S01E01-E02.mkv')).toBeNull();
+  });
+
   it('selects every shown multi-episode file and clears them again', () => {
     const onSelectedChange = vi.fn();
     renderHelperTable(new Set(), onSelectedChange);

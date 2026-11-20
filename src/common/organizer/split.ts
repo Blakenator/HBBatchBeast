@@ -5,7 +5,7 @@ import type {
   TvdbEpisode,
 } from './types';
 import type { OrganizeSettings } from './settings';
-import { organizerComparisonKey } from './paths';
+import { organizerComparisonKey, sanitizePathSegment } from './paths';
 import { previewTargetForItem } from './overrides';
 
 /** How segment boundaries are cut from the source file. */
@@ -35,6 +35,47 @@ export interface SplitSegment {
   cutSeconds?: number;
   /** Rendered target, computed from the naming rules. */
   targetPath?: string;
+  /** Manual filename override; the folder still comes from the naming rules. */
+  outputName?: string;
+}
+
+/** Why a rendered split target cannot be written as planned. */
+export type SplitTargetConflictKind =
+  | 'source'
+  | 'planned'
+  | 'duplicate'
+  | 'exists'
+  | 'missing';
+
+export interface SplitTargetConflict {
+  /** `SplitSegment.index` of the segment whose target conflicts. */
+  segmentIndex: number;
+  targetPath?: string;
+  kind: SplitTargetConflictKind;
+  message: string;
+  /** Only a file already on disk can be replaced by the overwrite option. */
+  overwriteable: boolean;
+}
+
+export interface SplitTargetReport {
+  targets: (string | undefined)[];
+  /** Targets before any manual filename override, used for placeholders. */
+  defaultTargets?: (string | undefined)[];
+  /** Flat messages kept for the existing problem lists and tests. */
+  conflicts: string[];
+  targetConflicts: SplitTargetConflict[];
+}
+
+export interface SplitTargetOptions {
+  settings: OrganizeSettings;
+  mediaType: MediaType;
+  caseInsensitive?: boolean;
+  /** Paths that already exist on disk and therefore cannot be reused. */
+  existingPaths?: string[];
+  /** Paths other plan rows or split segments already claim. */
+  reservedPaths?: string[];
+  /** Segment indexes that will not be written, so they never conflict. */
+  skippedSegments?: number[];
 }
 
 /** A run of black video reported by ffmpeg's `blackdetect` filter. */
@@ -216,6 +257,14 @@ export interface OrganizeSplitPlan {
   originalPolicy: SplitOriginalPolicy;
   sidecarPolicy: SplitSidecarPolicy;
   segments: SplitSegment[];
+  /** Replace files that already exist at a rendered target. */
+  overwrite?: boolean;
+  /**
+   * Segment indexes that are intentionally not written. Used when the target
+   * already exists or another file already covers that episode; the segment
+   * stays in the plan so its time range, order and episode stay stable.
+   */
+  skippedSegments?: number[];
   /** True when the user moved a boundary by hand. */
   edited?: boolean;
   updatedAt: number;
@@ -387,6 +436,7 @@ export function segmentsForEpisodes(
         ? { cutSeconds: existing.cutSeconds }
         : {}),
       ...(episode ? { episode } : {}),
+      ...(existing?.outputName ? { outputName: existing.outputName } : {}),
       ...(existing?.targetPath ? { targetPath: existing.targetPath } : {}),
     };
   });
@@ -398,29 +448,55 @@ export function segmentDurations(plan: OrganizeSplitPlan): number[] {
   );
 }
 
+/**
+ * Applies a manual filename override to a rendered split target. Only the last
+ * path segment changes; the folder from the naming rules stays. A name typed
+ * without an extension inherits the extension the rule produced, so the output
+ * container still matches the source.
+ */
+export function applySplitOutputName(
+  rendered: string,
+  outputName?: string,
+): string {
+  const typed = outputName?.trim();
+  if (!typed) return rendered;
+  const separatorIndex = Math.max(
+    rendered.lastIndexOf('/'),
+    rendered.lastIndexOf('\\'),
+  );
+  const directory = rendered.slice(0, separatorIndex + 1);
+  const defaultName = rendered.slice(separatorIndex + 1);
+  const sanitized = sanitizePathSegment(typed);
+  if (!sanitized) return rendered;
+  if (sanitized.lastIndexOf('.') > 0) return `${directory}${sanitized}`;
+  const dot = defaultName.lastIndexOf('.');
+  const extension = dot > 0 ? defaultName.slice(dot) : '';
+  return `${directory}${sanitized}${extension}`;
+}
+
 function splitTargetsForItemUnchecked(
   item: OrganizePlanItem,
   segments: SplitSegment[],
-  options: {
-    settings: OrganizeSettings;
-    mediaType: MediaType;
-    caseInsensitive?: boolean;
-    /** Paths that already exist on disk and therefore cannot be reused. */
-    existingPaths?: string[];
-  },
-): { targets: (string | undefined)[]; conflicts: string[] } {
+  options: SplitTargetOptions,
+): SplitTargetReport {
   const caseInsensitive =
     options.caseInsensitive ?? options.settings.caseInsensitive ?? false;
-  const used = new Set(
-    [item.sourcePath, ...(options.existingPaths ?? [])].map((path) =>
-      organizerComparisonKey(path, { caseInsensitive }),
-    ),
+  const skipped = new Set(options.skippedSegments ?? []);
+  const keyFor = (value: string) =>
+    organizerComparisonKey(value, { caseInsensitive });
+  const sourceKey = keyFor(item.sourcePath);
+  const existingKeys = new Set(
+    (options.existingPaths ?? []).map((path) => keyFor(path)),
   );
-  const conflicts: string[] = [];
+  const used = new Set([sourceKey, ...existingKeys]);
+  const seen = new Set<string>();
+  const targetConflicts: SplitTargetConflict[] = [];
   const targets: (string | undefined)[] = [];
+  const defaultTargets: (string | undefined)[] = [];
   for (const segment of segments) {
     if (!segment.episode) {
       targets.push(undefined);
+      defaultTargets.push(undefined);
       continue;
     }
     const rendered = previewTargetForItem(
@@ -434,29 +510,67 @@ function splitTargetsForItemUnchecked(
     );
     if (!rendered) {
       targets.push(undefined);
-      conflicts.push(
-        `Segment ${segment.index + 1} has no rendered target path.`,
-      );
-      continue;
-    }
-    const key = organizerComparisonKey(rendered, { caseInsensitive });
-    if (used.has(key)) {
-      if (options.settings.collisions === 'suffix') {
-        const unique = uniqueTargetPath(rendered, used, caseInsensitive);
-        targets.push(unique);
-        used.add(organizerComparisonKey(unique, { caseInsensitive }));
-        continue;
+      defaultTargets.push(undefined);
+      if (!skipped.has(segment.index)) {
+        targetConflicts.push({
+          segmentIndex: segment.index,
+          kind: 'missing',
+          message: `Segment ${segment.index + 1} has no rendered target path.`,
+          overwriteable: false,
+        });
       }
-      targets.push(rendered);
-      conflicts.push(
-        `Target already exists or is used by another file: ${rendered}`,
-      );
       continue;
     }
-    targets.push(rendered);
+    const planned = applySplitOutputName(rendered, segment.outputName);
+    defaultTargets.push(rendered);
+    if (skipped.has(segment.index)) {
+      // Keep the rendered path for display, but a skipped segment is never
+      // written so it must not reserve or block anything.
+      targets.push(planned);
+      continue;
+    }
+    const key = keyFor(planned);
+    if (options.settings.collisions === 'suffix' && used.has(key)) {
+      const unique = uniqueTargetPath(planned, used, caseInsensitive);
+      targets.push(unique);
+      used.add(keyFor(unique));
+      continue;
+    }
+    if (key === sourceKey) {
+      targetConflicts.push({
+        segmentIndex: segment.index,
+        targetPath: planned,
+        kind: 'source',
+        message: `Target is the split's own source file: ${planned}`,
+        overwriteable: false,
+      });
+    } else if (seen.has(key)) {
+      targetConflicts.push({
+        segmentIndex: segment.index,
+        targetPath: planned,
+        kind: 'duplicate',
+        message: `Two segments of this split write the same target: ${planned}`,
+        overwriteable: false,
+      });
+    } else if (existingKeys.has(key)) {
+      targetConflicts.push({
+        segmentIndex: segment.index,
+        targetPath: planned,
+        kind: 'exists',
+        message: `Target already exists: ${planned}`,
+        overwriteable: true,
+      });
+    }
+    targets.push(planned);
     used.add(key);
+    seen.add(key);
   }
-  return { targets, conflicts };
+  return {
+    targets,
+    defaultTargets,
+    conflicts: targetConflicts.map((conflict) => conflict.message),
+    targetConflicts,
+  };
 }
 
 function uniqueTargetPath(
@@ -490,60 +604,121 @@ function uniqueTargetPath(
 export function splitTargetsForItem(
   item: OrganizePlanItem,
   segments: SplitSegment[],
-  options: {
-    settings: OrganizeSettings;
-    mediaType: MediaType;
-    caseInsensitive?: boolean;
-    existingPaths?: string[];
-    reservedPaths?: string[];
-  },
-): { targets: (string | undefined)[]; conflicts: string[] } {
-  const { targets, conflicts } = splitTargetsForItemUnchecked(
-    item,
-    segments,
-    options,
-  );
+  options: SplitTargetOptions,
+): SplitTargetReport {
+  const report = splitTargetsForItemUnchecked(item, segments, options);
   const caseInsensitive =
     options.caseInsensitive ?? options.settings.caseInsensitive ?? false;
+  const skipped = new Set(options.skippedSegments ?? []);
   const reserved = new Set(
     (options.reservedPaths ?? []).map((path) =>
       organizerComparisonKey(path, { caseInsensitive }),
     ),
   );
-  const reservedConflicts = targets.filter(
-    (target): target is string =>
-      Boolean(target) &&
-      reserved.has(organizerComparisonKey(target!, { caseInsensitive })),
-  );
-  if (reservedConflicts.length > 0) {
-    conflicts.push(
-      ...reservedConflicts.map(
-        (target) => `Target is already planned by another row: ${target}`,
-      ),
+  const targetConflicts = [...report.targetConflicts];
+  for (const [position, target] of report.targets.entries()) {
+    if (!target) continue;
+    const segment = segments[position];
+    if (!segment || skipped.has(segment.index)) continue;
+    if (!reserved.has(organizerComparisonKey(target, { caseInsensitive }))) {
+      continue;
+    }
+    const existingIndex = targetConflicts.findIndex(
+      (conflict) =>
+        conflict.segmentIndex === segment.index && conflict.kind === 'exists',
     );
+    if (existingIndex >= 0) {
+      // Another row claims this path, so overwriting the file on disk is not
+      // safe even though it exists.
+      targetConflicts[existingIndex] = {
+        segmentIndex: segment.index,
+        targetPath: target,
+        kind: 'planned',
+        message: `Target is already planned by another row: ${target}`,
+        overwriteable: false,
+      };
+      continue;
+    }
+    if (
+      targetConflicts.some(
+        (conflict) => conflict.segmentIndex === segment.index,
+      )
+    ) {
+      continue;
+    }
+    targetConflicts.push({
+      segmentIndex: segment.index,
+      targetPath: target,
+      kind: 'planned',
+      message: `Target is already planned by another row: ${target}`,
+      overwriteable: false,
+    });
   }
-  return { targets, conflicts };
+  return {
+    targets: report.targets,
+    defaultTargets: report.defaultTargets,
+    conflicts: targetConflicts.map((conflict) => conflict.message),
+    targetConflicts,
+  };
+}
+
+/**
+ * Paths other plan rows claim. A row that is being split no longer renames to
+ * its single row target, so only its source stays reserved; its split outputs
+ * are reserved separately from the split plan itself.
+ */
+export function reservedPathsForSplit(
+  items: readonly OrganizePlanItem[],
+  itemId: string,
+  splitItemIds: ReadonlySet<string>,
+): string[] {
+  return items
+    .filter((candidate) => candidate.id !== itemId)
+    .flatMap((candidate) => {
+      const split = splitItemIds.has(candidate.id);
+      return [
+        candidate.sourcePath,
+        ...(split ? [] : [candidate.targetPath]),
+        ...candidate.sidecars.flatMap((sidecar) =>
+          split
+            ? [sidecar.sourcePath]
+            : [sidecar.sourcePath, sidecar.targetPath],
+        ),
+      ];
+    });
 }
 
 export function withSplitTargets(
   item: OrganizePlanItem,
   segments: SplitSegment[],
-  options: {
-    settings: OrganizeSettings;
-    mediaType: MediaType;
-    caseInsensitive?: boolean;
-    existingPaths?: string[];
-    reservedPaths?: string[];
-  },
-): { segments: SplitSegment[]; conflicts: string[] } {
-  const { targets, conflicts } = splitTargetsForItem(item, segments, options);
+  options: SplitTargetOptions,
+): SplitTargetReport & { segments: SplitSegment[] } {
+  const { targets, defaultTargets, conflicts, targetConflicts } =
+    splitTargetsForItem(item, segments, options);
   return {
     segments: segments.map((segment, index) => ({
       ...segment,
       ...(targets[index] ? { targetPath: targets[index] } : {}),
     })),
     conflicts,
+    targetConflicts,
+    targets,
+    ...(defaultTargets ? { defaultTargets } : {}),
   };
+}
+
+/** True when a segment is intentionally left unwritten. */
+export function isSplitSegmentSkipped(
+  plan: Pick<OrganizeSplitPlan, 'skippedSegments'>,
+  segment: Pick<SplitSegment, 'index'>,
+): boolean {
+  return (plan.skippedSegments ?? []).includes(segment.index);
+}
+
+/** Segments that will produce an output file. */
+export function activeSplitSegments(plan: OrganizeSplitPlan): SplitSegment[] {
+  const skipped = new Set(plan.skippedSegments ?? []);
+  return plan.segments.filter((segment) => !skipped.has(segment.index));
 }
 
 /** Structural problems that block saving or applying a split. */
@@ -567,8 +742,11 @@ export function validateSplitPlan(
   const duration = options.fileDurationSeconds ?? plan.fileDurationSeconds;
   let previousEnd = 0;
   const seenEpisodes = new Set<string>();
+  const skipped = new Set(plan.skippedSegments ?? []);
+  let activeCount = 0;
   for (const [index, segment] of plan.segments.entries()) {
     const label = `Segment ${index + 1}`;
+    const isSkipped = skipped.has(segment.index);
     if (
       !Number.isFinite(segment.startSeconds) ||
       !Number.isFinite(segment.endSeconds)
@@ -582,13 +760,18 @@ export function validateSplitPlan(
     if (segment.endSeconds > duration + tolerance) {
       problems.push(`${label} ends after the file.`);
     }
-    if (segment.endSeconds - segment.startSeconds < MIN_SEGMENT_SECONDS) {
+    if (
+      !isSkipped &&
+      segment.endSeconds - segment.startSeconds < MIN_SEGMENT_SECONDS
+    ) {
       problems.push(`${label} is shorter than ${MIN_SEGMENT_SECONDS} seconds.`);
     }
     if (segment.startSeconds < previousEnd - tolerance) {
       problems.push(`${label} overlaps the previous segment.`);
     }
     previousEnd = segment.endSeconds;
+    if (isSkipped) continue;
+    activeCount += 1;
     if (!segment.episode) {
       problems.push(`${label} has no episode assigned.`);
       continue;
@@ -600,6 +783,9 @@ export function validateSplitPlan(
       );
     }
     seenEpisodes.add(key);
+  }
+  if (activeCount === 0) {
+    problems.push('Every segment of this split is skipped.');
   }
   const last = plan.segments[plan.segments.length - 1];
   if (last && duration > 0 && last.endSeconds < duration - tolerance) {
@@ -630,7 +816,10 @@ export function associationForSegment(
 }
 
 export function splitOutputCount(splits: readonly OrganizeSplitPlan[]): number {
-  return splits.reduce((total, split) => total + split.segments.length, 0);
+  return splits.reduce(
+    (total, split) => total + activeSplitSegments(split).length,
+    0,
+  );
 }
 
 export function findSplitForItem(
@@ -689,13 +878,30 @@ export function formatSplitTimecode(
   withMilliseconds = false,
 ): string {
   const safe = Math.max(0, seconds);
+  if (withMilliseconds) {
+    // Round to tenths before splitting, otherwise floating point can display
+    // 1800.1 as 30:00.0 and make a +0.1s nudge look like it did nothing.
+    const totalTenths = Math.round(safe * 10);
+    const hours = Math.floor(totalTenths / 36000);
+    const minutes = Math.floor((totalTenths % 36000) / 600);
+    const wholeSeconds = Math.floor((totalTenths % 600) / 10);
+    const tenths = totalTenths % 10;
+    const base =
+      hours > 0
+        ? `${hours}:${String(minutes).padStart(2, '0')}:${String(
+            wholeSeconds,
+          ).padStart(2, '0')}`
+        : `${minutes}:${String(wholeSeconds).padStart(2, '0')}`;
+    return `${base}.${tenths}`;
+  }
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const wholeSeconds = Math.floor(safe % 60);
-  const tenths = Math.floor((safe - Math.floor(safe)) * 10);
   const base =
     hours > 0
-      ? `${hours}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')}`
+      ? `${hours}:${String(minutes).padStart(2, '0')}:${String(
+          wholeSeconds,
+        ).padStart(2, '0')}`
       : `${minutes}:${String(wholeSeconds).padStart(2, '0')}`;
-  return withMilliseconds ? `${base}.${tenths}` : base;
+  return base;
 }

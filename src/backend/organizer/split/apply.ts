@@ -8,7 +8,10 @@ import type {
   SplitSegment,
 } from '../../../common/organizer/split';
 import type { AppPaths } from '../../helpers/appPaths';
-import { sanitizePathSegment } from '../../../common/organizer/paths';
+import {
+  isCaseInsensitivePlatform,
+  sanitizePathSegment,
+} from '../../../common/organizer/paths';
 import { findSplitForItem } from '../../../common/organizer/split';
 import {
   buildExactSplitArgs,
@@ -20,9 +23,16 @@ import {
 } from './execute';
 import { findKeyframesNear, readMediaStartTime } from './probe';
 
+export interface SplitRunOutput {
+  targetPath: string;
+  segment: SplitSegment;
+  /** Where a file replaced by the overwrite option was moved for undo. */
+  replacedBackupPath?: string;
+}
+
 export interface SplitRunResult {
   sourcePath: string;
-  outputs: { targetPath: string; segment: SplitSegment }[];
+  outputs: SplitRunOutput[];
   backupPath?: string;
   originalKept: boolean;
   warnings: string[];
@@ -97,6 +107,69 @@ async function removeFileIfPresent(file: string): Promise<void> {
   }
 }
 
+/** Compares absolute paths, case-insensitively on Windows and macOS. */
+function sameFilePath(left: string, right: string): boolean {
+  const caseInsensitive = isCaseInsensitivePlatform(process.platform);
+  const normalize = (value: string) => {
+    const resolved = path.resolve(value);
+    return caseInsensitive ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
+/**
+ * Makes a target writable. Existing files are moved into the backup folder
+ * first so an overwrite can still be undone and a failed write can restore the
+ * previous file.
+ */
+async function prepareTargetForWrite(
+  targetPath: string,
+  sourcePath: string,
+  overwrite: boolean,
+  overwriteRoot: string | undefined,
+  index: number,
+): Promise<string | undefined> {
+  if (sameFilePath(targetPath, sourcePath)) {
+    throw new Error(
+      `A split segment would overwrite its own source: ${targetPath}`,
+    );
+  }
+  if (!fs.existsSync(targetPath)) return undefined;
+  if (!overwrite || !overwriteRoot) {
+    throw new Error(`Target already exists: ${targetPath}`);
+  }
+  await fs.promises.mkdir(overwriteRoot, { recursive: true });
+  const extension = path.extname(targetPath);
+  const base = path.basename(targetPath, extension);
+  const backupPath = path.join(
+    overwriteRoot,
+    `${index}-${randomUUID()}-${sanitizePathSegment(base)}${extension}`,
+  );
+  await move(targetPath, backupPath, { overwrite: false });
+  return backupPath;
+}
+
+async function restoreReplacedTarget(
+  targetPath: string,
+  backupPath: string | undefined,
+): Promise<void> {
+  if (!backupPath) {
+    await removeFileIfPresent(targetPath);
+    return;
+  }
+  try {
+    if (!fs.existsSync(backupPath)) return;
+    await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+    await move(backupPath, targetPath, { overwrite: true });
+  } catch {
+    // Leave the new file in place; the previous file is still in the backup.
+  }
+}
+
+async function rollbackOutput(output: SplitRunOutput): Promise<void> {
+  await restoreReplacedTarget(output.targetPath, output.replacedBackupPath);
+}
+
 /**
  * Plans copy-mode cut timestamps. Cuts the editor already snapped carry their
  * keyframe in `cutSeconds` and are used as-is; only unsnapped cuts are probed.
@@ -149,15 +222,33 @@ export async function executeSplitTask(
 ): Promise<SplitRunResult> {
   if (deps.splitFile) return deps.splitFile(task, deps);
   const { plan, segments } = task;
-  if (segments.some((segment) => !segment.targetPath)) {
+  const skipped = new Set(plan.skippedSegments ?? []);
+  const activeSegments = segments.filter(
+    (segment) => !skipped.has(segment.index),
+  );
+  if (activeSegments.length === 0) {
+    throw new Error('Every segment of this split is skipped.');
+  }
+  if (activeSegments.some((segment) => !segment.targetPath)) {
     throw new Error('Every split segment needs a rendered target path.');
   }
   const run = deps.runFfmpeg ?? runFfmpeg;
   const executable = deps.ffmpegPath;
   const signal = deps.signal;
   const warnings: string[] = [];
-  const outputs: { targetPath: string; segment: SplitSegment }[] = [];
+  const outputs: SplitRunOutput[] = [];
   const sidecarOutputs: string[] = [];
+  /** Existing subtitle files moved aside so Undo can restore them. */
+  const replacedSidecars: { sourcePath: string; backupPath: string }[] = [];
+  const overwrite = plan.overwrite === true;
+  const overwriteRoot = overwrite
+    ? path.join(
+        appPaths.backupDir,
+        'split-overwrites',
+        new Date().toISOString().replace(/[:.]/g, '-'),
+        randomUUID(),
+      )
+    : undefined;
 
   let starts: number[];
   if (plan.cutMode === 'copy') {
@@ -192,7 +283,10 @@ export async function executeSplitTask(
         {
           plan,
           segments,
+          skipped,
           starts,
+          overwrite,
+          ...(overwriteRoot ? { overwriteRoot } : {}),
           run,
           ...(executable ? { executable } : {}),
           ...(signal ? { signal } : {}),
@@ -201,7 +295,9 @@ export async function executeSplitTask(
         outputs,
       );
     } else {
+      let activeIndex = 0;
       for (const [index, segment] of segments.entries()) {
+        if (skipped.has(segment.index)) continue;
         if (signal?.aborted) throw new FfmpegCancelledError();
         const targetPath = segment.targetPath as string;
         const targetDirectory = path.dirname(targetPath);
@@ -229,7 +325,9 @@ export async function executeSplitTask(
                   progress.outTimeSeconds !== undefined
                     ? Math.min(1, progress.outTimeSeconds / (end - start))
                     : 0;
-                deps.onProgress?.((index + fraction) / segments.length);
+                deps.onProgress?.(
+                  (activeIndex + fraction) / activeSegments.length,
+                );
               },
             },
           );
@@ -249,19 +347,54 @@ export async function executeSplitTask(
             `ffmpeg produced no data for ${path.basename(targetPath)}.`,
           );
         }
-        if (fs.existsSync(targetPath)) {
+        let replacedBackupPath: string | undefined;
+        try {
+          replacedBackupPath = await prepareTargetForWrite(
+            targetPath,
+            plan.sourcePath,
+            overwrite,
+            overwriteRoot,
+            index,
+          );
+          await move(tempPath, targetPath, {
+            overwrite: Boolean(replacedBackupPath),
+          });
+        } catch (error) {
           await removeFileIfPresent(tempPath);
-          throw new Error(`Target already exists: ${targetPath}`);
+          if (replacedBackupPath) {
+            await restoreReplacedTarget(targetPath, replacedBackupPath);
+          }
+          throw error;
         }
-        await fs.promises.rename(tempPath, targetPath);
-        outputs.push({ targetPath, segment });
-        deps.onProgress?.((index + 1) / segments.length);
+        outputs.push({
+          targetPath,
+          segment,
+          ...(replacedBackupPath ? { replacedBackupPath } : {}),
+        });
+        activeIndex += 1;
+        deps.onProgress?.(activeIndex / activeSegments.length);
       }
     }
 
-    await applySidecars(task, deps, warnings, { starts, ends }, sidecarOutputs);
+    if (outputs.some((output) => output.replacedBackupPath)) {
+      warnings.push(
+        `${outputs.filter((output) => output.replacedBackupPath).length} existing file(s) were replaced; Undo restores them.`,
+      );
+    }
+
+    await applySidecars(
+      task,
+      deps,
+      warnings,
+      { starts, ends },
+      sidecarOutputs,
+      skipped,
+      overwriteRoot,
+      replacedSidecars,
+    );
     const { backupPath, originalKept, sidecarBackups } =
       await applyOriginalPolicy(task, appPaths);
+    const allSidecarBackups = [...sidecarBackups, ...replacedSidecars];
     return {
       sourcePath: plan.sourcePath,
       outputs,
@@ -269,16 +402,21 @@ export async function executeSplitTask(
       originalKept,
       warnings,
       ...(sidecarOutputs.length > 0 ? { sidecarOutputs } : {}),
-      ...(sidecarBackups.length > 0 ? { sidecarBackups } : {}),
+      ...(allSidecarBackups.length > 0
+        ? { sidecarBackups: allSidecarBackups }
+        : {}),
     };
   } catch (error) {
     // A failed or cancelled split leaves no segment files behind, so retrying
-    // and Undo both start from a clean state.
+    // and Undo both start from a clean state. Overwritten files are restored.
     for (const output of outputs) {
-      await removeFileIfPresent(output.targetPath);
+      await rollbackOutput(output);
     }
     for (const sidecar of sidecarOutputs) {
       await removeFileIfPresent(sidecar);
+    }
+    for (const sidecar of replacedSidecars) {
+      await restoreReplacedTarget(sidecar.sourcePath, sidecar.backupPath);
     }
     throw error;
   }
@@ -287,8 +425,12 @@ export async function executeSplitTask(
 interface CopySegmentOptions {
   plan: OrganizeSplitPlan;
   segments: SplitSegment[];
+  /** Segment indexes that are cut for timeline correctness but not written. */
+  skipped: Set<number>;
   /** Snapped keyframe starts, one per segment. */
   starts: number[];
+  overwrite: boolean;
+  overwriteRoot?: string;
   run: typeof runFfmpeg;
   executable?: string;
   signal?: AbortSignal;
@@ -298,16 +440,20 @@ interface CopySegmentOptions {
 /**
  * Stream-copies every segment in one ffmpeg pass. The segment muxer splits on
  * keyframes without duplicating the previous episode's tail, then each file is
- * moved onto its rendered target.
+ * moved onto its rendered target. Skipped segments are still cut so the
+ * remaining segments keep their exact boundaries, then discarded.
  */
 async function writeCopySegments(
   options: CopySegmentOptions,
-  outputs: { targetPath: string; segment: SplitSegment }[],
+  outputs: SplitRunOutput[],
 ): Promise<void> {
-  const firstTarget = options.segments[0]?.targetPath as string;
+  const activeSegments = options.segments.filter(
+    (segment) => !options.skipped.has(segment.index),
+  );
+  const firstTarget = activeSegments[0]?.targetPath as string;
   const extension = path.extname(firstTarget);
   if (
-    options.segments.some(
+    activeSegments.some(
       (segment) => path.extname(segment.targetPath as string) !== extension,
     )
   ) {
@@ -336,10 +482,11 @@ async function writeCopySegments(
             return;
           }
           options.onProgress?.(
-            Math.min(
-              1,
-              progress.outTimeSeconds / options.plan.fileDurationSeconds,
-            ),
+            0.9 *
+              Math.min(
+                1,
+                progress.outTimeSeconds / options.plan.fileDurationSeconds,
+              ),
           );
         },
       },
@@ -352,7 +499,9 @@ async function writeCopySegments(
         `ffmpeg produced ${produced.length} of ${options.segments.length} segment file(s).`,
       );
     }
+    let written = 0;
     for (const [index, segment] of options.segments.entries()) {
+      if (options.skipped.has(segment.index)) continue;
       const targetPath = segment.targetPath as string;
       const tempPath = path.join(tempDir, produced[index]);
       const stat = await fs.promises.stat(tempPath);
@@ -361,14 +510,33 @@ async function writeCopySegments(
           `ffmpeg produced no data for ${path.basename(targetPath)}.`,
         );
       }
-      if (fs.existsSync(targetPath)) {
-        throw new Error(`Target already exists: ${targetPath}`);
+      let replacedBackupPath: string | undefined;
+      try {
+        replacedBackupPath = await prepareTargetForWrite(
+          targetPath,
+          options.plan.sourcePath,
+          options.overwrite,
+          options.overwriteRoot,
+          index,
+        );
+        await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+        // `move` copies across devices, unlike rename.
+        await move(tempPath, targetPath, {
+          overwrite: Boolean(replacedBackupPath),
+        });
+      } catch (error) {
+        if (replacedBackupPath) {
+          await restoreReplacedTarget(targetPath, replacedBackupPath);
+        }
+        throw error;
       }
-      await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
-      // `move` copies across devices, unlike rename.
-      await move(tempPath, targetPath, { overwrite: false });
-      outputs.push({ targetPath, segment });
-      options.onProgress?.((index + 1) / options.segments.length);
+      outputs.push({
+        targetPath,
+        segment,
+        ...(replacedBackupPath ? { replacedBackupPath } : {}),
+      });
+      written += 1;
+      options.onProgress?.(0.9 + (0.1 * written) / activeSegments.length);
     }
   } finally {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -381,6 +549,9 @@ async function applySidecars(
   warnings: string[],
   times: { starts: number[]; ends: number[] },
   sidecarOutputs: string[],
+  skipped: Set<number>,
+  overwriteRoot: string | undefined,
+  sidecarBackups: { sourcePath: string; backupPath: string }[],
 ): Promise<void> {
   const { item, plan, segments } = task;
   const sidecars = item.sidecars.map((sidecar) => sidecar.sourcePath);
@@ -391,6 +562,33 @@ async function applySidecars(
     );
     return;
   }
+  /**
+   * Makes a subtitle target writable. An existing file is moved into the
+   * overwrite backup so Undo can restore it, matching the media behavior.
+   */
+  const clearTarget = async (
+    target: string,
+    index: number,
+  ): Promise<{ skip: boolean; backupPath?: string }> => {
+    if (!fs.existsSync(target)) return { skip: false };
+    if (!overwriteRoot) return { skip: true };
+    const extension = path.extname(target);
+    const base = path.basename(target, extension);
+    const directory = path.join(overwriteRoot, 'sidecars');
+    await fs.promises.mkdir(directory, { recursive: true });
+    const backupPath = path.join(
+      directory,
+      `${index}-${randomUUID()}-${sanitizePathSegment(base)}${extension}`,
+    );
+    await move(target, backupPath, { overwrite: false });
+    sidecarBackups.push({ sourcePath: target, backupPath });
+    return { skip: false, backupPath };
+  };
+  const warnExisting = (target: string) => {
+    warnings.push(
+      `Existing subtitle ${path.basename(target)} was left in place; enable overwrite to replace it.`,
+    );
+  };
   const run = deps.runFfmpeg ?? runFfmpeg;
   const executable = deps.ffmpegPath;
   for (const sidecar of sidecars) {
@@ -398,9 +596,14 @@ async function applySidecars(
     const suffix = sidecarSuffix(plan.sourcePath, sidecar);
     if (plan.sidecarPolicy === 'copy') {
       for (const segment of segments) {
-        if (!segment.targetPath) continue;
+        if (!segment.targetPath || skipped.has(segment.index)) continue;
         const target = sidecarTarget(segment.targetPath, sidecar, suffix);
         try {
+          const cleared = await clearTarget(target, segment.index);
+          if (cleared.skip) {
+            warnExisting(target);
+            continue;
+          }
           await fs.promises.mkdir(path.dirname(target), { recursive: true });
           await fs.promises.copyFile(sidecar, target);
           sidecarOutputs.push(target);
@@ -424,7 +627,7 @@ async function applySidecars(
       continue;
     }
     for (const [index, segment] of segments.entries()) {
-      if (!segment.targetPath) continue;
+      if (!segment.targetPath || skipped.has(segment.index)) continue;
       const target = sidecarTarget(segment.targetPath, sidecar, suffix);
       const temp = `${target}.hbb-split.tmp`;
       // Cut the subtitles at the same keyframe-snapped starts as the video, so
@@ -435,6 +638,11 @@ async function applySidecars(
         times.ends[index] ?? segment.endSeconds,
       );
       try {
+        const cleared = await clearTarget(target, segment.index);
+        if (cleared.skip) {
+          warnExisting(target);
+          continue;
+        }
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         await run(
           buildSubtitleCutArgs({

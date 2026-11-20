@@ -16,7 +16,9 @@ import {
   createOrganizeSettings,
 } from '../src/common/organizer/settings';
 import { setOverride } from '../src/common/organizer/overrides';
+import { splitTargetsForItem } from '../src/common/organizer/split';
 import type {
+  OrganizeApplyProgress,
   OrganizePlanItem,
   OrganizeScanProgress,
 } from '../src/common/organizer/types';
@@ -93,10 +95,7 @@ function library() {
 describe('organize service', () => {
   it('plans a manual multi-episode match as a range', async () => {
     const lib = library();
-    const multiPath = path.join(
-      showFolder,
-      'Blue.Planet.II.S01E02-E03.mkv',
-    );
+    const multiPath = path.join(showFolder, 'Blue.Planet.II.S01E02-E03.mkv');
     fs.writeFileSync(multiPath, 'video');
     const first = {
       tag: 'S01E02',
@@ -127,10 +126,16 @@ describe('organize service', () => {
       probeMedia: async () => ({}),
     });
 
-    const item = plan.items.find((candidate) => candidate.sourcePath === multiPath);
+    const item = plan.items.find(
+      (candidate) => candidate.sourcePath === multiPath,
+    );
     expect(item?.episodes).toEqual([first, second]);
     expect(item?.targetPath).toBe(
-      path.join(showFolder, 'Season 01', 'S01E02-E03 - The Deep, Coral Reefs.mkv'),
+      path.join(
+        showFolder,
+        'Season 01',
+        'S01E02-E03 - The Deep, Coral Reefs.mkv',
+      ),
     );
   });
 
@@ -166,13 +171,19 @@ describe('organize service', () => {
       probeMedia: async () => ({}),
     });
 
-    const item = plan.items.find((candidate) => candidate.sourcePath === multiPath);
+    const item = plan.items.find(
+      (candidate) => candidate.sourcePath === multiPath,
+    );
     expect(item?.episodes?.map((episode) => episode.tag)).toEqual([
       'S01E01',
       'S01E02',
     ]);
     expect(item?.targetPath).toBe(
-      path.join(showFolder, 'Season 01', 'S01E01-E02 - One Ocean, The Deep.mkv'),
+      path.join(
+        showFolder,
+        'Season 01',
+        'S01E01-E02 - One Ocean, The Deep.mkv',
+      ),
     );
   });
 
@@ -211,7 +222,9 @@ describe('organize service', () => {
       probeMedia: async () => ({}),
     });
 
-    const item = plan.items.find((candidate) => candidate.sourcePath === multiPath);
+    const item = plan.items.find(
+      (candidate) => candidate.sourcePath === multiPath,
+    );
     expect(item?.episodes?.map((episode) => episode.tag)).toEqual([
       'S01E01',
       'S01E02',
@@ -222,7 +235,11 @@ describe('organize service', () => {
       conflict: false,
     });
     expect(item?.targetPath).toBe(
-      path.join(showFolder, 'Season 01', 'S01E01-E02 - One Ocean, The Deep.mkv'),
+      path.join(
+        showFolder,
+        'Season 01',
+        'S01E01-E02 - One Ocean, The Deep.mkv',
+      ),
     );
   });
 
@@ -288,9 +305,7 @@ describe('organize service', () => {
 
     expect(plan.items).toHaveLength(1);
     expect(plan.items[0].action).toBe('rename');
-    expect(plan.warnings.join('\n')).toMatch(
-      /Plex metadata was unavailable/,
-    );
+    expect(plan.warnings.join('\n')).toMatch(/Plex metadata was unavailable/);
   });
 
   it('warns when Plex uses TMDB episode ordering', async () => {
@@ -406,7 +421,9 @@ describe('organize service', () => {
     const undone = await undoLastOrganize(paths);
     expect(undone.reversed).toBe(1);
     expect(
-      fs.existsSync(path.join(showFolder, 'Blue.Planet.II.S01E01.One.Ocean.mkv')),
+      fs.existsSync(
+        path.join(showFolder, 'Blue.Planet.II.S01E01.One.Ocean.mkv'),
+      ),
     ).toBe(true);
   });
 
@@ -542,10 +559,9 @@ describe('organize service', () => {
       'Blue.Planet.II.2017.1080p',
       'Planet Earth (2006)',
     ]);
-    expect(detected.folders.map((folder) => folder.series?.slug).sort()).toEqual([
-      'blue-planet-ii',
-      'planet-earth',
-    ]);
+    expect(
+      detected.folders.map((folder) => folder.series?.slug).sort(),
+    ).toEqual(['blue-planet-ii', 'planet-earth']);
     expect(detected.folders.every((folder) => folder.autoMatched)).toBe(true);
   });
 
@@ -592,15 +608,17 @@ describe('organize service', () => {
       nameReplacements: [{ id: 'r1', find: 'DW', replace: 'Doctor Who' }],
     };
     const lib = {
-      ...emptyLibrary({ id: 'lib-replaced', name: 'Replaced', mediaType: 'tv' }),
+      ...emptyLibrary({
+        id: 'lib-replaced',
+        name: 'Replaced',
+        mediaType: 'tv',
+      }),
       folders: [{ id: 'folder-replaced', source: tvRoot, destination: '' }],
       organize: settings,
     };
     const searchMany = vi.fn(async (queries: string[]) =>
       queries.map((query) => ({
-        series: [
-          { id: '1', slug: 'doctor-who', name: query, year: 2005 },
-        ],
+        series: [{ id: '1', slug: 'doctor-who', name: query, year: 2005 }],
         movies: [],
       })),
     );
@@ -740,11 +758,13 @@ describe('organize service', () => {
       path.join(showA, 'Season 01', 'S01E01.mkv'),
     );
     expect(
-      events.some((event) => event.phase === 'discovering' && event.discovered === 1),
+      events.some(
+        (event) => event.phase === 'discovering' && event.discovered === 1,
+      ),
     ).toBe(true);
-    expect(
-      plan.items.some((item) => item.sourcePath.includes('Show B')),
-    ).toBe(false);
+    expect(plan.items.some((item) => item.sourcePath.includes('Show B'))).toBe(
+      false,
+    );
   });
 
   it('scans only the selected subset of shows', async () => {
@@ -870,9 +890,9 @@ describe('organize service', () => {
     const matching = events.filter((event) => event.phase === 'matching');
     expect(matching[0]).toMatchObject({ completed: 0, total: 1 });
     expect(matching.some((event) => event.completed === 1)).toBe(true);
-    expect(
-      matching.find((event) => event.completed === 1)?.currentShow,
-    ).toBe('Blue Planet II');
+    expect(matching.find((event) => event.completed === 1)?.currentShow).toBe(
+      'Blue Planet II',
+    );
 
     expect(events[events.length - 1]).toMatchObject({
       phase: 'planning',
@@ -999,7 +1019,11 @@ describe('organize scan caching and matching', () => {
     fs.mkdirSync(movieRoot, { recursive: true });
     fs.writeFileSync(path.join(movieRoot, 'First.Movie.2001.mkv'), 'video');
     fs.writeFileSync(path.join(movieRoot, 'Second.Movie.2002.mkv'), 'video');
-    const lib = emptyLibrary({ id: 'movies-1', name: 'Movies', mediaType: 'movies' });
+    const lib = emptyLibrary({
+      id: 'movies-1',
+      name: 'Movies',
+      mediaType: 'movies',
+    });
     lib.folders = [{ id: 'folder-1', source: movieRoot, destination: '' }];
     const client = {
       searchMany: async () => {
@@ -1043,6 +1067,18 @@ describe('split apply', () => {
     name: 'The Deep',
     seasonNumber: 1,
     episodeNumber: 2,
+  };
+  const ep3 = {
+    tag: 'S01E03',
+    name: 'Coral Cities',
+    seasonNumber: 1,
+    episodeNumber: 3,
+  };
+  const ep4 = {
+    tag: 'S01E04',
+    name: 'Big Blue',
+    seasonNumber: 1,
+    episodeNumber: 4,
   };
 
   it('splits a multi-episode row, journals the outputs and undoes them', async () => {
@@ -1144,13 +1180,447 @@ describe('split apply', () => {
     expect(fs.existsSync(multi)).toBe(true);
   });
 
+  it('reports result-file progress instead of source-file tasks', async () => {
+    const multi = path.join(showFolder, 'Blue.Planet.II.S01E01-E04.mkv');
+    fs.writeFileSync(multi, 'multi');
+    const sourceRoot = path.join(root, 'library');
+    const item: OrganizePlanItem = {
+      id: multi,
+      mediaType: 'tv',
+      sourcePath: multi,
+      sourceRoot,
+      sourceRelativePath: 'Blue Planet II/Blue.Planet.II.S01E01-E04.mkv',
+      targetPath: multi,
+      relativeTarget: 'Blue Planet II/Blue.Planet.II.S01E01-E04.mkv',
+      action: 'skip',
+      confidence: 1,
+      reason: 'Already named',
+      sidecars: [],
+      parsed: { title: 'Blue Planet II', cleanTitle: 'blue planet ii' },
+      showFolder: 'Blue Planet II',
+      showSubpath: 'Blue Planet II',
+      seriesName: 'Blue Planet II',
+      episode: ep1,
+      episodes: [ep1, ep2, ep3, ep4],
+    };
+    const plan = {
+      mediaType: 'tv' as const,
+      sourceRoots: [sourceRoot],
+      items: [item],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      warnings: [],
+    };
+    const split = {
+      itemId: multi,
+      sourcePath: multi,
+      fileSize: 5,
+      fileDurationSeconds: 120,
+      episodeDurationsSeconds: [30, 30, 30, 30],
+      estimate: { method: 'tvdb' as const, slackSeconds: 0 },
+      cutMode: 'copy' as const,
+      originalPolicy: 'keep' as const,
+      sidecarPolicy: 'leave' as const,
+      segments: [
+        { index: 0, startSeconds: 0, endSeconds: 30, episode: ep1 },
+        { index: 1, startSeconds: 30, endSeconds: 60, episode: ep2 },
+        { index: 2, startSeconds: 60, endSeconds: 90, episode: ep3 },
+        { index: 3, startSeconds: 90, endSeconds: 120, episode: ep4 },
+      ],
+      updatedAt: 1,
+    };
+    const events: OrganizeApplyProgress[] = [];
+
+    const result = await applyOrganizePlan({
+      plan,
+      splits: [split],
+      settings: createOrganizeSettings('tv'),
+      appPaths: paths,
+      platform: 'linux',
+      updatePlex: false,
+      splitConcurrency: 1,
+      onProgress: (progress) => events.push(progress),
+      deps: {
+        ffmpegStatus: async () => ({ available: true, path: 'ffmpeg' }),
+        splitFile: async (task, deps) => {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          deps.onProgress?.(0.15);
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          const outputs = task.segments.map((segment) => {
+            const targetPath = segment.targetPath as string;
+            fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+            fs.writeFileSync(targetPath, 'segment');
+            return { targetPath, segment };
+          });
+          return {
+            sourcePath: task.plan.sourcePath,
+            outputs,
+            originalKept: true,
+            warnings: [],
+          };
+        },
+      },
+    });
+
+    expect(result.failed).toEqual([]);
+    // A 15% split of one source file into four outputs reads as partial
+    // result-file progress, not one completed source file.
+    expect(
+      events.some(
+        (event) =>
+          event.total === 4 &&
+          event.completed > 0 &&
+          event.completed < 4 &&
+          event.etaMs !== undefined,
+      ),
+    ).toBe(true);
+    expect(events.at(-1)).toMatchObject({ total: 4, completed: 4 });
+  });
+
+  it('applies the original-file policy when a segment is dropped', async () => {
+    const multi = path.join(showFolder, 'Blue.Planet.II.S01E01-E02.mkv');
+    fs.writeFileSync(multi, 'multi');
+    const sourceRoot = path.join(root, 'library');
+    const ep1 = {
+      tag: 'S01E01',
+      name: 'One Ocean',
+      seasonNumber: 1,
+      episodeNumber: 1,
+    };
+    const ep2 = {
+      tag: 'S01E02',
+      name: 'The Deep',
+      seasonNumber: 1,
+      episodeNumber: 2,
+    };
+    const item: OrganizePlanItem = {
+      id: multi,
+      mediaType: 'tv',
+      sourcePath: multi,
+      sourceRoot,
+      sourceRelativePath: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      targetPath: multi,
+      relativeTarget: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      action: 'skip',
+      confidence: 1,
+      reason: 'Already named',
+      sidecars: [],
+      parsed: { title: 'Blue Planet II', cleanTitle: 'blue planet ii' },
+      showFolder: 'Blue Planet II',
+      showSubpath: 'Blue Planet II',
+      seriesName: 'Blue Planet II',
+      episode: ep1,
+      episodes: [ep1, ep2],
+    };
+    const plan = {
+      mediaType: 'tv' as const,
+      sourceRoots: [sourceRoot],
+      items: [item],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      warnings: [],
+    };
+    const split = {
+      itemId: multi,
+      sourcePath: multi,
+      fileSize: 5,
+      fileDurationSeconds: 120,
+      estimate: { method: 'tvdb' as const },
+      cutMode: 'exact' as const,
+      originalPolicy: 'delete' as const,
+      sidecarPolicy: 'leave' as const,
+      segments: [
+        { index: 0, startSeconds: 0, endSeconds: 60, episode: ep1 },
+        { index: 1, startSeconds: 60, endSeconds: 120, episode: ep2 },
+      ],
+      skippedSegments: [1],
+      updatedAt: 1,
+    };
+    const settings = createOrganizeSettings('tv');
+    const targets = splitTargetsForItem(item, split.segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    }).targets;
+    const runFfmpeg = async (args: readonly string[]) => {
+      const output = args[args.length - 1];
+      await fs.promises.mkdir(path.dirname(output), { recursive: true });
+      fs.writeFileSync(output, 'segment');
+      return { stdout: '', stderr: '' };
+    };
+
+    const result = await applyOrganizePlan({
+      plan,
+      splits: [split],
+      settings,
+      appPaths: paths,
+      platform: 'linux',
+      updatePlex: false,
+      deps: {
+        ffmpegStatus: async () => ({ available: true, path: 'ffmpeg' }),
+        runFfmpeg,
+      },
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.splits[0].outputs).toEqual([targets[0] as string]);
+    expect(fs.existsSync(targets[0] as string)).toBe(true);
+    expect(fs.existsSync(targets[1] as string)).toBe(false);
+    expect(fs.existsSync(multi)).toBe(false);
+    expect(readOrganizeJournal(paths)?.splits?.[0].originalPolicy).toBe(
+      'delete',
+    );
+
+    const undone = await undoLastOrganize(paths);
+    expect(undone.warnings.join('\n')).toMatch(/deleted/i);
+    expect(fs.existsSync(targets[0] as string)).toBe(true);
+  });
+
+  it('treats a split row rename target as superseded for other splits', async () => {
+    const multiA = path.join(showFolder, 'Blue.Planet.II.S01E01-E02.mkv');
+    const multiB = path.join(showFolder, 'Blue.Planet.II.S01E03-E04.mkv');
+    fs.writeFileSync(multiA, 'multi-a');
+    fs.writeFileSync(multiB, 'multi-b');
+    const sourceRoot = path.join(root, 'library');
+    const makeEpisode = (number: number) => ({
+      tag: `S01E0${number}`,
+      name: `Episode ${number}`,
+      seasonNumber: 1,
+      episodeNumber: number,
+    });
+    const ep1 = makeEpisode(1);
+    const ep2 = makeEpisode(2);
+    const ep3 = makeEpisode(3);
+    const ep4 = makeEpisode(4);
+    const base = {
+      mediaType: 'tv' as const,
+      sourceRoot,
+      action: 'skip' as const,
+      confidence: 1,
+      reason: 'Already named',
+      sidecars: [],
+      parsed: { title: 'Blue Planet II', cleanTitle: 'blue planet ii' },
+      showFolder: 'Blue Planet II',
+      showSubpath: 'Blue Planet II',
+      seriesName: 'Blue Planet II',
+    };
+    const itemA: OrganizePlanItem = {
+      ...base,
+      id: multiA,
+      sourcePath: multiA,
+      sourceRelativePath: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      targetPath: multiA,
+      relativeTarget: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      episode: ep1,
+      episodes: [ep1, ep2],
+    };
+    const itemB: OrganizePlanItem = {
+      ...base,
+      id: multiB,
+      sourcePath: multiB,
+      sourceRelativePath: 'Blue Planet II/Blue.Planet.II.S01E03-E04.mkv',
+      targetPath: multiB,
+      relativeTarget: 'Blue Planet II/Blue.Planet.II.S01E03-E04.mkv',
+      episode: ep3,
+      episodes: [ep3, ep4],
+    };
+    const settings = createOrganizeSettings('tv');
+    const segmentsFor = (
+      episodes: {
+        tag: string;
+        name: string;
+        seasonNumber: number;
+        episodeNumber: number;
+      }[],
+    ) =>
+      episodes.map((episode, index) => ({
+        index,
+        startSeconds: index * 60,
+        endSeconds: (index + 1) * 60,
+        episode,
+      }));
+    const splitA = {
+      itemId: multiA,
+      sourcePath: multiA,
+      fileSize: fs.statSync(multiA).size,
+      fileDurationSeconds: 120,
+      estimate: { method: 'tvdb' as const },
+      cutMode: 'exact' as const,
+      originalPolicy: 'keep' as const,
+      sidecarPolicy: 'leave' as const,
+      segments: segmentsFor([ep1, ep2]),
+      updatedAt: 1,
+    };
+    const splitB = {
+      ...splitA,
+      itemId: multiB,
+      sourcePath: multiB,
+      fileSize: fs.statSync(multiB).size,
+      segments: segmentsFor([ep3, ep4]),
+    };
+    const targetsA = splitTargetsForItem(itemA, splitA.segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    }).targets;
+    // B still carries its pre-split rename target, which happens to equal A's
+    // first output. It is superseded by B's split and must not block A.
+    const plan = {
+      mediaType: 'tv' as const,
+      sourceRoots: [sourceRoot],
+      items: [
+        itemA,
+        {
+          ...itemB,
+          action: 'conflict',
+          targetPath: targetsA[0] as string,
+          relativeTarget: 'Blue Planet II/Season 01/S01E01.mkv',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      warnings: [],
+    };
+    const runFfmpeg = async (args: readonly string[]) => {
+      const output = args[args.length - 1];
+      await fs.promises.mkdir(path.dirname(output), { recursive: true });
+      fs.writeFileSync(output, 'segment');
+      return { stdout: '', stderr: '' };
+    };
+
+    const result = await applyOrganizePlan({
+      plan,
+      splits: [splitA, splitB],
+      settings,
+      appPaths: paths,
+      platform: 'linux',
+      updatePlex: false,
+      deps: {
+        ffmpegStatus: async () => ({ available: true, path: 'ffmpeg' }),
+        runFfmpeg,
+      },
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.splits).toHaveLength(2);
+  });
+
+  it('replaces an existing target only with the overwrite flag and restores it on undo', async () => {
+    const multi = path.join(showFolder, 'Blue.Planet.II.S01E01-E02.mkv');
+    fs.writeFileSync(multi, 'multi');
+    const sourceRoot = path.join(root, 'library');
+    const ep1 = {
+      tag: 'S01E01',
+      name: 'One Ocean',
+      seasonNumber: 1,
+      episodeNumber: 1,
+    };
+    const ep2 = {
+      tag: 'S01E02',
+      name: 'The Deep',
+      seasonNumber: 1,
+      episodeNumber: 2,
+    };
+    const item: OrganizePlanItem = {
+      id: multi,
+      mediaType: 'tv',
+      sourcePath: multi,
+      sourceRoot,
+      sourceRelativePath: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      targetPath: multi,
+      relativeTarget: 'Blue Planet II/Blue.Planet.II.S01E01-E02.mkv',
+      action: 'skip',
+      confidence: 1,
+      reason: 'Already named',
+      sidecars: [],
+      parsed: { title: 'Blue Planet II', cleanTitle: 'blue planet ii' },
+      showFolder: 'Blue Planet II',
+      showSubpath: 'Blue Planet II',
+      seriesName: 'Blue Planet II',
+      episode: ep1,
+      episodes: [ep1, ep2],
+    };
+    const plan = {
+      mediaType: 'tv' as const,
+      sourceRoots: [sourceRoot],
+      items: [item],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      warnings: [],
+    };
+    const split = {
+      itemId: multi,
+      sourcePath: multi,
+      fileSize: 5,
+      fileDurationSeconds: 120,
+      estimate: { method: 'tvdb' as const },
+      cutMode: 'exact' as const,
+      originalPolicy: 'keep' as const,
+      sidecarPolicy: 'leave' as const,
+      segments: [
+        { index: 0, startSeconds: 0, endSeconds: 60, episode: ep1 },
+        { index: 1, startSeconds: 60, endSeconds: 120, episode: ep2 },
+      ],
+      updatedAt: 1,
+    };
+    const settings = createOrganizeSettings('tv');
+    const targets = splitTargetsForItem(item, split.segments, {
+      settings,
+      mediaType: 'tv',
+      caseInsensitive: false,
+    }).targets;
+    fs.mkdirSync(path.dirname(targets[0] as string), { recursive: true });
+    fs.writeFileSync(targets[0] as string, 'old episode');
+    const runFfmpeg = async (args: readonly string[]) => {
+      const output = args[args.length - 1];
+      await fs.promises.mkdir(path.dirname(output), { recursive: true });
+      fs.writeFileSync(output, 'segment');
+      return { stdout: '', stderr: '' };
+    };
+    const deps = {
+      ffmpegStatus: async () => ({ available: true, path: 'ffmpeg' }),
+      runFfmpeg,
+    };
+
+    await expect(
+      applyOrganizePlan({
+        plan,
+        splits: [split],
+        settings,
+        appPaths: paths,
+        platform: 'linux',
+        updatePlex: false,
+        deps,
+      }),
+    ).rejects.toThrow(/Target already exists/);
+    expect(fs.readFileSync(targets[0] as string, 'utf8')).toBe('old episode');
+
+    const result = await applyOrganizePlan({
+      plan,
+      splits: [{ ...split, overwrite: true }],
+      settings,
+      appPaths: paths,
+      platform: 'linux',
+      updatePlex: false,
+      deps,
+    });
+    expect(result.failed).toEqual([]);
+    expect(fs.readFileSync(targets[0] as string, 'utf8')).toBe('segment');
+    const recorded = readOrganizeJournal(paths)?.splits?.[0];
+    expect(recorded?.outputs[0].replacedBackupPath).toBeTruthy();
+    expect(
+      fs.readFileSync(
+        recorded?.outputs[0].replacedBackupPath as string,
+        'utf8',
+      ),
+    ).toBe('old episode');
+
+    await undoLastOrganize(paths);
+    expect(fs.readFileSync(targets[0] as string, 'utf8')).toBe('old episode');
+    expect(fs.existsSync(targets[1] as string)).toBe(false);
+    expect(fs.existsSync(multi)).toBe(true);
+  });
+
   it('journals split subtitle outputs and restores backed-up sidecars on undo', async () => {
     const multi = path.join(showFolder, 'Blue.Planet.II.S01E01-E02.mkv');
     fs.writeFileSync(multi, 'multi');
-    const subtitle = path.join(
-      showFolder,
-      'Blue.Planet.II.S01E01-E02.en.srt',
-    );
+    const subtitle = path.join(showFolder, 'Blue.Planet.II.S01E01-E02.en.srt');
     fs.writeFileSync(subtitle, 'subtitle');
     const sourceRoot = path.join(root, 'library');
     const item: OrganizePlanItem = {
@@ -1224,9 +1694,9 @@ describe('split apply', () => {
     for (const sidecar of recorded?.sidecarOutputs ?? []) {
       expect(fs.existsSync(sidecar)).toBe(true);
     }
-    expect(
-      fs.existsSync(recorded?.sidecarBackups?.[0].backupPath ?? ''),
-    ).toBe(true);
+    expect(fs.existsSync(recorded?.sidecarBackups?.[0].backupPath ?? '')).toBe(
+      true,
+    );
 
     await undoLastOrganize(paths);
     expect(fs.existsSync(multi)).toBe(true);

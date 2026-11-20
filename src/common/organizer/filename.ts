@@ -50,14 +50,18 @@ const RELEASE_TAGS =
  */
 const TAG_TAIL = String.raw`(?:[.\s_-]*-[.\s_-]*E?\d{1,3}(?!\d)|[._-]?E\d{1,3})*`;
 
-/** `SxxEyy` tag, allowing a separated season (`S01 E02`). */
+/**
+ * `SxxEyy` tag, allowing a separated season (`S01 E02`). Seasons can run to
+ * four digits because some shows (for example Looney Tunes) use year-based
+ * seasons such as `S1940E07`.
+ */
 const SEASON_EPISODE_TAG = new RegExp(
-  String.raw`\bS(\d{1,2})[\s._-]*E(\d{1,3})(${TAG_TAIL})`,
+  String.raw`\bS(\d{1,4})[\s._-]*E(\d{1,3})(${TAG_TAIL})`,
   'i',
 );
 
 const SEASON_EPISODE_TAG_STRIP = new RegExp(
-  String.raw`\bS\d{1,2}[\s._-]*E\d{1,3}${TAG_TAIL}`,
+  String.raw`\bS\d{1,4}[\s._-]*E\d{1,3}${TAG_TAIL}`,
   'gi',
 );
 
@@ -189,8 +193,8 @@ function seasonFromFolders(relativePath: string): number | undefined {
       return 0;
     }
     const match =
-      /(?:^|[\s._-])season[\s._-]*(\d{1,2})(?:$|[\s._-])/i.exec(segments[index]) ??
-      /(?:^|[\s._-])s(\d{1,2})(?:$|[\s._-])/i.exec(segments[index]);
+      /(?:^|[\s._-])season[\s._-]*(\d{1,4})(?:$|[\s._-])/i.exec(segments[index]) ??
+      /(?:^|[\s._-])s(\d{1,4})(?:$|[\s._-])/i.exec(segments[index]);
     if (match) return Number(match[1]);
   }
   return undefined;
@@ -246,7 +250,7 @@ export function parseMediaFilename(
   const special = /\bspecial\s*(\d{1,2})x(\d{1,3})\b/i.exec(base);
   const tag = SEASON_EPISODE_TAG.exec(base);
   const crossed = /\b(\d{1,2})x(\d{1,3})\b/.exec(base);
-  const seasonSentence = /\bseason\s*(\d{1,2}).*?\bepisode\s*(\d{1,3})\b/i.exec(
+  const seasonSentence = /\bseason\s*(\d{1,4}).*?\bepisode\s*(\d{1,3})\b/i.exec(
     base,
   );
   const episodeOnly = /(?:^|[\s._-])E(?:P)?(\d{1,3})(?:$|[\s._-])/i.exec(base);

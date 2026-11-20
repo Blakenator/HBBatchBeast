@@ -32,6 +32,8 @@ const TONES: Record<MatchBand, { color: string; surface: string }> = {
 const Split = styled.button<{ $tone: (typeof TONES)[MatchBand] }>`
   display: inline-flex;
   align-items: stretch;
+  justify-self: start;
+  width: fit-content;
   height: 20px;
   max-width: 100%;
   padding: 0;

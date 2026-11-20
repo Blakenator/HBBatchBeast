@@ -137,7 +137,9 @@ function emptySearchResult(): TvdbSearchResult {
 function parseEpisodeTag(
   tag: string,
 ): { seasonNumber: number; episodeNumber: number } | undefined {
-  const standard = /\bS(\d{1,2})E(\d{1,3})\b/i.exec(tag);
+  // Seasons are usually 1-2 digits, but some long-running shows (for example
+  // Looney Tunes) number seasons by year: S1940E07.
+  const standard = /\bS(\d{1,4})E(\d{1,3})\b/i.exec(tag);
   if (standard) {
     return {
       seasonNumber: Number(standard[1]),
@@ -492,7 +494,9 @@ export class TvdbClient {
     const trimmed = slug.trim();
     if (!trimmed) return [];
     // v2 adds episode ids used by the split editor's runtime lookups.
-    const cacheKey = `episodes:v2:${trimmed.toLowerCase()}`;
+    // v3 accepts year-based season tags (S1940E07), so old caches that dropped
+    // those episodes must be refetched.
+    const cacheKey = `episodes:v3:${trimmed.toLowerCase()}`;
     const cached = this.readCache<TvdbEpisode[]>(cacheKey, this.episodeTtlMs);
     if (cached) return cached;
     const existing = this.episodeRequests.get(cacheKey);

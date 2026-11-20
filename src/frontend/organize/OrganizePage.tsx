@@ -795,6 +795,19 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
   );
 
   /**
+   * A split replaces its row's rename, so a row-level target conflict no
+   * longer blocks the apply once the row has a queued split. Match-review
+   * conflicts are handled separately.
+   */
+  const hasBlockingConflict = useMemo(
+    () =>
+      (plan?.items ?? []).some(
+        (item) => item.action === 'conflict' && !splitItemIds.has(item.id),
+      ),
+    [plan, splitItemIds],
+  );
+
+  /**
    * A queued split is an explicit action, so its row joins the apply even when
    * the plan action is `skip` ("Already named") or the row is unchecked.
    */
@@ -827,7 +840,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
     selectedItems.length - selectedSplitCount + splitOutputs;
 
   const beginApply = async () => {
-    if (plan?.items.some((item) => item.action === 'conflict')) return;
+    if (hasBlockingConflict) return;
     const items = selectedItems;
     if (items.length === 0) return;
     if (updatePlex && plex?.dbPath) {
@@ -1975,7 +1988,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 scanning ||
                 applying ||
                 busy !== undefined ||
-                (plan?.items.some((item) => item.action === 'conflict') ?? false)
+                hasBlockingConflict
               }
             >
               Apply{' '}
@@ -2074,7 +2087,7 @@ export const OrganizePage: React.FC<OrganizePageProps> = ({
                 onSplit={openSplitEditor}
                 onRemoveSplit={removeSplit}
               />
-              {plan.items.some((item) => item.action === 'conflict') && (
+              {hasBlockingConflict && (
                 <Alert variant="danger" className="mb-0">
                   Resolve the conflicts or change the collision policy before
                   applying.

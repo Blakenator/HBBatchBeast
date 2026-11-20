@@ -23,6 +23,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { toast } from 'react-toastify';
 import {
   PROMISE_CHANNEL,
+  activeSplitSegments,
   diffNameSegments,
   diffTargetName,
   episodeSelectionTag,
@@ -582,6 +583,7 @@ function isMultiEpisode(item: OrganizePlanItem): boolean {
 function groupStatsFor(
   items: OrganizePlanItem[],
   confidenceThreshold: number,
+  splitItemIds: ReadonlySet<string>,
 ): PlanGroupStats {
   const stats: PlanGroupStats = {
     total: items.length,
@@ -591,7 +593,12 @@ function groupStatsFor(
     low: 0,
   };
   for (const item of items) {
-    stats[item.action] += 1;
+    if (splitItemIds.has(item.id)) {
+      // A queued split supersedes the row's own action and writes new files.
+      stats.rename += 1;
+    } else {
+      stats[item.action] += 1;
+    }
     if (needsConflictReview(item, confidenceThreshold)) stats.conflict += 1;
     if (
       !item.folderOnly &&
@@ -968,12 +975,19 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     () => new Map(splits.map((split) => [split.itemId, split])),
     [splits],
   );
+  const splitIds = useMemo(() => new Set(splitById.keys()), [splitById]);
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const normalizedNeedle = titleComparisonKey(search);
     return plan.items.filter((item) => {
-      if (filter === 'rename' && item.action !== 'rename') return false;
+      if (
+        filter === 'rename' &&
+        item.action !== 'rename' &&
+        !splitById.has(item.id)
+      ) {
+        return false;
+      }
       if (filter === 'skip' && item.action !== 'skip') return false;
       if (
         filter === 'multi' &&
@@ -984,8 +998,8 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
       }
       if (
         filter === 'conflict' &&
-        item.action !== 'conflict' &&
-        !needsConflictReview(item, settings.confidenceThreshold)
+        !needsConflictReview(item, settings.confidenceThreshold) &&
+        (item.action !== 'conflict' || splitById.has(item.id))
       ) {
         return false;
       }
@@ -1259,18 +1273,20 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
             const item = info.row.original;
             const split = splitById.get(item.id);
             if (split) {
+              const active = activeSplitSegments(split);
+              const skipped = split.segments.length - active.length;
               return (
                 <StateChip
                   $color="var(--hb-success)"
-                  title={`Split into ${split.segments.length} episodes: ${split.segments
+                  title={`Split into ${active.length} episodes: ${active
                     .map(
                       (segment) =>
                         segment.episode?.tag ?? `segment ${segment.index + 1}`,
                     )
-                    .join(', ')}`}
+                    .join(', ')}${skipped > 0 ? ` (${skipped} skipped)` : ''}`}
                 >
                   <Icon name="split" size="xs" />
-                  Split ×{split.segments.length}
+                  Split ×{active.length}
                 </StateChip>
               );
             }
@@ -1619,6 +1635,7 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
     const stats = groupStatsFor(
       entry.group.rows.map((row) => row.original),
       settings.confidenceThreshold,
+      splitIds,
     );
     const label = `${entry.group.name}${
       entry.group.year ? ` (${entry.group.year})` : ''
@@ -1743,7 +1760,7 @@ export const OrganizePlanTable: React.FC<OrganizePlanTableProps> = ({
       <BodyRow
         key={row.id}
         role="row"
-        $conflict={item.action === 'conflict'}
+        $conflict={item.action === 'conflict' && !splitById.has(item.id)}
         style={{
           transform: `translateY(${offsetY}px)`,
           gridTemplateColumns: gridTemplate,

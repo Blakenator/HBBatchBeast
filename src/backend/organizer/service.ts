@@ -51,11 +51,15 @@ import {
   type PlannedFileInput,
   type OrganizeSplitPlan,
   associationForSegment,
+  reservedPathsForSplit,
   validateSplitPlan,
   withSplitTargets,
 } from '../../common/organizer';
 import { expandHomePath, isPathInside } from '../../common/pathUtils';
-import { SIDECAR_EXTENSIONS, isMediaExtension } from '../../common/organizer/filename';
+import {
+  SIDECAR_EXTENSIONS,
+  isMediaExtension,
+} from '../../common/organizer/filename';
 import { TvdbClient } from './tvdb/client';
 import { mapWithConcurrency, mapWithConcurrencyUntil } from './concurrency';
 import { ffmpegStatus } from '../helpers/ffmpeg';
@@ -163,7 +167,10 @@ function rememberScanCache(cache: OrganizeScanCache): void {
   const entries = [...scanCaches.values()].sort(
     (left, right) => left.createdAt - right.createdAt,
   );
-  for (const stale of entries.slice(0, Math.max(0, entries.length - MAX_SCAN_CACHES))) {
+  for (const stale of entries.slice(
+    0,
+    Math.max(0, entries.length - MAX_SCAN_CACHES),
+  )) {
     scanCaches.delete(stale.id);
   }
 }
@@ -210,6 +217,8 @@ export interface OrganizeJournalSplit {
     episodeTag?: string;
     startSeconds: number;
     endSeconds: number;
+    /** Existing file moved aside for an overwrite; restored on undo. */
+    replacedBackupPath?: string;
   }[];
   backupPath?: string;
   originalPolicy: OrganizeSplitPlan['originalPolicy'];
@@ -243,7 +252,11 @@ function pendingPath(appPaths: AppPaths): string {
 
 function writeJournal(appPaths: AppPaths, journal: OrganizeJournal): void {
   fs.mkdirSync(appPaths.configDir, { recursive: true });
-  fs.writeFileSync(journalPath(appPaths), JSON.stringify(journal, null, 2), 'utf8');
+  fs.writeFileSync(
+    journalPath(appPaths),
+    JSON.stringify(journal, null, 2),
+    'utf8',
+  );
 }
 
 export function readOrganizeJournal(
@@ -295,9 +308,7 @@ function associationFromEpisode(episode: PlexEpisodeFile): PlexAssociation {
     ...(episode.airDate ? { airDate: episode.airDate } : {}),
     ...(episode.durationMs ? { durationMs: episode.durationMs } : {}),
     ...(episode.directoryId ? { directoryId: episode.directoryId } : {}),
-    ...(episode.directoryPath
-      ? { directoryPath: episode.directoryPath }
-      : {}),
+    ...(episode.directoryPath ? { directoryPath: episode.directoryPath } : {}),
     watchCount: episode.watchCount,
     watchStates: episode.watchStates,
   };
@@ -379,7 +390,11 @@ async function walkDirectory(
       continue;
     }
     if (!entry.isFile()) continue;
-    if (entry.name === '.DS_Store' || entry.name === 'Thumbs.db' || entry.name === 'desktop.ini') {
+    if (
+      entry.name === '.DS_Store' ||
+      entry.name === 'Thumbs.db' ||
+      entry.name === 'desktop.ini'
+    ) {
       continue;
     }
     if (entry.name.startsWith('._')) continue;
@@ -458,7 +473,12 @@ async function scanLibraryFiles(
   home: string,
   onDiscovered?: (discovered: number, currentFile: string) => void,
   scope?: OrganizeScanScope[],
-): Promise<{ files: OrganizeSourceFile[]; warnings: string[]; roots: string[] }> {  const files: OrganizeSourceFile[] = [];
+): Promise<{
+  files: OrganizeSourceFile[];
+  warnings: string[];
+  roots: string[];
+}> {
+  const files: OrganizeSourceFile[] = [];
   const warnings: string[] = [];
   const roots: string[] = [];
   const selected = scope && scope.length > 0 ? scope : undefined;
@@ -621,7 +641,11 @@ export async function detectShowFolders(options: {
     const shows: { subpath: string; name: string; mediaCount: number }[] = [];
     const direct = await countMediaFiles(root, false);
     if (direct > 0) {
-      shows.push({ subpath: '', name: path.basename(root), mediaCount: direct });
+      shows.push({
+        subpath: '',
+        name: path.basename(root),
+        mediaCount: direct,
+      });
     } else {
       let directoryEntries: import('fs').Dirent[];
       try {
@@ -813,7 +837,9 @@ async function buildTvPlan(
   const warnings: string[] = [];
   const failureReasons = new Map<string, number>();
   const episodeCache = new Map<string, Promise<TvdbEpisode[]>>();
-  const plannedSlots: (PlannedFileInput | undefined)[] = new Array(files.length);
+  const plannedSlots: (PlannedFileInput | undefined)[] = new Array(
+    files.length,
+  );
   let plannedCount = 0;
   let notInLibrary = 0;
   const fileDone = (file: OrganizeSourceFile, show?: string) => {
@@ -873,7 +899,10 @@ async function buildTvPlan(
     }
     const showSubpath = mapping?.subpath ?? '';
     const showFolder = showSubpath
-      ? showSubpath.split(/[\\/]+/).filter(Boolean).pop()
+      ? showSubpath
+          .split(/[\\/]+/)
+          .filter(Boolean)
+          .pop()
       : path.basename(folderRoot);
     prepared.push({
       index,
@@ -926,9 +955,7 @@ async function buildTvPlan(
     // only when the joined titles clearly beat the first one.
     const tagRange = episodesForRange(episodes, resolution.episode, parsed);
     const detectedRun =
-      manualEpisodes ||
-      tagRange ||
-      !resolution.episode
+      manualEpisodes || tagRange || !resolution.episode
         ? undefined
         : detectEpisodeRunFromName(parsed, episodes, {
             seriesName: series.name,
@@ -987,8 +1014,8 @@ async function buildTvPlan(
   const plan = buildOrganizePlan({
     mediaType: 'tv',
     sourceRoots: roots,
-    files: plannedSlots.filter(
-      (entry): entry is PlannedFileInput => Boolean(entry),
+    files: plannedSlots.filter((entry): entry is PlannedFileInput =>
+      Boolean(entry),
     ),
     rules: settings.namingRules,
     confidenceThreshold: settings.confidenceThreshold,
@@ -1149,9 +1176,7 @@ async function buildMoviePlan(
       confidence: best?.confidence ?? 0,
       reason: best?.reason ?? 'No matching TVDB movie',
       ...(best?.movie ? { movie: best.movie } : {}),
-      ...(input.plexFile
-        ? { plex: associationFromMovie(input.plexFile) }
-        : {}),
+      ...(input.plexFile ? { plex: associationFromMovie(input.plexFile) } : {}),
     } satisfies PlannedFileInput;
   });
 
@@ -1219,7 +1244,8 @@ export async function buildOrganizePlanForLibrary(
   options: OrganizePlanOptions,
 ): Promise<OrganizePlan> {
   const platform = options.platform ?? process.platform;
-  const home = options.home ?? process.env.HOME ?? process.env.USERPROFILE ?? '';
+  const home =
+    options.home ?? process.env.HOME ?? process.env.USERPROFILE ?? '';
   const settings = resolveOrganizeSettings(
     options.settings ?? options.library.organize,
     options.library.mediaType,
@@ -1473,7 +1499,9 @@ async function reverseMoves(moves: OrganizeJournalMove[]): Promise<void> {
     for (const sidecar of [...moveEntry.sidecars].reverse()) {
       try {
         if (fs.existsSync(sidecar.targetPath)) {
-          await move(sidecar.targetPath, sidecar.sourcePath, { overwrite: false });
+          await move(sidecar.targetPath, sidecar.sourcePath, {
+            overwrite: false,
+          });
         }
       } catch {
         // Best-effort recovery; the journal still records the original move.
@@ -1481,7 +1509,9 @@ async function reverseMoves(moves: OrganizeJournalMove[]): Promise<void> {
     }
     try {
       if (fs.existsSync(moveEntry.targetPath)) {
-        await move(moveEntry.targetPath, moveEntry.sourcePath, { overwrite: false });
+        await move(moveEntry.targetPath, moveEntry.sourcePath, {
+          overwrite: false,
+        });
       }
     } catch {
       // Best-effort recovery.
@@ -1523,6 +1553,34 @@ async function reverseSplits(
       );
       continue;
     }
+    for (const output of split.outputs) {
+      try {
+        if (
+          output.replacedBackupPath &&
+          fs.existsSync(output.replacedBackupPath)
+        ) {
+          await fs.promises.mkdir(path.dirname(output.targetPath), {
+            recursive: true,
+          });
+          await move(output.replacedBackupPath, output.targetPath, {
+            overwrite: true,
+          });
+        } else {
+          await fs.promises.rm(output.targetPath, { force: true });
+        }
+      } catch {
+        // Best effort.
+      }
+    }
+    for (const sidecar of split.sidecarOutputs ?? []) {
+      try {
+        await fs.promises.rm(sidecar, { force: true });
+      } catch {
+        // Best effort.
+      }
+    }
+    // Restore backed-up subtitles last: a replaced subtitle may share its path
+    // with one of the outputs that was just removed.
     for (const sidecar of split.sidecarBackups ?? []) {
       try {
         if (!fs.existsSync(sidecar.backupPath)) continue;
@@ -1538,20 +1596,6 @@ async function reverseSplits(
             error instanceof Error ? error.message : String(error)
           }`,
         );
-      }
-    }
-    for (const output of split.outputs) {
-      try {
-        await fs.promises.rm(output.targetPath, { force: true });
-      } catch {
-        // Best effort.
-      }
-    }
-    for (const sidecar of split.sidecarOutputs ?? []) {
-      try {
-        await fs.promises.rm(sidecar, { force: true });
-      } catch {
-        // Best effort.
       }
     }
     reversed += 1;
@@ -1610,14 +1654,18 @@ function ensureSplitDiskSpace(
   };
   for (const task of tasks) {
     const size = task.plan.fileSize;
+    const skipped = new Set(task.plan.skippedSegments ?? []);
+    const activeSegments = task.segments.filter(
+      (segment) => !skipped.has(segment.index),
+    );
     const directories = new Set(
-      task.segments.flatMap((segment) =>
+      activeSegments.flatMap((segment) =>
         segment.targetPath ? [path.dirname(segment.targetPath)] : [],
       ),
     );
     const share = size / Math.max(1, directories.size);
     for (const directory of directories) add(directory, share);
-    if (task.plan.originalPolicy === 'backup') {
+    if (task.plan.originalPolicy === 'backup' && skipped.size === 0) {
       add(appPaths.backupDir, size);
     }
   }
@@ -1664,6 +1712,7 @@ function resolveSplitTasks(
   if (splits.length === 0) return [];
   const byId = new Map(options.plan.items.map((item) => [item.id, item]));
   const splitItemIds = new Set<string>();
+  const queuedSplitIds = new Set(splits.map((split) => split.itemId));
   const usedTargets = new Set<string>();
   const tasks: SplitTask[] = [];
   for (const split of splits) {
@@ -1690,36 +1739,46 @@ function resolveSplitTasks(
         `The source file changed since the split was planned: ${split.sourcePath}. Open the split editor again.`,
       );
     }
-    const reservedPaths = options.plan.items
-      .filter((candidate) => candidate.id !== item.id)
-      .flatMap((candidate) => [
-        candidate.sourcePath,
-        candidate.targetPath,
-        ...candidate.sidecars.flatMap((sidecar) => [
-          sidecar.sourcePath,
-          sidecar.targetPath,
-        ]),
-      ]);
+    const reservedPaths = reservedPathsForSplit(
+      options.plan.items,
+      item.id,
+      queuedSplitIds,
+    );
     const rendered = withSplitTargets(item, split.segments, {
       settings: options.settings,
       mediaType: options.plan.mediaType,
       caseInsensitive,
       reservedPaths,
+      skippedSegments: split.skippedSegments,
     });
     const conflicts = [...rendered.conflicts];
+    const skipped = new Set(split.skippedSegments ?? []);
+    const activeSegments = rendered.segments.filter(
+      (segment) => !skipped.has(segment.index),
+    );
+    if (activeSegments.length === 0) {
+      throw new Error(`${split.sourcePath}:\nEvery segment is skipped.`);
+    }
     const keyedSegments = rendered.segments.map((segment) => {
+      if (skipped.has(segment.index)) {
+        // Kept in the task so copy-mode cut times and subtitles stay aligned;
+        // executeSplitTask filters it out when writing files.
+        return segment;
+      }
       if (!segment.targetPath) {
         conflicts.push(`Segment ${segment.index + 1} has no target path.`);
         return segment;
       }
-      const key = organizerComparisonKey(segment.targetPath, { caseInsensitive });
+      const key = organizerComparisonKey(segment.targetPath, {
+        caseInsensitive,
+      });
       if (usedTargets.has(key)) {
         conflicts.push(
           `Two queued splits write the same target: ${segment.targetPath}`,
         );
       }
       usedTargets.add(key);
-      if (fs.existsSync(segment.targetPath)) {
+      if (fs.existsSync(segment.targetPath) && split.overwrite !== true) {
         conflicts.push(`Target already exists: ${segment.targetPath}`);
       }
       return segment;
@@ -1780,7 +1839,14 @@ export async function applyOrganizePlan(
   options: OrganizeApplyOptions,
 ): Promise<OrganizeApplyResult> {
   const platform = options.platform ?? process.platform;
-  if (options.plan.items.some((item) => item.action === 'conflict')) {
+  const queuedSplitIds = new Set(
+    (options.splits ?? []).map((split) => split.itemId),
+  );
+  if (
+    options.plan.items.some(
+      (item) => item.action === 'conflict' && !queuedSplitIds.has(item.id),
+    )
+  ) {
     throw new Error('Resolve the target path conflicts before applying.');
   }
   const caseInsensitive =
@@ -1836,10 +1902,7 @@ export async function applyOrganizePlan(
       );
     }
     const resolvedDb = path.resolve(
-      expandHomePath(
-        dbPath,
-        process.env.HOME ?? process.env.USERPROFILE ?? '',
-      ),
+      expandHomePath(dbPath, process.env.HOME ?? process.env.USERPROFILE ?? ''),
     );
     const exists = fs.existsSync(resolvedDb);
     const user = plexUser();
@@ -1854,9 +1917,7 @@ export async function applyOrganizePlan(
         running: true,
         serviceKind: status.kind,
       });
-      throw new Error(
-        `Plex Media Server is running.\n\n${remediation.script}`,
-      );
+      throw new Error(`Plex Media Server is running.\n\n${remediation.script}`);
     }
     const access = plexAccessState(platform, resolvedDb);
     if (!access.writable) {
@@ -1892,14 +1953,20 @@ export async function applyOrganizePlan(
   }
 
   const startedAt = Date.now();
-  const totalTasks = renameItems.length + splitTasks.length;
-  const totalWeight =
-    renameItems.length +
-    splitTasks.reduce((total, task) => total + Math.max(2, task.segments.length), 0);
+  const splitOutputs = new Map<SplitTask, number>();
+  let totalOutputs = renameItems.length;
+  for (const task of splitTasks) {
+    const skipped = new Set(task.plan.skippedSegments ?? []);
+    const outputs = task.plan.segments.filter(
+      (segment) => !skipped.has(segment.index),
+    ).length;
+    splitOutputs.set(task, outputs);
+    totalOutputs += outputs;
+  }
   const splitTotal = splitTasks.length;
-  let completed = 0;
+  let completedOutputs = 0;
+  let currentOutputs = 0;
   let splitCompleted = 0;
-  let doneWeight = 0;
   let lastReport = 0;
   let currentPath: string | undefined;
   let currentKind: 'rename' | 'split' | undefined;
@@ -1912,15 +1979,25 @@ export async function applyOrganizePlan(
     if (!force && now - lastReport < 100) return;
     lastReport = now;
     const elapsedMs = now - startedAt;
-    const weighted = doneWeight + (currentPercent ? 1 : 0);
+    // Count the split in flight by its output-file share, so one source file
+    // splitting into 14 reads as 2 of 14 rather than 1 of 1.
+    const partial =
+      currentKind === 'split' && currentPercent !== undefined
+        ? Math.min(currentOutputs, currentPercent * currentOutputs)
+        : 0;
+    const outputProgress = Math.min(totalOutputs, completedOutputs + partial);
     const etaMs =
-      weighted > 0 && totalWeight > 0
-        ? Math.round((elapsedMs / weighted) * Math.max(0, totalWeight - weighted))
-        : undefined;
+      outputProgress > 0 && totalOutputs > outputProgress
+        ? Math.round(
+            (elapsedMs / outputProgress) * (totalOutputs - outputProgress),
+          )
+        : outputProgress >= totalOutputs && totalOutputs > 0
+          ? 0
+          : undefined;
     options.onProgress({
       phase: phaseValue,
-      completed,
-      total: totalTasks,
+      completed: Math.min(totalOutputs, outputProgress),
+      total: totalOutputs,
       ...(currentPath ? { currentPath } : {}),
       ...(currentKind ? { currentKind } : {}),
       ...(currentPercent !== undefined ? { currentPercent } : {}),
@@ -1946,7 +2023,9 @@ export async function applyOrganizePlan(
     currentPercent = undefined;
     progress(true);
     try {
-      await fs.promises.mkdir(path.dirname(item.targetPath), { recursive: true });
+      await fs.promises.mkdir(path.dirname(item.targetPath), {
+        recursive: true,
+      });
       if (item.caseOnly) {
         const temp = `${item.targetPath}.hbb-case-${Date.now()}`;
         await move(item.sourcePath, temp, { overwrite: false });
@@ -1984,8 +2063,7 @@ export async function applyOrganizePlan(
         message: error instanceof Error ? error.message : String(error),
       });
     } finally {
-      completed += 1;
-      doneWeight += 1;
+      completedOutputs += 1;
       progress(true);
     }
   };
@@ -1997,6 +2075,7 @@ export async function applyOrganizePlan(
     currentPath = task.plan.sourcePath;
     currentKind = 'split';
     currentPercent = 0;
+    currentOutputs = splitOutputs.get(task) ?? 1;
     progress(true);
     const startedSplitAt = new Date().toISOString();
     try {
@@ -2009,7 +2088,10 @@ export async function applyOrganizePlan(
           : {}),
         ...(signal ? { signal } : {}),
         onProgress: (fraction) => {
-          currentPercent = Math.max(0, Math.min(1, fraction));
+          currentPercent = Math.max(
+            currentPercent ?? 0,
+            Math.max(0, Math.min(1, fraction)),
+          );
           progress();
         },
         ...(options.deps?.splitFile
@@ -2017,7 +2099,9 @@ export async function applyOrganizePlan(
           : {}),
       });
       successfulSplits.push({ task, result: splitResult });
-      result.renamed.push(...splitResult.outputs.map((output) => output.targetPath));
+      result.renamed.push(
+        ...splitResult.outputs.map((output) => output.targetPath),
+      );
       result.splits.push({
         sourcePath: splitResult.sourcePath,
         outputs: splitResult.outputs.map((output) => output.targetPath),
@@ -2037,6 +2121,9 @@ export async function applyOrganizePlan(
             : {}),
           startSeconds: output.segment.startSeconds,
           endSeconds: output.segment.endSeconds,
+          ...(output.replacedBackupPath
+            ? { replacedBackupPath: output.replacedBackupPath }
+            : {}),
         })),
         ...(splitResult.backupPath
           ? { backupPath: splitResult.backupPath }
@@ -2062,10 +2149,10 @@ export async function applyOrganizePlan(
         });
       }
     } finally {
-      completed += 1;
+      completedOutputs += currentOutputs;
       splitCompleted += 1;
-      doneWeight += Math.max(2, task.segments.length);
       currentPercent = undefined;
+      currentOutputs = 0;
       progress(true);
     }
   };
@@ -2087,7 +2174,9 @@ export async function applyOrganizePlan(
   ]);
   writeJournal(options.appPaths, journal);
 
-  const attemptedSplits = new Set(successfulSplits.map((entry) => entry.task.item.id));
+  const attemptedSplits = new Set(
+    successfulSplits.map((entry) => entry.task.item.id),
+  );
   if (signal?.aborted) {
     for (const item of renameItems) {
       if (!startedRenames.has(item.sourcePath)) {
@@ -2097,7 +2186,9 @@ export async function applyOrganizePlan(
     for (const task of splitTasks) {
       if (
         !attemptedSplits.has(task.item.id) &&
-        !result.failed.some((failure) => failure.path === task.plan.sourcePath) &&
+        !result.failed.some(
+          (failure) => failure.path === task.plan.sourcePath,
+        ) &&
         !result.cancelled.includes(task.plan.sourcePath)
       ) {
         result.cancelled.push(task.plan.sourcePath);

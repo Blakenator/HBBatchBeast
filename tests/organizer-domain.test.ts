@@ -239,6 +239,29 @@ describe('filename parsing', () => {
     ).toBe('The Deep');
   });
 
+  it('parses year-based season tags and season folders', () => {
+    expect(
+      parseMediaFilename('Looney.Tunes.S1940E07.Elmers.Candid.Camera.mkv'),
+    ).toMatchObject({
+      seasonNumber: 1940,
+      episodeNumber: 7,
+      episodeTitle: 'Elmers Candid Camera',
+    });
+    expect(
+      parseMediaFilename(
+        'E07.mkv',
+        'Looney Tunes/Season 1940/E07.mkv',
+      ),
+    ).toMatchObject({ seasonNumber: 1940, episodeNumber: 7 });
+    expect(
+      parseMediaFilename('S1940E07-1080p.mkv'),
+    ).toMatchObject({
+      seasonNumber: 1940,
+      episodeNumbers: [7],
+      resolution: '1080p',
+    });
+  });
+
   it('does not read resolution or years as extra episodes', () => {
     expect(
       parseMediaFilename('Show.S01E02-1080p.mkv'),

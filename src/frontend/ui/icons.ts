@@ -5,6 +5,8 @@ import {
   faArrowUp,
   faArrowUpRightFromSquare,
   faArrowsRotate,
+  faBackwardFast,
+  faForwardFast,
   faBolt,
   faBook,
   faBookmark,
@@ -60,6 +62,8 @@ import {
  */
 export const appIcons = {
   back: faArrowLeft,
+  jumpStart: faBackwardFast,
+  jumpEnd: faForwardFast,
   settings: faGear,
   quick: faBolt,
   libraries: faBook,

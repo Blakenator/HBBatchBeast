@@ -99,6 +99,26 @@ describe('TVDB parsing', () => {
     ).toBe('The Deep');
   });
 
+  it('parses year-based season tags such as S1940E07', () => {
+    const episodes = parseTvdbEpisodeHtml(`
+      <div class="list-group-item">
+        <small class="text-muted episode-label">S1929E01</small>
+        <h4 class="list-group-item-heading"><a href="/series/x/episodes/1">Bosko the Talk-Ink Kid</a></h4>
+      </div>
+      <div class="list-group-item">
+        <small class="text-muted episode-label">S1940E07</small>
+        <h4 class="list-group-item-heading"><a href="/series/x/episodes/2">Elmer&#039;s Candid Camera</a></h4>
+      </div>
+    `);
+    expect(episodes).toHaveLength(2);
+    expect(episodes[1]).toMatchObject({
+      tag: 'S1940E07',
+      name: "Elmer's Candid Camera",
+      seasonNumber: 1940,
+      episodeNumber: 7,
+    });
+  });
+
   it('captures episode ids from the all-seasons anchors', () => {
     const episodes = parseTvdbEpisodeHtml(`
       <div class="list-group-item">

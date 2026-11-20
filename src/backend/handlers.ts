@@ -39,6 +39,7 @@ import {
   libraryOrganizeSettings,
   resolveGlobalSettings,
   expandHomePath,
+  splitOutputCount,
 } from '../common';
 import packageJson from '../../package.json';
 import { AppError } from '@superflag/super-ipc-core';
@@ -78,6 +79,10 @@ import {
   readMediaStartTime,
 } from './organizer/split/probe';
 import { detectBlackIntervals } from './organizer/split/blackFrames';
+import {
+  readBlackFrameCache,
+  writeBlackFrameCache,
+} from './organizer/split/blackFrameCache';
 import { readSplitThumbnails } from './organizer/split/thumbnails';
 import {
   plexDatabaseCandidates,
@@ -97,7 +102,6 @@ import {
   stopPlexService,
   waitForPlexStopped,
 } from './organizer/plex/service';
-
 
 export function mapQueueBuildResult(
   payload: QueueBuildResult,
@@ -126,11 +130,12 @@ export function mapQueueBuildResult(
         preset: payload.presets[index],
         destinationPath: payload.destinations[index] ?? undefined,
         destinationFinalPath: payload.destinationsFinal[index] ?? undefined,
-        action: copiedSrt || copiedFromFilter
-          ? ('copy' as const)
-          : skippedFromFilter
-            ? ('skip' as const)
-            : ('encode' as const),
+        action:
+          copiedSrt || copiedFromFilter
+            ? ('copy' as const)
+            : skippedFromFilter
+              ? ('skip' as const)
+              : ('encode' as const),
         excludedReason: exclusion?.reason,
         filterTrace: payload.traces[index],
         presetTrace: payload.presetTraces?.[index] ?? undefined,
@@ -187,14 +192,18 @@ function legacyPresetValue(batch?: Partial<BatchTabConfig>): string {
 }
 
 function workerCountFor(config: GlobalAppConfig): number {
-  const configured = Number(resolveGlobalSettings(config).worker_instance_number);
+  const configured = Number(
+    resolveGlobalSettings(config).worker_instance_number,
+  );
   const requested =
     Number.isFinite(configured) && configured >= 1
       ? Math.min(Math.trunc(configured), 32)
       : 4;
   // A startup --max-parallel budget also caps how many conversions may run.
   const maxParallel = getMaxParallel();
-  return maxParallel === undefined ? requested : Math.min(requested, maxParallel);
+  return maxParallel === undefined
+    ? requested
+    : Math.min(requested, maxParallel);
 }
 
 function loadConfiguration(app: Electron.App): AppConfigV2 {
@@ -494,6 +503,22 @@ export const BackendHandlers: BackendSyncHandlersType<
       { ffmpegPath: configuredFfmpegExecutable(app) },
     ),
   }),
+  [PROMISE_CHANNEL.OrganizeBlackFrames]: ({ app, args }) => {
+    const intervals = readBlackFrameCache(
+      prepareAppPaths(app).cacheDir,
+      args.path,
+    );
+    return intervals ? { intervals } : null;
+  },
+  [PROMISE_CHANNEL.OrganizeCheckTargets]: ({ args }) => ({
+    existing: [...new Set(args.paths)].filter((candidate) => {
+      try {
+        return fs.existsSync(candidate);
+      } catch {
+        return false;
+      }
+    }),
+  }),
   [PROMISE_CHANNEL.OrganizeCancelApply]: () => {
     if (!activeOrganizeApply) return { cancelled: false };
     activeOrganizeApply.abort();
@@ -609,17 +634,20 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     const ffmpeg =
       splitTotal > 0
         ? await ffmpegStatus({
-            configured: resolveGlobalSettings(loadConfiguration(app)).ffmpegPath,
+            configured: resolveGlobalSettings(loadConfiguration(app))
+              .ffmpegPath,
             home: app.getPath('home'),
           })
         : undefined;
     const moveCount = args.plan.items.filter(
-      (item) => item.action === 'rename' && !args.splits.some((split) => split.itemId === item.id),
+      (item) =>
+        item.action === 'rename' &&
+        !args.splits.some((split) => split.itemId === item.id),
     ).length;
     const initialProgress: OrganizeApplyProgress = {
       phase: 'preflight',
       completed: 0,
-      total: splitTotal + moveCount,
+      total: splitOutputCount(args.splits) + moveCount,
       splitCompleted: 0,
       splitTotal,
       elapsedMs: 0,
@@ -685,6 +713,7 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
           onProgress({ percent });
         },
       });
+      writeBlackFrameCache(prepareAppPaths(app).cacheDir, args.path, intervals);
       onComplete({ intervals });
     } catch (error) {
       onError(
@@ -717,10 +746,12 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     let settled = false;
     let resolveComplete: (result: RunBatchOperationResult) => void;
     let rejectComplete: (error: unknown) => void;
-    const completed = new Promise<RunBatchOperationResult>((resolve, reject) => {
-      resolveComplete = resolve;
-      rejectComplete = reject;
-    });
+    const completed = new Promise<RunBatchOperationResult>(
+      (resolve, reject) => {
+        resolveComplete = resolve;
+        rejectComplete = reject;
+      },
+    );
 
     const supervisor = new ChildSupervisor({
       name: 'queueBuild',
@@ -755,7 +786,9 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
     try {
       const libraryEncoder =
         library?.encoder ??
-        (currentConfig?.tab_batch?.FFmpeg_toggle === 1 ? 'ffmpeg' : 'handbrake');
+        (currentConfig?.tab_batch?.FFmpeg_toggle === 1
+          ? 'ffmpeg'
+          : 'handbrake');
       if (libraryEncoder === 'handbrake') {
         // Rows can be preset names (from the picker) or raw arguments; only
         // preset rows can be checked against the installed preset list.
@@ -784,7 +817,9 @@ export const BackendAsyncHandlers: BackendAsyncHandlersType<
             throw new AppError(
               `HandBrake preset(s) not installed: ${unavailable
                 .map((preset) => `"${preset}"`)
-                .join(', ')}. Open Settings to choose an installed preset or refresh the list.`,
+                .join(
+                  ', ',
+                )}. Open Settings to choose an installed preset or refresh the list.`,
             );
           }
         }

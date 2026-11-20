@@ -295,13 +295,20 @@ export type OrganizeApplyPhase =
 /** Live feedback streamed while a plan is applied. */
 export interface OrganizeApplyProgress {
   phase: OrganizeApplyPhase;
+  /**
+   * Result files written so far. Renames and split outputs both count, and a
+   * split in flight contributes its fractional share of output files, so the
+   * bar tracks 2 of 14 files rather than 0 of 1 source file.
+   */
   completed: number;
+  /** Result files this apply will write (renames plus active split outputs). */
   total: number;
   /** Source path of the task currently in flight. */
   currentPath?: string;
   currentKind?: 'rename' | 'split';
   /** Progress of the current split file, 0..1. */
   currentPercent?: number;
+  /** Source files split so far. */
   splitCompleted: number;
   splitTotal: number;
   elapsedMs: number;

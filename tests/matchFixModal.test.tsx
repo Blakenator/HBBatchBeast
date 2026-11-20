@@ -103,6 +103,17 @@ describe('MatchFixModal', () => {
     });
   });
 
+  it('focuses the episode search when it opens', async () => {
+    mockRefetch.mockResolvedValue({
+      data: [
+        { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
+      ],
+    });
+    renderModal();
+    await screen.findByText('One Ocean');
+    expect(document.activeElement).toBe(screen.getByLabelText('Find episode'));
+  });
+
   it('prefills the show search from the file name when nothing is matched', async () => {
     mockRefetch.mockResolvedValue({
       data: [
@@ -238,10 +249,9 @@ describe('MatchFixModal', () => {
     renderModal();
     await screen.findByText('Leggo My Meg-O');
 
-    fireEvent.change(
-      screen.getByRole('textbox', { name: 'Find episode' }),
-      { target: { value: 'leggo my meg o' } },
-    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find episode' }), {
+      target: { value: 'leggo my meg o' },
+    });
 
     expect(screen.getByText('Leggo My Meg-O')).toBeTruthy();
     expect(screen.queryByText('Lottery Fever')).toBeNull();
@@ -292,9 +302,7 @@ describe('MatchFixModal', () => {
     expect(
       screen.getByRole('button', { name: 'S01E01 strong 98%' }),
     ).toBeTruthy();
-    expect(
-      screen.getByRole('button', { name: /S01E02 weak/ }),
-    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: /S01E02 weak/ })).toBeTruthy();
   });
 
   it('uses the resolved conflict confidence for the best episode', async () => {
@@ -348,7 +356,12 @@ describe('MatchFixModal', () => {
       data: [
         { tag: 'S01E01', name: 'One Ocean', seasonNumber: 1, episodeNumber: 1 },
         { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
-        { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+        {
+          tag: 'S01E03',
+          name: 'Coral Reefs',
+          seasonNumber: 1,
+          episodeNumber: 3,
+        },
       ],
     });
     const onSave = renderModal();
@@ -379,7 +392,12 @@ describe('MatchFixModal', () => {
   it('auto-selects a range already named by the filename', async () => {
     mockRefetch.mockResolvedValue({
       data: [
-        { tag: 'S02E03', name: 'Coral Reefs', seasonNumber: 2, episodeNumber: 3 },
+        {
+          tag: 'S02E03',
+          name: 'Coral Reefs',
+          seasonNumber: 2,
+          episodeNumber: 3,
+        },
         { tag: 'S02E04', name: 'Big Blue', seasonNumber: 2, episodeNumber: 4 },
       ],
     });
@@ -434,7 +452,12 @@ describe('MatchFixModal', () => {
   it('keeps an explicitly saved single episode even when the name has a range', async () => {
     mockRefetch.mockResolvedValue({
       data: [
-        { tag: 'S02E03', name: 'Coral Reefs', seasonNumber: 2, episodeNumber: 3 },
+        {
+          tag: 'S02E03',
+          name: 'Coral Reefs',
+          seasonNumber: 2,
+          episodeNumber: 3,
+        },
         { tag: 'S02E04', name: 'Big Blue', seasonNumber: 2, episodeNumber: 4 },
       ],
     });
@@ -481,7 +504,12 @@ describe('MatchFixModal', () => {
     mockRefetch.mockResolvedValue({
       data: [
         { tag: 'S01E02', name: 'The Deep', seasonNumber: 1, episodeNumber: 2 },
-        { tag: 'S01E03', name: 'Coral Reefs', seasonNumber: 1, episodeNumber: 3 },
+        {
+          tag: 'S01E03',
+          name: 'Coral Reefs',
+          seasonNumber: 1,
+          episodeNumber: 3,
+        },
       ],
     });
     const lib = library();
@@ -541,9 +569,9 @@ describe('MatchFixModal', () => {
     fireEvent.click(screen.getByText('The Deep'));
     fireEvent.click(screen.getByText('Big Blue'));
 
-    expect(
-      screen.getByRole('alert').textContent,
-    ).toContain('Select consecutive episodes from the same season.');
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Select consecutive episodes from the same season.',
+    );
     expect(
       (
         screen.getByRole('checkbox', {
@@ -634,6 +662,8 @@ describe('MatchFixModal', () => {
   it('reports episode load failures inline', async () => {
     mockRefetch.mockResolvedValue({ error: { message: 'tvdb is down' } });
     renderModal();
-    expect(await screen.findByText(/Could not load episodes: tvdb is down/)).toBeTruthy();
+    expect(
+      await screen.findByText(/Could not load episodes: tvdb is down/),
+    ).toBeTruthy();
   });
 });

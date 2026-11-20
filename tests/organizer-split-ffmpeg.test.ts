@@ -151,6 +151,14 @@ describe.skipIf(!canRun)('real ffmpeg split', () => {
           fs.rmSync(segment.targetPath as string, { force: true });
           fs.rmSync(`${segment.targetPath}.en.srt`, { force: true });
         }
+        // Subtitle targets use the video's base name with the source suffix.
+        if (fs.existsSync(outDir)) {
+          for (const file of fs.readdirSync(outDir)) {
+            if (file.endsWith('.en.srt')) {
+              fs.rmSync(path.join(outDir, file), { force: true });
+            }
+          }
+        }
         const plan: OrganizeSplitPlan = {
           itemId: source,
           sourcePath: source,

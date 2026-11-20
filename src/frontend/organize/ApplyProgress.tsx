@@ -1,10 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
 import { ProgressBar } from 'react-bootstrap';
-import {
-  pathBasename,
-  type OrganizeApplyProgress,
-} from '../../common';
+import { pathBasename, type OrganizeApplyProgress } from '../../common';
 import { formatDuration } from '../run/format';
 import { Button } from '../ui/Button';
 
@@ -66,8 +63,9 @@ const PHASE_LABEL: Record<OrganizeApplyProgress['phase'], string> = {
 };
 
 /**
- * Visible progress for the background apply job: an overall bar over every
- * rename/split task plus the fraction of the current split file.
+ * Visible progress for the background apply job: an overall bar over the result
+ * files (renames plus every split output) and the fraction of the current
+ * source file's split.
  */
 export const ApplyProgress: React.FC<ApplyProgressProps> = ({
   progress,
@@ -76,9 +74,10 @@ export const ApplyProgress: React.FC<ApplyProgressProps> = ({
   onCancel,
 }) => {
   const total = progress?.total ?? 0;
-  const completed = progress?.completed ?? 0;
+  const completedValue = progress?.completed ?? 0;
+  const completed = Math.floor(completedValue);
   const overallPercent =
-    total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+    total > 0 ? Math.min(100, Math.round((completedValue / total) * 100)) : 0;
   const currentPercent =
     progress?.currentPercent !== undefined
       ? Math.min(100, Math.max(0, Math.round(progress.currentPercent * 100)))
@@ -95,7 +94,7 @@ export const ApplyProgress: React.FC<ApplyProgressProps> = ({
         <strong>{label}</strong>
         {total > 0 && (
           <Meta>
-            {completed} of {total} task{total === 1 ? '' : 's'} ·{' '}
+            {completed} of {total} result file{total === 1 ? '' : 's'} ·{' '}
             {overallPercent}%
             {progress?.elapsedMs
               ? ` · ${formatDuration(progress.elapsedMs / 1000)} elapsed${remaining}`
@@ -131,9 +130,9 @@ export const ApplyProgress: React.FC<ApplyProgressProps> = ({
           aria-label="Current split progress"
         />
       )}
-      {progress?.splitTotal ? (
+      {progress && progress.splitTotal > 1 ? (
         <Meta>
-          Splits: {progress.splitCompleted} of {progress.splitTotal} done
+          Source files: {progress.splitCompleted} of {progress.splitTotal} done
           {progress.currentKind === 'split' && currentPercent !== undefined
             ? ` · current file ${currentPercent}%`
             : ''}

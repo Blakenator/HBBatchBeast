@@ -47,8 +47,7 @@ const Card = styled.div<{ $selected: boolean }>`
   gap: 0;
   min-width: 0;
   border: 1px solid
-    ${({ $selected }) =>
-      $selected ? 'var(--hb-accent)' : 'var(--hb-border)'};
+    ${({ $selected }) => ($selected ? 'var(--hb-accent)' : 'var(--hb-border)')};
   border-radius: var(--hb-radius-sm);
   background: ${({ $selected }) =>
     $selected ? 'var(--hb-surfaceMuted)' : 'var(--hb-surface)'};
@@ -232,7 +231,10 @@ function episodeRangeProblem(
     return 'Multi-episode files must stay within one season.';
   }
   for (let index = 1; index < episodes.length; index += 1) {
-    if (episodes[index].episodeNumber !== episodes[index - 1].episodeNumber + 1) {
+    if (
+      episodes[index].episodeNumber !==
+      episodes[index - 1].episodeNumber + 1
+    ) {
       return 'Select consecutive episodes from the same season.';
     }
   }
@@ -310,7 +312,9 @@ const SelectableRow: React.FC<SelectableRowProps> = ({
           <ExpandToggle
             type="button"
             aria-expanded={expanded}
-            aria-label={expanded ? 'Collapse description' : 'Expand description'}
+            aria-label={
+              expanded ? 'Collapse description' : 'Expand description'
+            }
             title={expanded ? 'Collapse description' : 'Expand description'}
             onClick={(event) => {
               event.stopPropagation();
@@ -386,6 +390,7 @@ const MoviePicker: React.FC<{
           value={query}
           aria-label="Search TVDB for a movie"
           placeholder="Movie title…"
+          autoFocus
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -412,7 +417,12 @@ const MoviePicker: React.FC<{
       {error && (
         <Alert variant="danger" className="mb-0">
           TVDB search failed: {error}{' '}
-          <Button compact variant="ghost" icon="rescan" onClick={() => void run()}>
+          <Button
+            compact
+            variant="ghost"
+            icon="rescan"
+            onClick={() => void run()}
+          >
             Retry
           </Button>
         </Alert>
@@ -548,10 +558,7 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
     const numbers = parsedMedia.episodeNumbers;
     if (!numbers || numbers.length < 2) return;
     const season = item.episode?.seasonNumber ?? parsedMedia.seasonNumber;
-    if (
-      item.episode &&
-      item.episode.episodeNumber !== numbers[0]
-    ) {
+    if (item.episode && item.episode.episodeNumber !== numbers[0]) {
       return;
     }
     const matches = episodes.filter(
@@ -670,13 +677,13 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
   const filteredEpisodes = useMemo(() => {
     const needle = titleComparisonKey(episodeFilter);
     // Ranked first so the best tag/title evidence stays at the top.
-    const source =
-      displayEpisodes.length > 0 ? displayEpisodes : episodes;
+    const source = displayEpisodes.length > 0 ? displayEpisodes : episodes;
     if (!needle) return source;
     // A pasted file name usually carries S01E02 (or 1x02); match that episode
     // exactly instead of failing on the surrounding title/quality tokens.
+    // Seasons can be year-based (S1940E07), so allow up to four digits there.
     const tag =
-      /s(\d{1,2})[ ._-]*e(\d{1,3})/i.exec(needle) ??
+      /s(\d{1,4})[ ._-]*e(\d{1,3})/i.exec(needle) ??
       /(\d{1,2})x(\d{1,3})/i.exec(needle);
     if (tag) {
       const season = Number(tag[1]);
@@ -798,9 +805,7 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
               id="fix-multi-episode"
               label="This file contains multiple episodes"
               checked={multiEpisode}
-              onChange={(event) =>
-                toggleMultiEpisode(event.target.checked)
-              }
+              onChange={(event) => toggleMultiEpisode(event.target.checked)}
             />
             {multiEpisode && (
               <Muted style={{ whiteSpace: 'normal' }}>
@@ -822,6 +827,7 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                 value={episodeFilter}
                 aria-label="Find episode"
                 placeholder="S01E02, episode title or file name…"
+                autoFocus={!changingShow}
                 onChange={(event) => setEpisodeFilter(event.target.value)}
               />
             </Form.Group>
@@ -867,9 +873,7 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
                     onSelect={() => chooseEpisode(candidate)}
                     title={candidate.name}
                     badge={(() => {
-                      const match = matchesByEpisode.get(
-                        episodeKey(candidate),
-                      );
+                      const match = matchesByEpisode.get(episodeKey(candidate));
                       if (!match) return undefined;
                       const resolved = Boolean(
                         resolution.episode &&
@@ -950,9 +954,12 @@ export const MatchFixModal: React.FC<MatchFixModalProps> = ({
         <Button variant="secondary" onClick={() => onSave(undefined)}>
           Use best guess
         </Button>
-        <Button variant="success" icon="passed" onClick={save} disabled={
-          mediaType === 'tv' ? selectedEpisodes.length === 0 : !movie
-        }>
+        <Button
+          variant="success"
+          icon="passed"
+          onClick={save}
+          disabled={mediaType === 'tv' ? selectedEpisodes.length === 0 : !movie}
+        >
           Save match
         </Button>
       </Modal.Footer>

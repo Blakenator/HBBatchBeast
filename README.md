@@ -186,24 +186,45 @@ Freaky Fred` matches instead of conflicting. When the tag names only the first e
    cards. A single-episode file opens with a two-segment plan so non-contiguous episodes in one file
    can still be split: add cuts with **Add split at playhead**, **Snap to black frames**, or
    **Add all black gaps**, then assign each segment. Both black-frame tools also run across every
-   file at once with a combined progress bar and ETA; files already scanned reuse their result.
+   file at once with a combined progress bar and ETA. Scan results are saved in the app cache, so
+   reopening the editor (or the app) keeps them: **Restore black frame splits** applies the saved
+   result instantly, while **Rescan black frames** replaces it with a fresh scan when needed.
+   Manual split work is saved as a draft too, so closing the editor, restarting the app or hitting an
+   error restores the cuts, episode assignments, filename overrides, skipped segments, policies and
+   approvals; saving a split clears its draft.
    The scan shows its percentage on the button and in a progress bar because scanning a whole file
    takes a while. The exact frame at the playhead is shown above the strip while you scrub or move a
-   cut, and hovering or focusing a control explains what it does. Copy mode previews the frame the
+   cut. Each segment card leads with its episode picker and the three primary actions —
+   **Merge with next**, **Jump to start** and **Jump to end** (to center the pan on that segment's
+   edges) — while the cut time, filename override, **Split Segment** and **Remove split** controls
+   live under **Cut, filename & more**; a segment that already has an episode is tinted. Hovering or
+   focusing a control explains what it does. Copy mode previews the frame the
    cut will actually land on, marks the five nearest
    alternative keyframes as clickable ticks, and has a **Center on split** button for the pan; the
    matched episodes are assigned to the segments automatically with a per-segment override. Each
-   segment's quick episode list only shows the file's detected range, and **Select other episode**
-   opens the shared **Fix match** dialog for anything outside it. A split must be approved —
-   individually or with **Approve all** — before **Save approved** writes it; unapproved edits are
-   discarded while an already-queued split stays queued. A split whose cuts were adjusted shows a
-   pending marker and **ready for review**, and an approved split is outlined in green. Each split
+   segment's quick episode list only shows the file's detected range, and **Other episode**
+   opens the shared **Fix match** dialog for anything outside it. A segment's output filename can be
+   overridden without changing its folder, and **Merge with next** joins it with the following
+   segment (or several, picked in a confirmation dialog) by removing those cuts. The confirmation
+   pre-selects the number of segments that fit the matched episode's runtime and shows a segmented
+   bar of what merges versus what stays separate. A split must be approved —
+   individually or with **Approve all** — before **Save approved** queues it; unapproved edits stay
+   as a draft while an already-queued split stays queued. A split whose cuts were adjusted shows a
+   pending marker and **ready for review**, and an approved split is outlined in green. Target
+   problems appear inline as episodes are matched: a target that already exists can be replaced with
+   **Overwrite existing files** (the old file and its subtitle are kept for Undo), the conflicting segment can be
+   dropped while the other segments are still written, or the whole split can be skipped. Dropping a
+   segment leaves that episode in the source, then the split's original-file setting (back up, delete
+   or keep) applies as usual. When approved splits still
+   have conflicts at save time, the error alert lists them and offers **Skip conflicts and save
+   approved** to drop the conflicting segments and save everything else. Each split
    can back up, delete or keep the
    original, and text subtitle sidecars can be cut per segment. Queued splits get a `Split ×N` chip
    in the **State** column and run alongside the normal renames when you apply.
 7. **Apply** first shows a confirmation with the exact move count, any queued splits and whether
    Plex will be updated. The background job runs renames and splits in parallel and shows a progress
-   bar with the current file, an ETA and a **Cancel apply** action; **Undo last** reverses the
+   bar counting the result files (for example 2 of 14, with the current split's own percentage), an
+   ETA and a **Cancel apply** action; **Undo last** reverses the
    previous file moves and split outputs from its journal.
 
 **One-off organize** starts from the Organize picker (blank) or from a library row’s overflow menu
